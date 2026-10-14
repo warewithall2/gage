@@ -65,6 +65,7 @@ pub fn create(
     specs: &[(ItemKind, PathBuf)],
 ) -> std::io::Result<Manifest> {
     fs::create_dir_all(out.join("items"))?;
+    let now = now_rfc3339();
     let mut items = Vec::new();
     for (kind, src) in specs {
         let data = fs::read(src)?;
@@ -88,11 +89,27 @@ pub fn create(
             note: None,
         });
     }
-    // Content id over the item digests, so the same payload keeps its id
-    // across senders and forwards.
-    let joined: String = items.iter().map(|i| i.sha256.clone()).collect::<Vec<_>>().join("");
+    // Content id over the item digests PLUS the author key, subject and
+    // timestamp.
+    //
+    // Hashing the payload alone was a real vulnerability, not a cosmetic
+    // flaw: "benign A" from a trusted contact and "MALICIOUS B" from an
+    // impersonator carried the same files and therefore the same id, and
+    // delivery writes to a directory named by that id. A second bundle could
+    // overwrite a legitimate pending one, under an id the recipient had
+    // already seen listed in their inbox.
+    //
+    // The author key, subject and created time all survive a forward
+    // unchanged (a forward appends to the chain and rewrites only `from`), so
+    // the id still follows the same content across hops -- which is what made
+    // content addressing worth having.
+    let joined: String = items
+        .iter()
+        .map(|i| i.sha256.clone())
+        .chain([id.public_b64(), subject.to_string(), now.clone()])
+        .collect::<Vec<_>>()
+        .join("\u{1f}");
     let me = Peer { handle: id.handle.clone(), key: id.public_b64() };
-    let now = now_rfc3339();
     let m = Manifest {
         v: FORMAT_VERSION,
         id: sha256_hex(joined.as_bytes())[..16].to_string(),

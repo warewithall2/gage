@@ -1,0 +1,127 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ctx</title>
+<style>
+  :root{--bg:#0f1115;--fg:#e6e8ec;--dim:#9aa3af;--line:#262b33;--card:#161920;
+        --ok:#4ade80;--warn:#fbbf24;--bad:#f87171;--accent:#60a5fa}
+  @media (prefers-color-scheme:light){:root:not([data-theme=dark]){
+    --bg:#f7f8fa;--fg:#14171c;--dim:#5b6472;--line:#e2e5ea;--card:#fff;
+    --ok:#15803d;--warn:#a16207;--bad:#b91c1c;--accent:#1d4ed8}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+       font:14px/1.5 ui-sans-serif,system-ui,-apple-system,sans-serif}
+  .wrap{max-width:980px;margin:0 auto;padding:24px 16px 64px}
+  h1{font-size:17px;margin:0;letter-spacing:.02em}
+  h2{font-size:12px;text-transform:uppercase;letter-spacing:.08em;
+     color:var(--dim);margin:28px 0 10px;font-weight:600}
+  header{display:flex;justify-content:space-between;align-items:baseline;
+         gap:12px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:14px}
+  .me{color:var(--dim);font-size:12px;font-family:ui-monospace,monospace}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;
+        padding:14px;margin-bottom:10px}
+  .row{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap}
+  .subj{font-weight:600}
+  .meta{color:var(--dim);font-size:12px;font-family:ui-monospace,monospace;
+        word-break:break-all}
+  .pill{display:inline-block;font-size:11px;padding:2px 8px;border-radius:999px;
+        border:1px solid currentColor;white-space:nowrap}
+  .t-ok{color:var(--ok)} .t-warn{color:var(--warn)} .t-bad{color:var(--bad)}
+  .flag{margin-top:8px;padding:8px 10px;border-radius:8px;font-size:12px;
+        border:1px solid currentColor}
+  .items{margin-top:10px;display:flex;gap:6px;flex-wrap:wrap}
+  .k{font-size:11px;font-family:ui-monospace,monospace;padding:2px 7px;
+     border-radius:6px;border:1px solid var(--line);color:var(--dim)}
+  .k.prompt{color:var(--warn);border-color:currentColor}
+  button{font:inherit;padding:6px 12px;border-radius:7px;cursor:pointer;
+         border:1px solid var(--line);background:transparent;color:var(--fg)}
+  button.go{border-color:var(--accent);color:var(--accent)}
+  button.no{border-color:var(--bad);color:var(--bad)}
+  .acts{display:flex;gap:8px;margin-top:10px}
+  code{font-family:ui-monospace,monospace;font-size:12px;color:var(--dim)}
+  .empty{color:var(--dim);padding:8px 0}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px}
+</style>
+<div class="wrap">
+  <header>
+    <h1>ctx</h1>
+    <div class="me" id="me"></div>
+  </header>
+  <div id="app"></div>
+</div>
+<script>
+const esc = s => String(s==null?'':s).replace(/[&<>"']/g,
+  c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const trustClass = t => t.startsWith('SENDER VERIFIED') ? 't-ok'
+  : t.startsWith('SENDER NOT') ? 't-warn' : 't-bad';
+
+function bundle(b, pending){
+  // The trust verdict and any name conflict are rendered at the same weight
+  // as the subject. A claimed name is never shown on its own.
+  const conflict = b.known_as && b.known_as !== b.claimed_name;
+  const unlisted = !b.known_as;
+  let flags = '';
+  if (b.tampered && b.tampered.length) flags += `<div class="flag t-bad">
+    Payload does not match the signed manifest: ${esc(b.tampered.join(', '))}.
+    Treat as altered.</div>`;
+  if (conflict) flags += `<div class="flag t-bad">Name mismatch — this key is
+    <b>${esc(b.known_as)}</b> on your list but the bundle claims to be from
+    “${esc(b.claimed_name)}”. The claimed name is text the sender chose.</div>`;
+  if (unlisted) flags += `<div class="flag t-warn">Key is not on your list. It
+    claims the name “${esc(b.claimed_name)}”, which is unverified.</div>`;
+  if (b.forwarded) flags += `<div class="flag t-warn">Forwarded — ${b.hops} hop(s).
+    The sender is not the author; any hop could have altered it before signing.</div>`;
+  if (b.prompts) flags += `<div class="flag t-warn">Contains ${b.prompts} prompt(s):
+    text written to steer a model. Read it with <code>ctx open</code>, which
+    frames it as data.</div>`;
+
+  const who = b.known_as ? esc(b.known_as) : `“${esc(b.claimed_name)}” (unlisted)`;
+  const items = (b.items||[]).map(i =>
+    `<span class="k ${i.kind==='prompt'?'prompt':''}">${esc(i.kind)} · ${esc(i.path)}</span>`).join('');
+  const acts = pending ? `<div class="acts">
+      <button class="go" onclick="act('accept','${esc(b.id)}')">Accept</button>
+      <button class="no" onclick="act('reject','${esc(b.id)}')">Reject unread</button>
+    </div>` : `<div class="meta">ctx open — accepted</div>`;
+
+  return `<div class="card">
+    <div class="row">
+      <div><div class="subj">${esc(b.subject)}</div>
+        <div class="meta">from ${who} · key ${esc(b.key.slice(0,16))}… · ${esc(b.created)}</div></div>
+      <span class="pill ${trustClass(b.trust)}">${esc(b.trust.split(' (')[0])}</span>
+    </div>
+    ${flags}
+    <div class="items">${items}</div>
+    ${acts}
+  </div>`;
+}
+
+async function act(what, id){
+  const r = await fetch(`/api/${what}/${id}`, {method:'POST'});
+  if(!r.ok){ const j = await r.json().catch(()=>({})); alert(j.error||'failed'); }
+  load();
+}
+
+async function load(){
+  const s = await (await fetch('/api/state')).json();
+  document.getElementById('me').textContent = s.me
+    ? `${s.me.handle} · ${s.me.key.slice(0,22)}…` : 'no identity — run ctx init';
+  const pend = s.pending.length
+    ? s.pending.map(b=>bundle(b,true)).join('')
+    : '<div class="empty">Nothing waiting.</div>';
+  const acc = s.accepted.length
+    ? s.accepted.map(b=>bundle(b,false)).join('')
+    : '<div class="empty">Nothing accepted yet.</div>';
+  const cts = s.contacts.length
+    ? `<div class="grid">${s.contacts.map(c=>`<div class="card">
+         <div class="subj">${esc(c.name)}</div>
+         <div class="meta">${esc(c.key.slice(0,20))}…</div>
+         <div class="meta">${c.routed?'local route set':'no local route'}</div>
+       </div>`).join('')}</div>`
+    : '<div class="empty">No contacts. ctx add &lt;name&gt; &lt;key&gt;</div>';
+  document.getElementById('app').innerHTML =
+    `<h2>Waiting for you (${s.pending.length})</h2>${pend}
+     <h2>Accepted</h2>${acc}
+     <h2>Buddy list</h2>${cts}`;
+}
+load(); setInterval(load, 3000);
+</script>

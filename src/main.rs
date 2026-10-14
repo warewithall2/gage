@@ -10,6 +10,8 @@ mod bundle;
 mod identity;
 mod manifest;
 mod open;
+mod routes;
+mod ui;
 mod trust;
 
 use clap::{Parser, Subcommand};
@@ -38,7 +40,8 @@ enum Cmd {
     Send {
         #[arg(long)] to: Vec<String>,
         #[arg(long)] subject: String,
-        #[arg(long)] out: PathBuf,
+        /// Where to write it. Omit when --to is a routed local handle.
+        #[arg(long)] out: Option<PathBuf>,
         #[arg(long)] file: Vec<PathBuf>,
         #[arg(long)] prompt: Vec<PathBuf>,
         #[arg(long)] decision: Vec<PathBuf>,
@@ -52,6 +55,23 @@ enum Cmd {
         dir: PathBuf,
         /// Show contents even when the signature does not verify
         #[arg(long)] reveal: bool,
+    },
+    /// Map a handle to a local ctx home, so --to delivers with no --out
+    Route { handle: String, home: PathBuf },
+    /// What is waiting for you
+    Inbox {
+        /// machine-readable, for an agent harness
+        #[arg(long)] json: bool,
+        /// include already-accepted bundles
+        #[arg(long)] all: bool,
+    },
+    /// Move a pending bundle to accepted. Arrival is not consent.
+    Accept { id: String },
+    /// Delete a pending bundle without reading it
+    Reject { id: String },
+    /// Serve the local viewer on 127.0.0.1
+    Ui {
+        #[arg(long, default_value = "7777")] port: u16,
     },
     /// Re-sign a bundle for someone else, appending to its chain
     Forward {
@@ -118,10 +138,36 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 return Err("no recipient: pass --to <handle|group:name>".into());
             }
             let ag = agent.map(|name| AgentInfo { name, model });
-            let m = bundle::create(&out, &id, &subject, &to, ag, &specs)?;
-            println!("bundle {} written to {}", m.id, out.display());
-            println!("  {} item(s), signed by {}", m.items.len(), m.from.handle);
-            println!("\nMove that directory however you like: shared folder, git, email.");
+            // Built once into a staging dir, then delivered to each routed
+            // recipient. Building per-recipient would give one payload a
+            // different content id for every person who received it.
+            let routes = routes::Routes::load();
+            let stage = out.clone().unwrap_or_else(|| {
+                identity::home().join(format!("outbox/{}", std::process::id()))
+            });
+            let m = bundle::create(&stage, &id, &subject, &to, ag, &specs)?;
+            let mut delivered = Vec::new();
+            for who in &to {
+                if let Some(h) = routes.home_of(who) {
+                    let dest = routes::pending_dir(&h).join(&m.id);
+                    if let Some(parent) = dest.parent() {
+                        std::fs::create_dir_all(parent)?;
+                    }
+                    routes::deliver(&stage, &dest)?;
+                    delivered.push(format!("{who} -> {}", dest.display()));
+                }
+            }
+            println!("bundle {} -- {} item(s), signed by {}", m.id, m.items.len(), id.handle);
+            for d in &delivered {
+                println!("  delivered {d}");
+            }
+            let unrouted: Vec<String> =
+                to.iter().filter(|w| routes.home_of(w).is_none()).cloned().collect();
+            if !unrouted.is_empty() {
+                println!("  no local route for: {}", unrouted.join(", "));
+                println!("  bundle is at {} -- move it yourself, or", stage.display());
+                println!("  ctx route <handle> <their-ctx-home> to deliver automatically");
+            }
         }
         Cmd::Inspect { dir } => {
             let l = bundle::load(&dir)?;
@@ -148,6 +194,99 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             if !l.tampered.is_empty() || matches!(l.trust, trust::Trust::Unverified) {
                 return Ok(ExitCode::from(2));
             }
+        }
+        Cmd::Route { handle, home } => {
+            let mut r = routes::Routes::load();
+            r.local.insert(handle.clone(), home.display().to_string());
+            r.save()?;
+            println!("{handle} -> {}", home.display());
+        }
+        Cmd::Inbox { json, all } => {
+            let me = identity::home();
+            let pending = routes::list(&routes::pending_dir(&me));
+            let accepted = if all { routes::list(&routes::accepted_dir(&me)) } else { vec![] };
+            if json {
+                let rows: Vec<serde_json::Value> = pending
+                    .iter()
+                    .map(|(_, l)| {
+                        serde_json::json!({
+                            "stage": "pending",
+                            "id": l.manifest.id,
+                            "subject": l.manifest.subject,
+                            "from_handle_claimed": l.manifest.from.handle,
+                            "from_key": l.manifest.from.key,
+                            "trust": l.trust.label(),
+                            "forwarded": l.manifest.is_forwarded(),
+                            "prompts": l.manifest.prompt_count(),
+                            "items": l.manifest.items.len(),
+                            "tampered": l.tampered,
+                        })
+                    })
+                    .chain(accepted.iter().map(|(_, l)| {
+                        serde_json::json!({
+                            "stage": "accepted",
+                            "id": l.manifest.id,
+                            "subject": l.manifest.subject,
+                            "from_key": l.manifest.from.key,
+                            "trust": l.trust.label(),
+                        })
+                    }))
+                    .collect();
+                println!("{}", serde_json::to_string_pretty(&rows)?);
+            } else {
+                let contacts = trust::Contacts::load();
+                if pending.is_empty() {
+                    println!("nothing pending");
+                }
+                for (_, l) in &pending {
+                    let m = &l.manifest;
+                    let who = contacts
+                        .name_for(&m.from.key)
+                        .map(|n| n.to_string())
+                        .unwrap_or_else(|| format!("\"{}\" (unlisted key)", m.from.handle));
+                    let p = if m.prompt_count() > 0 {
+                        format!("  [{} prompt(s)]", m.prompt_count())
+                    } else {
+                        String::new()
+                    };
+                    println!("{}  from {}  {}{}", m.id, who, m.subject, p);
+                    println!("      {}", l.trust.label());
+                    if !l.tampered.is_empty() {
+                        println!("      TAMPERED: {}", l.tampered.join(", "));
+                    }
+                }
+                if !pending.is_empty() {
+                    println!("\nctx accept <id> to stage it, ctx reject <id> to drop it unread");
+                }
+                for (_, l) in &accepted {
+                    println!("[accepted] {}  {}", l.manifest.id, l.manifest.subject);
+                }
+            }
+        }
+        Cmd::Accept { id } => {
+            let me = identity::home();
+            let from = routes::pending_dir(&me).join(&id);
+            if !from.is_dir() {
+                return Err(format!("no pending bundle {id}").into());
+            }
+            let to_dir = routes::accepted_dir(&me);
+            std::fs::create_dir_all(&to_dir)?;
+            let dest = to_dir.join(&id);
+            routes::deliver(&from, &dest)?;
+            std::fs::remove_dir_all(&from)?;
+            println!("accepted {id}");
+            println!("  ctx open {}", dest.display());
+        }
+        Cmd::Reject { id } => {
+            let p = routes::pending_dir(&identity::home()).join(&id);
+            if !p.is_dir() {
+                return Err(format!("no pending bundle {id}").into());
+            }
+            std::fs::remove_dir_all(&p)?;
+            println!("rejected {id}, deleted unread");
+        }
+        Cmd::Ui { port } => {
+            ui::serve(port)?;
         }
         Cmd::Forward { dir, to, out } => {
             let id = identity::Identity::load()?;

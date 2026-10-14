@@ -89,6 +89,43 @@ for a in "SENDER VERIFIED" "SENDER NOT ON YOUR LIST" "SENDER UNVERIFIABLE"; do
   done
 done
 
+echo "the content id separates senders (collision was a real vuln)"
+ia=$(CTX_HOME=$T/a $CTX send --to nobody --subject same --prompt "$T/w/task.md" --out "$T/i1" | head -1 | awk '{print $2}')
+ib=$(CTX_HOME=$T/b $CTX send --to nobody --subject same --prompt "$T/w/task.md" --out "$T/i2" | head -1 | awk '{print $2}')
+if [ "$ia" != "$ib" ]; then ok; else bad "same files+subject from different keys collided: $ia"; fi
+
+echo "delivery refuses to overwrite an already-delivered bundle"
+CTX_HOME=$T/a $CTX route bob "$T/b" >/dev/null
+CTX_HOME=$T/a $CTX send --to bob --subject dup --prompt "$T/w/task.md" >/dev/null 2>&1
+did=$(CTX_HOME=$T/b $CTX inbox --json | sed -n 's/.*"id": "\([a-f0-9]*\)".*/\1/p' | head -1)
+if [ -n "$did" ]; then ok; else bad "nothing was delivered"; fi
+CTX_HOME=$T/a $CTX send --to bob --subject dup --prompt "$T/w/task.md" > "$T/dup" 2>&1
+want "$T/dup" "refusing to overwrite"
+
+echo "accept moves a bundle; reject destroys it unread"
+CTX_HOME=$T/b $CTX accept "$did" >/dev/null 2>&1; code accept $? 0
+if [ -d "$T/b/inbox/accepted/$did" ]; then ok; else bad "accepted bundle is missing"; fi
+if [ -d "$T/b/inbox/pending/$did" ]; then bad "still pending after accept"; else ok; fi
+CTX_HOME=$T/a $CTX send --to bob --subject tossme --prompt "$T/w/task.md" >/dev/null 2>&1
+rid=$(CTX_HOME=$T/b $CTX inbox --json | sed -n 's/.*"id": "\([a-f0-9]*\)".*/\1/p' | head -1)
+CTX_HOME=$T/b $CTX reject "$rid" >/dev/null 2>&1; code reject $? 0
+if [ -d "$T/b/inbox/pending/$rid" ]; then bad "reject left the bundle on disk"; else ok; fi
+
+echo "the ui binds loopback only"
+CTX_HOME=$T/b $CTX ui --port 7891 >/dev/null 2>&1 &
+uipid=$!
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  curl -s -m 1 http://127.0.0.1:7891/api/state >/dev/null 2>&1 && break
+  sleep 0.3
+done
+if ss -ltn 2>/dev/null | grep -q '127.0.0.1:7891'; then ok; else bad "ui is not bound to 127.0.0.1"; fi
+if ss -ltn 2>/dev/null | grep -q '0.0.0.0:7891'; then bad "ui is listening on all interfaces"; else ok; fi
+for p in "/api/accept/../../etc" "/etc/passwd" "/api/accept/zzzz"; do
+  c=$(curl -s -o /dev/null -m 2 -w '%{http_code}' -X POST "http://127.0.0.1:7891$p")
+  case "$c" in 400|404) ok;; *) bad "ui returned $c for $p";; esac
+done
+kill $uipid 2>/dev/null; wait $uipid 2>/dev/null
+
 echo "a good bundle exits 0"
 CTX_HOME=$T/b $CTX open "$T/b1" >/dev/null 2>&1; code good $? 0
 

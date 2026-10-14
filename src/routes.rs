@@ -1,0 +1,104 @@
+//! Local delivery, so agents stop passing paths to each other by hand.
+//!
+//! A route maps a handle to a directory on this machine. `ctx send --to codex`
+//! then lands in Codex's pending inbox with no --out, which is the difference
+//! between a tool you use and a tool you demo once.
+//!
+//! Delivery is to `pending/`, never straight to `accepted/`. That is the
+//! instant-messenger accept step, and it is the one gate that keeps a channel
+//! for passing prompts between models from being an open door: arrival is not
+//! consent, and nothing reaches an agent's context until someone moves it.
+
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+use std::fs;
+use std::path::PathBuf;
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct Routes {
+    /// handle -> that agent's ctx home on this machine
+    #[serde(default)]
+    pub local: BTreeMap<String, String>,
+}
+
+impl Routes {
+    pub fn load() -> Self {
+        let p = crate::identity::home().join("routes.json");
+        fs::read_to_string(p)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default()
+    }
+
+    pub fn save(&self) -> std::io::Result<()> {
+        let dir = crate::identity::home();
+        fs::create_dir_all(&dir)?;
+        fs::write(dir.join("routes.json"), serde_json::to_vec_pretty(self)?)
+    }
+
+    pub fn home_of(&self, handle: &str) -> Option<PathBuf> {
+        self.local.get(handle).map(PathBuf::from)
+    }
+}
+
+pub fn pending_dir(ctx_home: &std::path::Path) -> PathBuf {
+    ctx_home.join("inbox/pending")
+}
+
+pub fn accepted_dir(ctx_home: &std::path::Path) -> PathBuf {
+    ctx_home.join("inbox/accepted")
+}
+
+/// Copy a bundle directory. Only the files the manifest names are copied, so a
+/// sender cannot smuggle extra paths into the recipient's inbox alongside the
+/// declared items.
+pub fn deliver(src: &std::path::Path, dest: &std::path::Path) -> std::io::Result<()> {
+    // Never clobber. Defence in depth behind the id fix: if two bundles ever
+    // land on one id again -- a hash collision, a replayed bundle, a future
+    // change to how ids are built -- the second must fail loudly rather than
+    // quietly replace a bundle the recipient has already been shown.
+    if dest.exists() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            format!(
+                "{} already exists; refusing to overwrite a bundle already delivered",
+                dest.display()
+            ),
+        ));
+    }
+    let bytes = fs::read(src.join("manifest.json"))?;
+    let m: crate::manifest::Manifest = serde_json::from_slice(&bytes)?;
+    fs::create_dir_all(dest.join("items"))?;
+    fs::write(dest.join("manifest.json"), &bytes)?;
+    if let Ok(sig) = fs::read(src.join("manifest.sig")) {
+        fs::write(dest.join("manifest.sig"), sig)?;
+    }
+    for it in &m.items {
+        if !crate::manifest::path_is_safe(&it.path) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("refusing to deliver unsafe path: {}", it.path),
+            ));
+        }
+        fs::copy(src.join(&it.path), dest.join(&it.path))?;
+    }
+    Ok(())
+}
+
+/// Bundles waiting in a stage, newest first.
+pub fn list(stage: &std::path::Path) -> Vec<(String, crate::bundle::Loaded)> {
+    let mut out = Vec::new();
+    if let Ok(rd) = fs::read_dir(stage) {
+        for e in rd.flatten() {
+            if !e.path().is_dir() {
+                continue;
+            }
+            if let Ok(l) = crate::bundle::load(&e.path()) {
+                let name = e.file_name().to_string_lossy().to_string();
+                out.push((name, l));
+            }
+        }
+    }
+    out.sort_by(|a, b| b.1.manifest.created.cmp(&a.1.manifest.created));
+    out
+}
