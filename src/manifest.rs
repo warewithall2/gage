@@ -90,6 +90,53 @@ pub struct AgentInfo {
     pub model: Option<String>,
 }
 
+/// What the sender wants from the recipient. Structured on purpose: free
+/// chat between agents produces a pile of files nobody can triage, and an
+/// agent reading its inbox needs to know whether anything is expected of it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum MsgType {
+    /// Here is something, no reply expected.
+    #[default]
+    Share,
+    /// Expects an answer. Keeps a thread open until one arrives.
+    Question,
+    /// Answers a question. Closes the expectation it was replying to.
+    Answer,
+    /// Asks for a review of the enclosed work.
+    ReviewRequest,
+    /// Confirms receipt without adding anything. Never reopens a thread.
+    Ack,
+}
+
+impl MsgType {
+    pub fn label(&self) -> &'static str {
+        match self {
+            MsgType::Share => "share",
+            MsgType::Question => "question",
+            MsgType::Answer => "answer",
+            MsgType::ReviewRequest => "review-request",
+            MsgType::Ack => "ack",
+        }
+    }
+
+    /// Does receiving this leave a ball in your court?
+    pub fn expects_reply(&self) -> bool {
+        matches!(self, MsgType::Question | MsgType::ReviewRequest)
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().replace('-', "_").as_str() {
+            "share" => Some(MsgType::Share),
+            "question" => Some(MsgType::Question),
+            "answer" => Some(MsgType::Answer),
+            "review_request" => Some(MsgType::ReviewRequest),
+            "ack" => Some(MsgType::Ack),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Manifest {
     pub v: u32,
@@ -110,6 +157,18 @@ pub struct Manifest {
     /// two agents reads as a conversation instead of a pile of files.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub in_reply_to: Option<String>,
+    /// Every message in one exchange carries the same thread id: the id of
+    /// the message that started it. Derived at send time rather than walked
+    /// at read time, because walking `in_reply_to` requires holding every
+    /// intermediate message, and over a relay you may have collected only
+    /// part of a thread.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread: Option<String>,
+    /// What the sender wants. NOT a claim about your state -- whether you
+    /// have read it, and whether you consider the thread answered, are yours
+    /// to decide and are stored locally.
+    #[serde(default)]
+    pub msg_type: MsgType,
     pub items: Vec<Item>,
 }
 
@@ -130,6 +189,12 @@ impl Manifest {
 
     pub fn prompt_count(&self) -> usize {
         self.items.iter().filter(|i| i.kind == ItemKind::Prompt).count()
+    }
+
+    /// The thread this belongs to. A message with no thread id starts one,
+    /// and its own id is that thread.
+    pub fn thread_id(&self) -> &str {
+        self.thread.as_deref().unwrap_or(&self.id)
     }
 
     pub fn memory_count(&self) -> usize {

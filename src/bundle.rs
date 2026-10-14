@@ -63,6 +63,9 @@ pub fn create(
     to: &[String],
     agent: Option<AgentInfo>,
     in_reply_to: Option<String>,
+    // Thread this belongs to. None starts a new thread rooted at this bundle.
+    thread: Option<String>,
+    msg_type: crate::manifest::MsgType,
     specs: &[(ItemKind, String, PathBuf)],
 ) -> std::io::Result<Manifest> {
     fs::create_dir_all(out.join("items"))?;
@@ -120,6 +123,8 @@ pub fn create(
         agent,
         chain: vec![Hop { by: me, at: now, action: HopAction::Created }],
         in_reply_to,
+        thread,
+        msg_type,
         items,
     };
     write_signed(out, id, &m)?;

@@ -244,6 +244,73 @@ code localsend $? 0
 CTX_HOME=$T/a $CTX send --to nobody --subject unrouted --decision "$T/w/ok.md" --out "$T/ur" >/dev/null 2>&1
 code unrouted_send $? 0
 
+echo "message types, threads and read state"
+CTX_HOME=$T/a $CTX route bob "$T/b" >/dev/null 2>&1
+CTX_HOME=$T/b $CTX route alice "$T/a" >/dev/null 2>&1
+qid=$(CTX_HOME=$T/a $CTX send --to bob --subject "thread test" --type question \
+      --decision "$T/w/ok.md" 2>/dev/null | head -1 | awk '{print $2}')
+if [ -n "$qid" ]; then ok; else bad "question was not sent"; fi
+CTX_HOME=$T/b $CTX inbox > "$T/ib" 2>&1
+want "$T/ib" "question"
+want "$T/ib" "expects a reply"
+want "$T/ib" "* $qid"
+
+echo "opening marks read; listing does not"
+CTX_HOME=$T/b $CTX inbox > "$T/ib2" 2>&1
+want "$T/ib2" "* $qid"
+CTX_HOME=$T/b $CTX accept "$qid" >/dev/null 2>&1
+CTX_HOME=$T/b $CTX open "$T/b/inbox/accepted/$qid" >/dev/null 2>&1
+CTX_HOME=$T/b $CTX inbox --all > "$T/ib3" 2>&1
+wantno "$T/ib3" "* $qid"
+
+echo "a reply inherits the thread, and both halves are visible to both sides"
+aid=$(CTX_HOME=$T/b $CTX send --to alice --subject "re: thread test" --type answer \
+      --reply-to "$qid" --decision "$T/w/ok.md" 2>/dev/null | head -1 | awk '{print $2}')
+CTX_HOME=$T/a $CTX accept "$aid" >/dev/null 2>&1
+CTX_HOME=$T/a $CTX thread "$qid" > "$T/th" 2>&1
+want "$T/th" "$qid"
+want "$T/th" "$aid"
+want "$T/th" "question"
+want "$T/th" "answer"
+# the thread takes its subject from the root, not from the reply
+want "$T/th" "thread test"
+wantno "$T/th" "re: thread test"
+
+echo "thread state follows the direction of the newest message"
+CTX_HOME=$T/a $CTX threads > "$T/ta" 2>&1
+want "$T/ta" "settled"
+qid2=$(CTX_HOME=$T/b $CTX send --to alice --subject "open question" --type question \
+       --decision "$T/w/ok.md" 2>/dev/null | head -1 | awk '{print $2}')
+CTX_HOME=$T/a $CTX accept "$qid2" >/dev/null 2>&1
+CTX_HOME=$T/a $CTX threads --mine > "$T/tm" 2>&1
+want "$T/tm" "awaiting YOU"
+want "$T/tm" "open question"
+wantno "$T/tm" "thread test"
+# and the asker is waiting on the other side, not on themselves
+CTX_HOME=$T/b $CTX threads --mine > "$T/tb" 2>&1
+wantno "$T/tb" "open question"
+
+echo "your own message is never unread to you"
+CTX_HOME=$T/b $CTX thread "$qid2" > "$T/tq" 2>&1
+# grep -c prints 0 AND exits non-zero with no matches, so a `|| echo 0`
+# fallback appends a second zero. Ask the question directly instead.
+if grep -q "^\\* .*you" "$T/tq"; then bad "own messages marked unread"; else ok; fi
+echo "closing a thread is local, not a claim the sender can make"
+CTX_HOME=$T/a $CTX close "$qid2" >/dev/null 2>&1; code close $? 0
+CTX_HOME=$T/a $CTX threads > "$T/tc" 2>&1
+want "$T/tc" "closed"
+CTX_HOME=$T/b $CTX threads > "$T/tc2" 2>&1
+wantno "$T/tc2" "closed"
+
+echo "an unknown --type is refused rather than silently defaulted"
+CTX_HOME=$T/a $CTX send --to bob --subject x --type nonsense --decision "$T/w/ok.md" > "$T/ty" 2>&1
+code badtype $? 1
+want "$T/ty" "unknown --type"
+
+echo "piping into head does not panic"
+CTX_HOME=$T/a $CTX threads 2>&1 | head -1 > "$T/pipe" 2>&1
+wantno "$T/pipe" "panicked"
+
 echo "a good bundle exits 0"
 CTX_HOME=$T/b $CTX open "$T/b1" >/dev/null 2>&1; code good $? 0
 

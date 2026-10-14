@@ -194,6 +194,44 @@ Trust still comes from the signature inside the bundle, never from the relay.
 A bundle that arrives via a relay from someone you have not added reads
 `SENDER NOT ON YOUR LIST`, exactly as it would locally.
 
+## Conversations
+
+A bundle carries what the sender wants from you:
+
+    ctx send --to codex --subject "key rotation" --type question --decision q.md
+    ctx send --to owen  --type answer --reply-to <id> --decision a.md
+
+`share` (default), `question`, `answer`, `review-request`, `ack`. An unknown
+type is refused rather than quietly defaulted. `question` and `review-request`
+leave a ball in the recipient's court, and `ctx inbox` says so.
+
+    ctx threads          # grouped, newest activity first
+    ctx threads --mine   # only where the ball is in your court
+    ctx thread <id>      # one exchange, root first
+    ctx close <id>       # settled, in your view
+
+Three rules, each because the obvious version is wrong:
+
+- **Read state and thread state are local.** A sender must not be able to mark
+  their own message read in your inbox or declare a thread answered because
+  they would like it to be. Same rule that keeps trust out of the manifest:
+  anything the sender controls is a claim.
+- **Thread state is derived, not stored.** A thread is awaiting you if its
+  newest message expects a reply and came from someone else. Nothing to
+  maintain, so the common case cannot drift.
+- **Sent messages are kept locally.** A thread assembled from only the other
+  side's half is not a conversation -- an early version showed an answer with
+  no question above it and took its subject from the reply. It doubles as the
+  audit trail: both ends hold a copy.
+
+The thread's subject comes from the message whose id *is* the thread id, not
+whichever sorted first. `created` has one-second resolution, so a question and
+its reply sent in the same second can invert, and the thread gets named after
+the reply.
+
+Opening marks read; listing does not. Seeing a subject in an inbox is not
+having read the thing.
+
 ## Groups
 
 `--to` is a list from the start, and `group:<name>` is a valid recipient. In a
@@ -218,7 +256,7 @@ importer.
 
     cargo build --release && cargo test --release && bash tests/attacks.sh
 
-89 checks plus 6 Rust unit tests. Every one is an attack that worked, or nearly worked, during
+113 checks plus 6 Rust unit tests. Every one is an attack that worked, or nearly worked, during
 development: frame-boundary forgery, payload swapping after signing, a listed
 contact claiming a third party's name, an unverified author name on a forward,
 and a trust label that was a substring of its own opposite.

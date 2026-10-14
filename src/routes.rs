@@ -49,6 +49,16 @@ pub fn accepted_dir(ctx_home: &std::path::Path) -> PathBuf {
     ctx_home.join("inbox/accepted")
 }
 
+/// Your own outgoing messages.
+///
+/// Kept because a thread assembled from only the other side's half is not a
+/// conversation: the first version showed an answer with no question above
+/// it, and took its subject from the reply. It doubles as the local audit
+/// trail -- both ends hold a copy of what was said.
+pub fn sent_dir(ctx_home: &std::path::Path) -> PathBuf {
+    ctx_home.join("sent")
+}
+
 /// Copy a bundle directory. Only the files the manifest names are copied, so a
 /// sender cannot smuggle extra paths into the recipient's inbox alongside the
 /// declared items.

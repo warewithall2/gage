@@ -15,6 +15,7 @@ mod relay;
 mod remote;
 mod routes;
 mod scrub;
+mod state;
 mod seal;
 mod ui;
 mod trust;
@@ -70,8 +71,10 @@ enum Cmd {
         /// Include files that look like secrets (.env, *.pem, *.key). Off by
         /// default, and you should have a reason.
         #[arg(long)] allow_secrets: bool,
-        /// Bundle id this one answers
+        /// Bundle id this one answers. Inherits that bundle's thread.
         #[arg(long)] reply_to: Option<String>,
+        /// share | question | answer | review-request | ack
+        #[arg(long, default_value = "share")] r#type: String,
         /// Proceed despite findings from the outbound content scan. Prints
         /// what it is overriding.
         #[arg(long)] allow_findings: bool,
@@ -88,12 +91,23 @@ enum Cmd {
     },
     /// Map a handle to a local ctx home, so --to delivers with no --out
     Route { handle: String, home: PathBuf },
+    /// Conversations, grouped, newest activity first
+    Threads {
+        /// only threads where the ball is in your court
+        #[arg(long)] mine: bool,
+    },
+    /// Every message in one thread, oldest first
+    Thread { id: String },
+    /// Mark a thread settled regardless of what the messages imply
+    Close { thread: String },
     /// What is waiting for you
     Inbox {
         /// machine-readable, for an agent harness
         #[arg(long)] json: bool,
         /// include already-accepted bundles
         #[arg(long)] all: bool,
+        /// only what you have not opened
+        #[arg(long)] unread: bool,
     },
     /// Move a pending bundle to accepted. Arrival is not consent.
     Accept { id: String },
@@ -133,7 +147,63 @@ enum Cmd {
     },
 }
 
+/// Restore the default SIGPIPE disposition. Declared here rather than taking
+/// a libc dependency for one constant.
+#[cfg(unix)]
+unsafe fn libc_signal_default() {
+    unsafe extern "C" {
+        fn signal(sig: i32, handler: usize) -> usize;
+    }
+    const SIGPIPE: i32 = 13;
+    const SIG_DFL: usize = 0;
+    unsafe { signal(SIGPIPE, SIG_DFL) };
+}
+
+/// Look for a bundle by id in pending and accepted. Used to inherit a thread
+/// when replying.
+fn find_manifest(id: &str) -> Option<manifest::Manifest> {
+    let home = identity::home();
+    for stage in [routes::accepted_dir(&home), routes::pending_dir(&home)] {
+        let d = stage.join(id);
+        if d.is_dir() {
+            if let Ok(l) = bundle::load(&d) {
+                return Some(l.manifest);
+            }
+        }
+    }
+    None
+}
+
+/// Every manifest held locally, for thread grouping.
+fn all_manifests() -> Vec<manifest::Manifest> {
+    let home = identity::home();
+    let mut out = Vec::new();
+    for stage in [
+        routes::accepted_dir(&home),
+        routes::pending_dir(&home),
+        routes::sent_dir(&home),
+    ] {
+        for (_, l) in routes::list(&stage) {
+            out.push(l.manifest);
+        }
+    }
+    // The same bundle can sit in more than one stage; a thread must not count
+    // it twice.
+    out.sort_by(|a, b| a.id.cmp(&b.id));
+    out.dedup_by(|a, b| a.id == b.id);
+    out
+}
+
 fn main() -> ExitCode {
+    // Rust sets SIGPIPE to ignore, so writing to a closed pipe returns an
+    // error that `println!` turns into a panic. `ctx threads | head` then
+    // prints a Rust backtrace instead of just stopping. Restoring the default
+    // makes the process die quietly when its reader goes away, which is what
+    // every other command-line tool does.
+    #[cfg(unix)]
+    unsafe {
+        libc_signal_default();
+    }
     match run() {
         Ok(code) => code,
         Err(e) => {
@@ -219,7 +289,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         }
         Cmd::Send {
             to, subject, out, file, prompt, decision, memory, dir,
-            allow_secrets, reply_to, allow_findings, agent, model,
+            allow_secrets, reply_to, r#type, allow_findings, agent, model,
         } => {
             let id = identity::Identity::load()?;
             let c = collect::collect(&file, &prompt, &decision, &memory, &dir, allow_secrets)?;
@@ -286,6 +356,19 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 println!("  --allow-findings given: sending anyway");
             }
 
+            let msg_type = manifest::MsgType::parse(&r#type).ok_or_else(|| {
+                format!("unknown --type {type_in:?}; use share, question, answer, review-request or ack",
+                        type_in = r#type)
+            })?;
+            // A reply inherits its parent's thread. Looked up locally rather
+            // than walked at read time: over a relay you may hold only part
+            // of a thread, and a chain you cannot walk is a thread you cannot
+            // group. Falling back to the parent id still groups the pair.
+            let thread = reply_to.as_ref().map(|rid| {
+                find_manifest(rid)
+                    .map(|m| m.thread_id().to_string())
+                    .unwrap_or_else(|| rid.clone())
+            });
             let ag = agent.map(|name| AgentInfo { name, model });
             // Built once into a staging dir, then delivered to each routed
             // recipient. Building per-recipient would give one payload a
@@ -293,7 +376,15 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             let stage = out.clone().unwrap_or_else(|| {
                 identity::home().join(format!("outbox/{}", std::process::id()))
             });
-            let m = bundle::create(&stage, &id, &subject, &to, ag, reply_to, &specs)?;
+            let m = bundle::create(&stage, &id, &subject, &to, ag, reply_to, thread, msg_type, &specs)?;
+            // Keep our own copy before delivering anywhere.
+            let sent = routes::sent_dir(&identity::home()).join(&m.id);
+            if !sent.exists() {
+                if let Some(parent) = sent.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                routes::deliver(&stage, &sent)?;
+            }
             let mut delivered = Vec::new();
             for who in &to {
                 if let Some(h) = routes.home_of(who) {
@@ -306,8 +397,8 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 }
             }
             println!(
-                "bundle {} -- {} item(s), {} bytes, signed by {}",
-                m.id, m.items.len(), m.total_bytes(), id.handle
+                "bundle {} [{}] -- {} item(s), {} bytes, signed by {}",
+                m.id, m.msg_type.label(), m.items.len(), m.total_bytes(), id.handle
             );
             if m.memory_count() > 0 {
                 println!(
@@ -346,6 +437,9 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         Cmd::Open { dir, reveal } => {
             let l = bundle::load(&dir)?;
             print!("{}", open::render(&l, reveal));
+            // Read state is set by rendering, not by listing: having seen a
+            // subject line in an inbox is not having read the thing.
+            state::LocalState::load().mark_read(&l.manifest.id)?;
             // Non-zero when the content could not be attributed, so a script
             // or agent harness can branch on it instead of parsing prose.
             if !l.tampered.is_empty() || matches!(l.trust, trust::Trust::Unverified) {
@@ -358,7 +452,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             r.save()?;
             println!("{handle} -> {}", home.display());
         }
-        Cmd::Inbox { json, all } => {
+        Cmd::Inbox { json, all, unread } => {
             let me = identity::home();
             let pending = routes::list(&routes::pending_dir(&me));
             let accepted = if all { routes::list(&routes::accepted_dir(&me)) } else { vec![] };
@@ -392,6 +486,11 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 println!("{}", serde_json::to_string_pretty(&rows)?);
             } else {
                 let contacts = trust::Contacts::load();
+                let st = state::LocalState::load();
+                let pending: Vec<_> = pending
+                    .into_iter()
+                    .filter(|(_, l)| !unread || !st.is_read(&l.manifest.id))
+                    .collect();
                 if pending.is_empty() {
                     println!("nothing pending");
                 }
@@ -401,19 +500,37 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                         .name_for(&m.from.key)
                         .map(|n| n.to_string())
                         .unwrap_or_else(|| format!("\"{}\" (unlisted key)", m.from.handle));
-                    let p = if m.prompt_count() > 0 {
-                        format!("  [{} prompt(s)]", m.prompt_count())
-                    } else {
+                    let mut tags = Vec::new();
+                    if m.prompt_count() > 0 {
+                        tags.push(format!("{} prompt", m.prompt_count()));
+                    }
+                    if m.memory_count() > 0 {
+                        tags.push(format!("{} MEMORY", m.memory_count()));
+                    }
+                    let tag = if tags.is_empty() {
                         String::new()
+                    } else {
+                        format!("  [{}]", tags.join(", "))
                     };
-                    println!("{}  from {}  {}{}", m.id, who, m.subject, p);
+                    let mark = if st.is_read(&m.id) { " " } else { "*" };
+                    println!(
+                        "{mark} {}  {:<14} from {}  {}{}",
+                        m.id,
+                        m.msg_type.label(),
+                        who,
+                        m.subject,
+                        tag
+                    );
+                    if m.msg_type.expects_reply() {
+                        println!("      -> expects a reply");
+                    }
                     println!("      {}", l.trust.label());
                     if !l.tampered.is_empty() {
                         println!("      TAMPERED: {}", l.tampered.join(", "));
                     }
                 }
                 if !pending.is_empty() {
-                    println!("\nctx accept <id> to stage it, ctx reject <id> to drop it unread");
+                    println!("\n* = unread.  ctx accept <id> to stage it, ctx reject <id> to drop it unread");
                 }
                 for (_, l) in &accepted {
                     println!("[accepted] {}  {}", l.manifest.id, l.manifest.subject);
@@ -563,6 +680,93 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             if n > 0 {
                 println!("\n{n} bundle(s) in inbox/pending -- ctx inbox, then accept or reject");
             }
+        }
+        Cmd::Threads { mine } => {
+            let st = state::LocalState::load();
+            let me = identity::Identity::load().map(|i| i.public_b64()).unwrap_or_default();
+            let contacts = trust::Contacts::load();
+            let ts = state::threads(all_manifests(), &st, &me);
+            let shown: Vec<_> = ts
+                .iter()
+                .filter(|t| !mine || t.state == state::ThreadState::AwaitingYou)
+                .collect();
+            if shown.is_empty() {
+                println!("no threads");
+            }
+            for t in shown {
+                let who: Vec<String> = {
+                    let mut v: Vec<String> = t
+                        .messages
+                        .iter()
+                        .map(|m| {
+                            if m.from.key == me {
+                                "you".to_string()
+                            } else {
+                                contacts
+                                    .name_for(&m.from.key)
+                                    .map(|s| s.to_string())
+                                    .unwrap_or_else(|| format!("\"{}\"", m.from.handle))
+                            }
+                        })
+                        .collect();
+                    v.sort();
+                    v.dedup();
+                    v
+                };
+                let unread = if t.unread > 0 {
+                    format!(", {} unread", t.unread)
+                } else {
+                    String::new()
+                };
+                println!(
+                    "{}  {}  [{}]",
+                    t.id,
+                    t.subject,
+                    t.state.label()
+                );
+                println!(
+                    "      {} message(s){}  between {}",
+                    t.messages.len(),
+                    unread,
+                    who.join(", ")
+                );
+            }
+        }
+        Cmd::Thread { id } => {
+            let st = state::LocalState::load();
+            let me = identity::Identity::load().map(|i| i.public_b64()).unwrap_or_default();
+            let contacts = trust::Contacts::load();
+            let ts = state::threads(all_manifests(), &st, &me);
+            let Some(t) = ts.iter().find(|t| t.id == id || t.id.starts_with(&id)) else {
+                return Err(format!("no thread {id}").into());
+            };
+            println!("{}  [{}]\n", t.subject, t.state.label());
+            for m in &t.messages {
+                let who = if m.from.key == me {
+                    "you".to_string()
+                } else {
+                    contacts
+                        .name_for(&m.from.key)
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| format!("\"{}\" (unlisted)", m.from.handle))
+                };
+                // Your own message is never unread to you. The count already
+                // excluded them; the marker did not, so every thread you
+                // started showed your own words as something to catch up on.
+                let mine_msg = m.from.key == me;
+                let mark = if mine_msg || st.is_read(&m.id) { " " } else { "*" };
+                println!("{mark} {}  {:<14} {}  {}", m.created, m.msg_type.label(), who, m.id);
+                for it in &m.items {
+                    println!("      {:?}  {}", it.kind, it.path.strip_prefix("items/").unwrap_or(&it.path));
+                }
+            }
+            println!("\nctx open <path> to read one, ctx send --reply-to <id> --type answer to reply");
+        }
+        Cmd::Close { thread } => {
+            let mut st = state::LocalState::load();
+            st.close(&thread)?;
+            println!("thread {thread} marked closed locally");
+            println!("  (your view only -- the other side decides their own)");
         }
         Cmd::Ui { port } => {
             ui::serve(port)?;
