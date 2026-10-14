@@ -126,6 +126,47 @@ for p in "/api/accept/../../etc" "/etc/passwd" "/api/accept/zzzz"; do
 done
 kill $uipid 2>/dev/null; wait $uipid 2>/dev/null
 
+echo "sealing hides contents, sender and subject from a relay"
+dk=$(CTX_HOME=$T/b $CTX whoami | cut -f2)
+CTX_HOME=$T/a $CTX add bob "$dk" >/dev/null
+printf 'ZEBRACROSSING payload\n' > "$T/w/notes.md"
+CTX_HOME=$T/a $CTX send --to nobody --subject "GIRAFFEHOUSE" --decision "$T/w/notes.md" --out "$T/sb" >/dev/null
+CTX_HOME=$T/a $CTX seal "$T/sb" --to bob --out "$T/env.ctxb" >/dev/null
+for n in ZEBRACROSSING GIRAFFEHOUSE secret.md; do
+  if grep -qF "$n" "$T/env.ctxb"; then bad "envelope leaks '$n'"; else ok; fi
+done
+# only the recipient key, version and ciphertext are present
+fields=$(sed -n 's/.*"\(v\|to_box\|ct\)".*/y/p' "$T/env.ctxb" | head -1)
+if [ -n "$fields" ]; then ok; else bad "envelope has unexpected shape"; fi
+
+echo "only the recipient can open a sealed envelope"
+CTX_HOME=$T/b $CTX unseal "$T/env.ctxb" --out "$T/un" >/dev/null 2>&1; code unseal $? 0
+want "$T/un/manifest.json" "GIRAFFEHOUSE"
+CTX_HOME=$T/c $CTX unseal "$T/env.ctxb" --out "$T/un2" > "$T/u2" 2>&1; code wrongkey $? 1
+want "$T/u2" "not sealed to your key"
+
+echo "a sealed bundle still carries its own signature verdict"
+CTX_HOME=$T/b $CTX open "$T/un" > "$T/so" 2>&1
+want "$T/so" "SENDER VERIFIED"
+want "$T/so" "ZEBRACROSSING"
+
+echo "sealing to a contact with no encryption key is refused, not downgraded"
+CTX_HOME=$T/a $CTX add legacy "$(CTX_HOME=$T/c $CTX whoami | cut -f2 | cut -d. -f1)" >/dev/null
+CTX_HOME=$T/a $CTX seal "$T/sb" --to legacy --out "$T/nope.ctxb" > "$T/leg" 2>&1; code legacy $? 1
+want "$T/leg" "no encryption key"
+if [ -f "$T/nope.ctxb" ]; then bad "wrote an envelope despite refusing"; else ok; fi
+
+echo "a filename that looks like a secret is skipped, and says so"
+printf 'KEY=1\n' > "$T/w/.env"
+printf 'tok\n' > "$T/w/my_secret.md"
+CTX_HOME=$T/a $CTX send --to nobody --subject s --file "$T/w/.env" --file "$T/w/my_secret.md" --out "$T/sk" > "$T/sko" 2>&1
+want "$T/sko" "look like secrets"
+want "$T/sko" "nothing left to send"
+wantno "$T/sko" "pass --file, --dir"
+if [ -d "$T/sk" ]; then bad "built a bundle from only-skipped items"; else ok; fi
+CTX_HOME=$T/a $CTX send --to nobody --subject s --file "$T/w/.env" --allow-secrets --out "$T/sk2" >/dev/null 2>&1
+if [ -f "$T/sk2/items/.env" ]; then ok; else bad "--allow-secrets did not include the file"; fi
+
 echo "a good bundle exits 0"
 CTX_HOME=$T/b $CTX open "$T/b1" >/dev/null 2>&1; code good $? 0
 

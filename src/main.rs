@@ -12,11 +12,12 @@ mod identity;
 mod manifest;
 mod open;
 mod routes;
+mod seal;
 mod ui;
 mod trust;
 
 use clap::{Parser, Subcommand};
-use manifest::{AgentInfo, ItemKind};
+use manifest::AgentInfo;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -33,8 +34,19 @@ enum Cmd {
     Init { handle: String },
     /// Print your public handle and key, to give to someone else
     Whoami,
-    /// Add someone's key to your buddy list
+    /// Add someone's key to your buddy list (the signpub.boxpub token)
     Add { name: String, key: String },
+    /// Encrypt a bundle for one recipient. Nothing leaves this machine unsealed.
+    Seal {
+        dir: PathBuf,
+        #[arg(long)] to: String,
+        #[arg(long)] out: PathBuf,
+    },
+    /// Decrypt an envelope back into a bundle directory
+    Unseal {
+        file: PathBuf,
+        #[arg(long)] out: PathBuf,
+    },
     /// List your contacts and groups
     Contacts,
     /// Build a bundle
@@ -114,16 +126,56 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         }
         Cmd::Whoami => {
             let id = identity::Identity::load()?;
-            println!("{}\t{}", id.handle, id.public_b64());
+            println!("{}\t{}", id.handle, id.full_key());
         }
         Cmd::Add { name, key } => {
-            if !bundle::b64_decode_ok(&key) {
-                return Err("that key is not valid base64".into());
+            let (sign, boxpub) = identity::split_key(&key);
+            if !bundle::b64_decode_ok(&sign) {
+                return Err("that signing key is not valid base64".into());
+            }
+            if let Some(b) = &boxpub {
+                if !bundle::b64_decode_ok(b) {
+                    return Err("that encryption key is not valid base64".into());
+                }
             }
             let mut c = trust::Contacts::load();
-            c.keys.insert(key.trim().to_string(), name.clone());
+            c.keys.insert(sign.clone(), name.clone());
+            match &boxpub {
+                Some(b) => {
+                    c.box_keys.insert(sign, b.clone());
+                    println!("added {name} (verify + encrypt)");
+                }
+                None => println!(
+                    "added {name} (verify only -- no encryption key, so you cannot seal to them)"
+                ),
+            }
             c.save()?;
-            println!("added {name}");
+        }
+        Cmd::Seal { dir, to, out } => {
+            let c = trust::Contacts::load();
+            let Some(sign) = c.key_for_name(&to) else {
+                return Err(format!("no contact named {to}; ctx add {to} <key>").into());
+            };
+            let Some(boxpub) = c.box_keys.get(&sign) else {
+                return Err(format!(
+                    "{to} has no encryption key on file. Get their current \
+                     `ctx whoami` token (signpub.boxpub) and re-add them."
+                )
+                .into());
+            };
+            let env = seal::seal_dir(&dir, boxpub)?;
+            std::fs::write(&out, serde_json::to_vec(&env)?)?;
+            let n = std::fs::metadata(&out).map(|m| m.len()).unwrap_or(0);
+            println!("sealed to {to} -> {} ({n} bytes)", out.display());
+            println!("  the envelope reveals only their key, its size and the time it was made");
+        }
+        Cmd::Unseal { file, out } => {
+            let id = identity::Identity::load()?;
+            let env: seal::Envelope = serde_json::from_slice(&std::fs::read(&file)?)?;
+            seal::unseal_to_dir(&env, &id, &out)?;
+            println!("unsealed -> {}", out.display());
+            println!("  decryption proves nothing about the sender; run ctx open to see the");
+            println!("  signature verdict, which is what attributes it");
         }
         Cmd::Contacts => {
             let c = trust::Contacts::load();
@@ -163,8 +215,20 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 d.dedup();
                 println!("skipped build/cache dirs: {}", d.join(", "));
             }
+            let skipped = c.skipped_secret.len() + c.skipped_big.len();
             let specs = c.items;
             if specs.is_empty() {
+                // Distinguish "you passed nothing" from "everything you passed
+                // was filtered". The second read as the first, which sends you
+                // looking for a flag you already used.
+                if skipped > 0 {
+                    return Err(format!(
+                        "nothing left to send: all {skipped} item(s) were skipped \
+                         (listed above). Rename them, pick different paths, or pass \
+                         --allow-secrets if you are sure."
+                    )
+                    .into());
+                }
                 return Err("nothing to send: pass --file, --dir, --prompt, --decision or --memory".into());
             }
             if to.is_empty() {

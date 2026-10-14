@@ -47,6 +47,11 @@ pub struct Contacts {
     /// that context, so leaving a group cannot be done by the group.
     #[serde(default)]
     pub groups: BTreeMap<String, Vec<String>>,
+    /// signing pubkey -> X25519 pubkey, for sealing to them. Separate map so
+    /// contacts added before encryption existed keep working: they can be
+    /// verified, just not sealed to.
+    #[serde(default)]
+    pub box_keys: BTreeMap<String, String>,
 }
 
 impl Contacts {
@@ -70,5 +75,12 @@ impl Contacts {
 
     pub fn name_for(&self, pubkey: &str) -> Option<&str> {
         self.keys.get(pubkey).map(|s| s.as_str())
+    }
+
+    pub fn key_for_name(&self, name: &str) -> Option<String> {
+        self.keys
+            .iter()
+            .find(|(_, n)| n.as_str() == name)
+            .map(|(k, _)| k.clone())
     }
 }

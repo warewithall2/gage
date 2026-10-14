@@ -79,6 +79,41 @@ Caps: 2 MB per item, 25 MB per bundle.
 `--reply-to <id>` threads a bundle to the one it answers, so an exchange
 between two agents reads as a conversation.
 
+## Encryption
+
+Signing proves who wrote a bundle. It does not hide what is in it. That is
+fine on your own filesystem and not fine on a server, so nothing goes to a
+relay unsealed.
+
+    ctx seal ./handoff --to dana --out handoff.ctxb
+    ctx unseal handoff.ctxb --out ./incoming
+    ctx open ./incoming
+
+A sealed box (X25519 + XSalsa20-Poly1305) encrypts to the recipient's public
+key with a fresh ephemeral keypair. The envelope holds three fields: a version,
+the recipient's encryption key, and ciphertext. A relay therefore learns a
+recipient key, a size and a time -- not the subject, the filenames, the sender,
+or the payload. Verified by grepping a real envelope for the sender handle,
+subject and contents: none appear.
+
+The transport is anonymous and **authorship is proved by the signature inside
+the bundle instead**. That split is deliberate: end-to-end authorship survives
+the relay, and the relay never becomes an authority on who said what.
+`unseal` says so explicitly, because decryption proves only that the sender
+knew your public key -- which anyone does.
+
+Decrypted contents are still untrusted input. An item whose path escapes the
+bundle, or that the manifest never declared, is refused rather than written;
+both are unit-tested, since only a malicious *sender implementation* can
+produce them.
+
+Your `ctx whoami` token is now `signpub.boxpub`. Identities created before
+encryption existed gain an encryption key on next load **without changing the
+signing key**, so every bundle you signed previously stays verifiable.
+
+A contact with no encryption key on file can be verified but not sealed to,
+and `ctx seal` refuses rather than silently sending in the clear.
+
 ## Groups
 
 `--to` is a list from the start, and `group:<name>` is a valid recipient. In a
@@ -101,9 +136,9 @@ importer.
 
 ## Tests
 
-    cargo build --release && bash tests/attacks.sh
+    cargo build --release && cargo test --release && bash tests/attacks.sh
 
-30 checks. Every one is an attack that worked, or nearly worked, during
+61 checks plus 2 Rust unit tests. Every one is an attack that worked, or nearly worked, during
 development: frame-boundary forgery, payload swapping after signing, a listed
 contact claiming a third party's name, an unverified author name on a forward,
 and a trust label that was a substring of its own opposite.

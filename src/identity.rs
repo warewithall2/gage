@@ -13,6 +13,21 @@ use std::path::{Path, PathBuf};
 pub struct Identity {
     pub handle: String,
     signing: SigningKey,
+    /// X25519 secret for sealed boxes. Separate from the signing key rather
+    /// than derived from it: deriving one key from another needs a
+    /// domain-separated KDF done exactly right, and there is no benefit here
+    /// worth inventing crypto for.
+    sealing: crypto_box::SecretKey,
+}
+
+/// On-disk identity. The signing seed is preserved across an upgrade so that
+/// adding encryption does not change who you are -- every bundle you signed
+/// before stays verifiable.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct StoredKeys {
+    v: u32,
+    sign_seed: String,
+    box_secret: String,
 }
 
 pub fn home() -> PathBuf {
@@ -21,6 +36,24 @@ pub fn home() -> PathBuf {
         format!("{h}/.ctx")
     });
     PathBuf::from(base)
+}
+
+fn b64_32(s: &str) -> std::io::Result<[u8; 32]> {
+    let v = B64
+        .decode(s.trim())
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    v.try_into()
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "key is not 32 bytes"))
+}
+
+/// Split a `signpub.boxpub` token. The signing key alone is still accepted,
+/// because contacts added before encryption existed only have that one -- they
+/// can be verified but not sealed to.
+pub fn split_key(token: &str) -> (String, Option<String>) {
+    match token.trim().split_once('.') {
+        Some((a, b)) if !b.is_empty() => (a.to_string(), Some(b.to_string())),
+        _ => (token.trim().to_string(), None),
+    }
 }
 
 fn urandom32() -> std::io::Result<[u8; 32]> {
@@ -45,31 +78,75 @@ impl Identity {
             ));
         }
         let seed = urandom32()?;
-        let signing = SigningKey::from_bytes(&seed);
-        fs::write(&kp, B64.encode(seed))?;
+        let box_seed = urandom32()?;
+        let stored = StoredKeys {
+            v: 2,
+            sign_seed: B64.encode(seed),
+            box_secret: B64.encode(box_seed),
+        };
+        fs::write(&kp, serde_json::to_vec_pretty(&stored)?)?;
         set_private(&kp)?;
         fs::write(dir.join("handle"), handle)?;
-        Ok(Self { handle: handle.to_string(), signing })
+        Ok(Self {
+            handle: handle.to_string(),
+            signing: SigningKey::from_bytes(&seed),
+            sealing: crypto_box::SecretKey::from_bytes(box_seed),
+        })
     }
 
     pub fn load() -> std::io::Result<Self> {
         let dir = home();
-        let raw = fs::read_to_string(dir.join("identity.key"))?;
-        let bytes = B64
-            .decode(raw.trim())
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-        let seed: [u8; 32] = bytes.try_into().map_err(|_| {
-            std::io::Error::new(std::io::ErrorKind::InvalidData, "key is not 32 bytes")
-        })?;
+        let kp = dir.join("identity.key");
+        let raw = fs::read_to_string(&kp)?;
         let handle = fs::read_to_string(dir.join("handle"))
             .unwrap_or_else(|_| "unknown".into())
             .trim()
             .to_string();
-        Ok(Self { handle, signing: SigningKey::from_bytes(&seed) })
+
+        // v2 is JSON. A v1 file is a bare base64 signing seed from before
+        // encryption existed: upgrade it in place by ADDING a sealing key and
+        // keeping the signing seed, so the upgrade is not a key change.
+        if let Ok(st) = serde_json::from_str::<StoredKeys>(&raw) {
+            let seed = b64_32(&st.sign_seed)?;
+            let bs = b64_32(&st.box_secret)?;
+            return Ok(Self {
+                handle,
+                signing: SigningKey::from_bytes(&seed),
+                sealing: crypto_box::SecretKey::from_bytes(bs),
+            });
+        }
+        let seed = b64_32(raw.trim())?;
+        let box_seed = urandom32()?;
+        let stored = StoredKeys {
+            v: 2,
+            sign_seed: B64.encode(seed),
+            box_secret: B64.encode(box_seed),
+        };
+        fs::write(&kp, serde_json::to_vec_pretty(&stored)?)?;
+        set_private(&kp)?;
+        eprintln!("ctx: added an encryption key to this identity; your signing key is unchanged");
+        Ok(Self {
+            handle,
+            signing: SigningKey::from_bytes(&seed),
+            sealing: crypto_box::SecretKey::from_bytes(box_seed),
+        })
     }
 
     pub fn public_b64(&self) -> String {
         B64.encode(self.signing.verifying_key().to_bytes())
+    }
+
+    pub fn box_public_b64(&self) -> String {
+        B64.encode(self.sealing.public_key().as_bytes())
+    }
+
+    /// What you hand a colleague: both public keys, one token.
+    pub fn full_key(&self) -> String {
+        format!("{}.{}", self.public_b64(), self.box_public_b64())
+    }
+
+    pub fn unseal(&self, ct: &[u8]) -> Result<Vec<u8>, &'static str> {
+        self.sealing.unseal(ct).map_err(|_| "decryption failed: not sealed to your key")
     }
 
     pub fn sign_b64(&self, msg: &[u8]) -> String {
