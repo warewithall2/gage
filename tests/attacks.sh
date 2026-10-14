@@ -167,6 +167,57 @@ if [ -d "$T/sk" ]; then bad "built a bundle from only-skipped items"; else ok; f
 CTX_HOME=$T/a $CTX send --to nobody --subject s --file "$T/w/.env" --allow-secrets --out "$T/sk2" >/dev/null 2>&1
 if [ -f "$T/sk2/items/.env" ]; then ok; else bad "--allow-secrets did not include the file"; fi
 
+echo "relay: holds only ciphertext, and proves key possession before handing it over"
+RPORT=7799
+CTX_HOME=$T/relayhome $CTX relay --bind 127.0.0.1:$RPORT --store "$T/rstore" >/dev/null 2>&1 &
+rpid=$!
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  curl -s -m 1 http://127.0.0.1:$RPORT/health >/dev/null 2>&1 && break
+  sleep 0.3
+done
+if curl -s -m 2 http://127.0.0.1:$RPORT/health | grep -q '"ok":true'; then ok; else bad "relay did not start"; fi
+
+CTX_HOME=$T/a $CTX join 127.0.0.1:$RPORT >/dev/null 2>&1; code join $? 0
+CTX_HOME=$T/c $CTX join 127.0.0.1:$RPORT >/dev/null 2>&1
+# carol deliberately has NO local route from alice, so a successful pull can
+# only have come through the relay and not from local delivery.
+ck=$(CTX_HOME=$T/c $CTX whoami | cut -f2)
+ak=$(CTX_HOME=$T/a $CTX whoami | cut -f2)
+CTX_HOME=$T/a $CTX add carol "$ck" >/dev/null 2>&1
+CTX_HOME=$T/c $CTX add alice "$ak" >/dev/null 2>&1
+printf 'OCTOPUSGARDEN must never reach the relay\n' > "$T/w/rl.md"
+CTX_HOME=$T/a $CTX send --to carol --subject "PELICANBRIEF" --decision "$T/w/rl.md" --out "$T/rb" >/dev/null 2>&1
+CTX_HOME=$T/a $CTX push "$T/rb" --to carol >/dev/null 2>&1; code push $? 0
+if grep -rqF OCTOPUSGARDEN "$T/rstore" 2>/dev/null; then bad "relay stored plaintext payload"; else ok; fi
+if grep -rqF PELICANBRIEF "$T/rstore" 2>/dev/null; then bad "relay stored the subject"; else ok; fi
+
+bbox=$(CTX_HOME=$T/c $CTX whoami | cut -f2 | cut -d. -f2)
+abox=$(CTX_HOME=$T/a $CTX whoami | cut -f2 | cut -d. -f2)
+asign=$(CTX_HOME=$T/a $CTX whoami | cut -f2 | cut -d. -f1)
+
+n1=$(curl -s -m 2 -X POST http://127.0.0.1:$RPORT/challenge -d "{\"box_key\":\"$bbox\"}" | sed -n 's/.*"nonce":"\([^"]*\)".*/\1/p')
+if [ -n "$n1" ]; then ok; else bad "no challenge issued"; fi
+r=$(curl -s -m 2 -X POST http://127.0.0.1:$RPORT/fetch -d "{\"box_key\":\"$bbox\",\"nonce\":\"$n1\",\"sig\":\"AAAA\",\"delete\":true}")
+case "$r" in *"does not verify"*) ok;; *) bad "a bogus signature was accepted: $r";; esac
+r=$(curl -s -m 2 -X POST http://127.0.0.1:$RPORT/fetch -d "{\"box_key\":\"$bbox\",\"nonce\":\"$n1\",\"sig\":\"AAAA\"}")
+case "$r" in *"used challenge"*) ok;; *) bad "a challenge was reusable: $r";; esac
+n2=$(curl -s -m 2 -X POST http://127.0.0.1:$RPORT/challenge -d "{\"box_key\":\"$abox\"}" | sed -n 's/.*"nonce":"\([^"]*\)".*/\1/p')
+r=$(curl -s -m 2 -X POST http://127.0.0.1:$RPORT/fetch -d "{\"box_key\":\"$bbox\",\"nonce\":\"$n2\",\"sig\":\"AAAA\"}")
+case "$r" in *"another mailbox"*) ok;; *) bad "a challenge crossed mailboxes: $r";; esac
+r=$(curl -s -m 2 -X POST http://127.0.0.1:$RPORT/register -d "{\"sign_key\":\"$asign\",\"box_key\":\"$bbox\"}")
+case "$r" in *"already registered"*) ok;; *) bad "a mailbox was hijackable: $r";; esac
+c=$(curl -s -m 2 -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:$RPORT/send -d '{"to_box":"../../etc/passwd","envelope":"x"}')
+if [ "$c" = "400" ]; then ok; else bad "a path-escaping mailbox returned $c"; fi
+c=$(curl -s -m 2 -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:$RPORT/send -d '{"to_box":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","envelope":"x"}')
+if [ "$c" = "404" ]; then ok; else bad "an unregistered mailbox returned $c"; fi
+
+CTX_HOME=$T/c $CTX pull > "$T/pulled" 2>&1; code pull $? 0
+want "$T/pulled" "SENDER VERIFIED"
+if [ -d "$T/c/inbox/pending" ]; then ok; else bad "pull wrote nothing to pending"; fi
+# the relay moved it, but trust still comes from the signature, not the relay
+wantno "$T/pulled" "UNVERIFIABLE"
+kill $rpid 2>/dev/null; wait $rpid 2>/dev/null
+
 echo "a good bundle exits 0"
 CTX_HOME=$T/b $CTX open "$T/b1" >/dev/null 2>&1; code good $? 0
 

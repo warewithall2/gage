@@ -11,6 +11,8 @@ mod collect;
 mod identity;
 mod manifest;
 mod open;
+mod relay;
+mod remote;
 mod routes;
 mod seal;
 mod ui;
@@ -93,6 +95,25 @@ enum Cmd {
     Accept { id: String },
     /// Delete a pending bundle without reading it
     Reject { id: String },
+    /// Run a relay (on the box that will hold mail)
+    Relay {
+        /// Bind address. Default is the tailnet-only loopback-equivalent:
+        /// pass the tailnet IP explicitly rather than 0.0.0.0.
+        #[arg(long, default_value = "127.0.0.1:7788")] bind: String,
+        #[arg(long)] store: Option<PathBuf>,
+    },
+    /// Point this identity at a relay and register your mailbox
+    Join { addr: String },
+    /// Push a sealed envelope to the relay for a contact
+    Push {
+        dir: PathBuf,
+        #[arg(long)] to: String,
+    },
+    /// Collect anything waiting for you on the relay into inbox/pending
+    Pull {
+        /// leave envelopes on the relay instead of deleting them
+        #[arg(long)] keep: bool,
+    },
     /// Serve the local viewer on 127.0.0.1
     Ui {
         #[arg(long, default_value = "7777")] port: u16,
@@ -390,6 +411,106 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             }
             std::fs::remove_dir_all(&p)?;
             println!("rejected {id}, deleted unread");
+        }
+        Cmd::Relay { bind, store } => {
+            let root = store.unwrap_or_else(|| identity::home().join("relaystore"));
+            relay::serve(&bind, root)?;
+        }
+        Cmd::Join { addr } => {
+            let id = identity::Identity::load()?;
+            let body = serde_json::json!({
+                "sign_key": id.public_b64(), "box_key": id.box_public_b64() })
+                .to_string();
+            remote::post(&addr, "/register", &body)?;
+            remote::set_relay(&addr)?;
+            println!("registered with {addr} and saved it as your relay");
+            println!("  the relay holds sealed envelopes; it cannot read them");
+        }
+        Cmd::Push { dir, to } => {
+            let addr = remote::relay_addr().ok_or("no relay set; ctx join <addr> first")?;
+            let c = trust::Contacts::load();
+            let sign = c.key_for_name(&to).ok_or(format!("no contact named {to}"))?;
+            let boxpub = c
+                .box_keys
+                .get(&sign)
+                .ok_or(format!("{to} has no encryption key on file; re-add them"))?;
+            let env = seal::seal_dir(&dir, boxpub)?;
+            let body = serde_json::json!({
+                "to_box": boxpub, "envelope": serde_json::to_string(&env)? })
+                .to_string();
+            let resp = remote::post(&addr, "/send", &body)?;
+            println!("pushed to {to} via {addr}");
+            println!("  {}", resp.trim());
+        }
+        Cmd::Pull { keep } => {
+            let addr = remote::relay_addr().ok_or("no relay set; ctx join <addr> first")?;
+            let id = identity::Identity::load()?;
+            // Prove possession of the signing key registered for this mailbox.
+            // Naming a key is not proof: anyone who has seen a `ctx whoami`
+            // line knows it.
+            let ch = remote::post(
+                &addr,
+                "/challenge",
+                &serde_json::json!({ "box_key": id.box_public_b64() }).to_string(),
+            )?;
+            let nonce = serde_json::from_str::<serde_json::Value>(&ch)
+                .ok()
+                .and_then(|v| v.get("nonce").and_then(|n| n.as_str()).map(String::from))
+                .ok_or("relay did not issue a challenge")?;
+            let body = serde_json::json!({
+                "box_key": id.box_public_b64(),
+                "nonce": nonce,
+                "sig": id.sign_b64(nonce.as_bytes()),
+                "delete": !keep,
+            })
+            .to_string();
+            let resp = remote::post(&addr, "/fetch", &body)?;
+            let v: serde_json::Value = serde_json::from_str(&resp)?;
+            let items = v.get("items").and_then(|i| i.as_array()).cloned().unwrap_or_default();
+            if items.is_empty() {
+                println!("nothing waiting on {addr}");
+            }
+            let pending = routes::pending_dir(&identity::home());
+            std::fs::create_dir_all(&pending)?;
+            let mut n = 0;
+            for it in &items {
+                let Some(raw) = it.get("envelope").and_then(|e| e.as_str()) else { continue };
+                let env: seal::Envelope = match serde_json::from_str(raw) {
+                    Ok(e) => e,
+                    Err(e) => {
+                        eprintln!("  skipped an unreadable envelope: {e}");
+                        continue;
+                    }
+                };
+                // Unseal into a temp dir first, read the id from the manifest,
+                // then move it into place: the relay does not get to choose
+                // the directory name an envelope lands in.
+                let tmp = identity::home().join(format!("tmp-pull-{}-{n}", std::process::id()));
+                let _ = std::fs::remove_dir_all(&tmp);
+                if let Err(e) = seal::unseal_to_dir(&env, &id, &tmp) {
+                    eprintln!("  skipped: {e}");
+                    let _ = std::fs::remove_dir_all(&tmp);
+                    continue;
+                }
+                let loaded = bundle::load(&tmp)?;
+                let dest = pending.join(&loaded.manifest.id);
+                if dest.exists() {
+                    println!("  already have {} -- left in place", loaded.manifest.id);
+                } else {
+                    routes::deliver(&tmp, &dest)?;
+                    println!(
+                        "  {}  {}  ({})",
+                        loaded.manifest.id,
+                        loaded.manifest.subject,
+                        loaded.trust.label()
+                    );
+                    n += 1;
+                }
+                let _ = std::fs::remove_dir_all(&tmp);
+            }
+            if n > 0 {
+                println!("\n{n} bundle(s) in inbox/pending -- ctx inbox, then accept or reject");
+            }
         }
         Cmd::Ui { port } => {
             ui::serve(port)?;

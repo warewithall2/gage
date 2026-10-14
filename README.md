@@ -114,6 +114,54 @@ signing key**, so every bundle you signed previously stays verifiable.
 A contact with no encryption key on file can be verified but not sealed to,
 and `ctx seal` refuses rather than silently sending in the clear.
 
+## Relay
+
+For the case where the other agent is not on your filesystem. The relay is
+deliberately stupid: it holds sealed envelopes addressed to an X25519 public
+key and hands them to whoever proves they hold the matching secret.
+
+On the host that will hold mail:
+
+    ctx relay --bind 100.x.y.z:7788
+
+On each machine:
+
+    ctx join 100.x.y.z:7788        # registers your mailbox, saves the address
+    ctx push ./handoff --to dana   # seals, then uploads
+    ctx pull                       # collects into inbox/pending
+
+**The relay cannot read what it stores.** Compromising it leaks metadata --
+which mailbox has mail, how big, when -- and no content. Verified in the test
+suite by pushing a bundle with distinctive subject and payload strings and
+grepping the relay's store: neither appears.
+
+Four properties the relay enforces, each tested:
+
+- **Fetching requires proof of key possession, not a key name.** Anyone who
+  has seen a `ctx whoami` line knows your public key, so a name-only scheme
+  would let a stranger drain your inbox. The relay issues a random challenge
+  and requires an ed25519 signature over it.
+- **A challenge is consumed on first use.** A replayable signature is a stolen
+  credential with a longer life.
+- **A challenge is bound to one mailbox**, so it cannot be redirected.
+- **First registration of a mailbox wins.** Rebinding a box key to a different
+  signing key would be mailbox takeover by re-registration.
+
+Base64 keys become directory names, so they are validated rather than trusted:
+base64 contains `/`, and `/` in a path component is how a mailbox escapes its
+directory. Unregistered mailboxes are refused, so the relay cannot be used as
+storage for keys nobody will collect.
+
+Bind it to a tailnet address, not `0.0.0.0`. On a tailnet, WireGuard already
+provides the encrypted channel and there is no public exposure, so no TLS and
+no domain are needed. **Security does not depend on the network** -- the
+payload is a sealed box either way -- so the same binary can later sit behind
+a reverse proxy on a public address with no change to the envelope.
+
+Trust still comes from the signature inside the bundle, never from the relay.
+A bundle that arrives via a relay from someone you have not added reads
+`SENDER NOT ON YOUR LIST`, exactly as it would locally.
+
 ## Groups
 
 `--to` is a list from the start, and `group:<name>` is a valid recipient. In a
@@ -138,7 +186,7 @@ importer.
 
     cargo build --release && cargo test --release && bash tests/attacks.sh
 
-61 checks plus 2 Rust unit tests. Every one is an attack that worked, or nearly worked, during
+77 checks plus 2 Rust unit tests. Every one is an attack that worked, or nearly worked, during
 development: frame-boundary forgery, payload swapping after signing, a listed
 contact claiming a third party's name, an unverified author name on a forward,
 and a trust label that was a substring of its own opposite.
