@@ -1,0 +1,15 @@
+[Unit]
+Description=ctx: pull from the relay and notify on new bundles
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/ctx watch --every 120
+Restart=on-failure
+RestartSec=30
+# It reads your ctx home and talks to the relay; nothing else.
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=default.target

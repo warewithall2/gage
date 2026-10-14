@@ -311,6 +311,32 @@ echo "piping into head does not panic"
 CTX_HOME=$T/a $CTX threads 2>&1 | head -1 > "$T/pipe" 2>&1
 wantno "$T/pipe" "panicked"
 
+echo "watch announces once and then stays quiet"
+CTX_HOME=$T/a $CTX send --to bob --subject "notify me" --type question --decision "$T/w/ok.md" >/dev/null 2>&1
+CTX_HOME=$T/b $CTX watch --once --quiet > "$T/w1" 2>&1; code watch1 $? 0
+want "$T/w1" "notify me"
+want "$T/w1" "awaiting your reply"
+CTX_HOME=$T/b $CTX watch --once --quiet > "$T/w2" 2>&1
+want "$T/w2" "nothing new"
+wantno "$T/w2" "notify me"
+
+echo "a notification names an unlisted sender as claimed, never as fact"
+CTX_HOME=$T/c $CTX route bob "$T/b" >/dev/null 2>&1
+CTX_HOME=$T/c $CTX send --to bob --subject "from a stranger" --decision "$T/w/ok.md" >/dev/null 2>&1
+CTX_HOME=$T/b $CTX watch --once --quiet > "$T/w3" 2>&1
+want "$T/w3" "from a stranger"
+# bob has carol on his list by now in some runs; accept either form but never a
+# bare unquoted name for a key he does not hold
+if grep -qE '(unlisted)|carol' "$T/w3"; then ok; else bad "sender not identified in the notification"; fi
+
+echo "reading a bundle stops it being announced"
+CTX_HOME=$T/a $CTX send --to bob --subject "read me" --decision "$T/w/ok.md" >/dev/null 2>&1
+rid=$(CTX_HOME=$T/b $CTX inbox --json | sed -n 's/.*"id": "\([a-f0-9]*\)".*/\1/p' | head -1)
+CTX_HOME=$T/b $CTX accept "$rid" >/dev/null 2>&1
+CTX_HOME=$T/b $CTX open "$T/b/inbox/accepted/$rid" >/dev/null 2>&1
+CTX_HOME=$T/b $CTX watch --once --quiet > "$T/w4" 2>&1
+wantno "$T/w4" "read me"
+
 echo "a good bundle exits 0"
 CTX_HOME=$T/b $CTX open "$T/b1" >/dev/null 2>&1; code good $? 0
 

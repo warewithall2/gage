@@ -63,6 +63,33 @@ fn handle(stream: TcpStream) -> std::io::Result<()> {
         ("GET", "/api/state") => {
             respond(stream, "200 OK", "application/json", &state_json())
         }
+        ("GET", "/api/threads") => {
+            respond(stream, "200 OK", "application/json", &threads_json())
+        }
+        ("POST", t) if t.starts_with("/api/read/") => {
+            let id = t.rsplit('/').next().unwrap_or("");
+            if id.is_empty() || id.len() > 64 || !id.chars().all(|c| c.is_ascii_hexdigit()) {
+                return respond(stream, "400 Bad Request", "application/json", "{\"error\":\"bad id\"}");
+            }
+            let mut st = crate::state::LocalState::load();
+            match st.mark_read(id) {
+                Ok(()) => respond(stream, "200 OK", "application/json", "{\"ok\":true}"),
+                Err(e) => respond(stream, "500 Internal Server Error", "application/json",
+                    &serde_json::json!({"error": e.to_string()}).to_string()),
+            }
+        }
+        ("POST", t) if t.starts_with("/api/close/") => {
+            let id = t.rsplit('/').next().unwrap_or("");
+            if id.is_empty() || id.len() > 64 || !id.chars().all(|c| c.is_ascii_hexdigit()) {
+                return respond(stream, "400 Bad Request", "application/json", "{\"error\":\"bad id\"}");
+            }
+            let mut st = crate::state::LocalState::load();
+            match st.close(id) {
+                Ok(()) => respond(stream, "200 OK", "application/json", "{\"ok\":true}"),
+                Err(e) => respond(stream, "500 Internal Server Error", "application/json",
+                    &serde_json::json!({"error": e.to_string()}).to_string()),
+            }
+        }
         ("POST", t) if t.starts_with("/api/accept/") || t.starts_with("/api/reject/") => {
             let accept = t.starts_with("/api/accept/");
             let id = t.rsplit('/').next().unwrap_or("");
@@ -154,6 +181,96 @@ fn state_json() -> String {
         "groups": contacts.groups.iter().map(|(g, m)| serde_json::json!({
             "name": g, "members": m.len() })).collect::<Vec<_>>(),
         "routes": routes.local,
+    })
+    .to_string()
+}
+
+/// Conversations, which is what a person actually wants to look at. The flat
+/// bundle list answered "what arrived"; this answers "what is going on and
+/// does any of it need me".
+fn threads_json() -> String {
+    let me_id = crate::identity::Identity::load().ok();
+    let mine = me_id.as_ref().map(|i| i.public_b64()).unwrap_or_default();
+    let st = crate::state::LocalState::load();
+    let contacts = crate::trust::Contacts::load();
+    let home = crate::identity::home();
+
+    // Where each bundle lives decides what can be done with it: a pending one
+    // can be accepted or rejected, an accepted one read.
+    let mut stage_of: std::collections::BTreeMap<String, (&str, String)> = Default::default();
+    let mut trust_of: std::collections::BTreeMap<String, (String, Vec<String>)> = Default::default();
+    let mut manifests = Vec::new();
+    for (name, dir) in [
+        ("pending", crate::routes::pending_dir(&home)),
+        ("accepted", crate::routes::accepted_dir(&home)),
+        ("sent", crate::routes::sent_dir(&home)),
+    ] {
+        for (_, l) in crate::routes::list(&dir) {
+            let id = l.manifest.id.clone();
+            stage_of.entry(id.clone()).or_insert((name, dir.join(&id).display().to_string()));
+            trust_of.entry(id.clone()).or_insert((l.trust.label().to_string(), l.tampered.clone()));
+            if !manifests.iter().any(|m: &crate::manifest::Manifest| m.id == id) {
+                manifests.push(l.manifest);
+            }
+        }
+    }
+
+    let threads = crate::state::threads(manifests, &st, &mine);
+    let rows: Vec<serde_json::Value> = threads
+        .iter()
+        .map(|t| {
+            let msgs: Vec<serde_json::Value> = t
+                .messages
+                .iter()
+                .map(|m| {
+                    let is_mine = m.from.key == mine;
+                    let (stage, path) = stage_of
+                        .get(&m.id)
+                        .cloned()
+                        .unwrap_or(("unknown", String::new()));
+                    let (trust, tampered) = trust_of.get(&m.id).cloned().unwrap_or_default();
+                    serde_json::json!({
+                        "id": m.id,
+                        "mine": is_mine,
+                        "type": m.msg_type.label(),
+                        "expects_reply": m.msg_type.expects_reply(),
+                        "created": m.created,
+                        "subject": m.subject,
+                        "stage": stage,
+                        "path": path,
+                        "read": is_mine || st.is_read(&m.id),
+                        "trust": trust,
+                        "tampered": tampered,
+                        "forwarded": m.is_forwarded(),
+                        "hops": m.chain.len(),
+                        "claimed_name": m.from.handle,
+                        "known_as": contacts.name_for(&m.from.key),
+                        "prompts": m.prompt_count(),
+                        "memories": m.memory_count(),
+                        "bytes": m.total_bytes(),
+                        "items": m.items.iter().map(|i| serde_json::json!({
+                            "kind": format!("{:?}", i.kind).to_lowercase(),
+                            "path": i.path.strip_prefix("items/").unwrap_or(&i.path),
+                            "bytes": i.bytes,
+                        })).collect::<Vec<_>>(),
+                    })
+                })
+                .collect();
+            serde_json::json!({
+                "id": t.id,
+                "subject": t.subject,
+                "state": t.state.label(),
+                "unread": t.unread,
+                "messages": msgs,
+            })
+        })
+        .collect();
+
+    serde_json::json!({
+        "me": me_id.map(|i| serde_json::json!({ "handle": i.handle, "key": i.public_b64() })),
+        "threads": rows,
+        "contacts": contacts.keys.iter().map(|(k, n)| serde_json::json!({
+            "name": n, "key": k })).collect::<Vec<_>>(),
     })
     .to_string()
 }

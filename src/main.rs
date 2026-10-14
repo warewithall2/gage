@@ -10,6 +10,7 @@ mod bundle;
 mod collect;
 mod identity;
 mod manifest;
+mod notify;
 mod open;
 mod relay;
 mod remote;
@@ -135,6 +136,15 @@ enum Cmd {
         /// leave envelopes on the relay instead of deleting them
         #[arg(long)] keep: bool,
     },
+    /// Poll the relay and notify when something new arrives
+    Watch {
+        /// seconds between polls
+        #[arg(long, default_value = "120")] every: u64,
+        /// check once and exit, for a systemd timer or a cron entry
+        #[arg(long)] once: bool,
+        /// print instead of firing a desktop notification
+        #[arg(long)] quiet: bool,
+    },
     /// Serve the local viewer on 127.0.0.1
     Ui {
         #[arg(long, default_value = "7777")] port: u16,
@@ -192,6 +202,90 @@ fn all_manifests() -> Vec<manifest::Manifest> {
     out.sort_by(|a, b| a.id.cmp(&b.id));
     out.dedup_by(|a, b| a.id == b.id);
     out
+}
+
+/// Collect anything waiting on the relay into inbox/pending.
+///
+/// Shared by `pull` and `watch` rather than duplicated: a watcher that
+/// collected differently from a manual pull would announce bundles the user
+/// could then not find.
+fn pull_once(keep: bool) -> Result<(), Box<dyn std::error::Error>> {
+    pull_inner(keep, false)
+}
+
+/// `quiet` suppresses the nothing-to-do line. A watcher polls on an interval,
+/// and a line per poll turns its journal into noise that hides the one entry
+/// that mattered.
+fn pull_inner(keep: bool, quiet: bool) -> Result<(), Box<dyn std::error::Error>> {
+        let addr = remote::relay_addr().ok_or("no relay set; ctx join <addr> first")?;
+        let id = identity::Identity::load()?;
+        // Prove possession of the signing key registered for this mailbox.
+        // Naming a key is not proof: anyone who has seen a `ctx whoami`
+        // line knows it.
+        let ch = remote::post(
+            &addr,
+            "/challenge",
+            &serde_json::json!({ "box_key": id.box_public_b64() }).to_string(),
+        )?;
+        let nonce = serde_json::from_str::<serde_json::Value>(&ch)
+            .ok()
+            .and_then(|v| v.get("nonce").and_then(|n| n.as_str()).map(String::from))
+            .ok_or("relay did not issue a challenge")?;
+        let body = serde_json::json!({
+            "box_key": id.box_public_b64(),
+            "nonce": nonce,
+            "sig": id.sign_b64(nonce.as_bytes()),
+            "delete": !keep,
+        })
+        .to_string();
+        let resp = remote::post(&addr, "/fetch", &body)?;
+        let v: serde_json::Value = serde_json::from_str(&resp)?;
+        let items = v.get("items").and_then(|i| i.as_array()).cloned().unwrap_or_default();
+        if items.is_empty() && !quiet {
+            println!("nothing waiting on {addr}");
+        }
+        let pending = routes::pending_dir(&identity::home());
+        std::fs::create_dir_all(&pending)?;
+        let mut n = 0;
+        for it in &items {
+            let Some(raw) = it.get("envelope").and_then(|e| e.as_str()) else { continue };
+            let env: seal::Envelope = match serde_json::from_str(raw) {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("  skipped an unreadable envelope: {e}");
+                    continue;
+                }
+            };
+            // Unseal into a temp dir first, read the id from the manifest,
+            // then move it into place: the relay does not get to choose
+            // the directory name an envelope lands in.
+            let tmp = identity::home().join(format!("tmp-pull-{}-{n}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&tmp);
+            if let Err(e) = seal::unseal_to_dir(&env, &id, &tmp) {
+                eprintln!("  skipped: {e}");
+                let _ = std::fs::remove_dir_all(&tmp);
+                continue;
+            }
+            let loaded = bundle::load(&tmp)?;
+            let dest = pending.join(&loaded.manifest.id);
+            if dest.exists() {
+                println!("  already have {} -- left in place", loaded.manifest.id);
+            } else {
+                routes::deliver(&tmp, &dest)?;
+                println!(
+                    "  {}  {}  ({})",
+                    loaded.manifest.id,
+                    loaded.manifest.subject,
+                    loaded.trust.label()
+                );
+                n += 1;
+            }
+            let _ = std::fs::remove_dir_all(&tmp);
+        }
+        if n > 0 {
+            println!("\n{n} bundle(s) in inbox/pending -- ctx inbox, then accept or reject");
+        }
+    Ok(())
 }
 
 fn main() -> ExitCode {
@@ -612,74 +706,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             println!("  {}", resp.trim());
         }
         Cmd::Pull { keep } => {
-            let addr = remote::relay_addr().ok_or("no relay set; ctx join <addr> first")?;
-            let id = identity::Identity::load()?;
-            // Prove possession of the signing key registered for this mailbox.
-            // Naming a key is not proof: anyone who has seen a `ctx whoami`
-            // line knows it.
-            let ch = remote::post(
-                &addr,
-                "/challenge",
-                &serde_json::json!({ "box_key": id.box_public_b64() }).to_string(),
-            )?;
-            let nonce = serde_json::from_str::<serde_json::Value>(&ch)
-                .ok()
-                .and_then(|v| v.get("nonce").and_then(|n| n.as_str()).map(String::from))
-                .ok_or("relay did not issue a challenge")?;
-            let body = serde_json::json!({
-                "box_key": id.box_public_b64(),
-                "nonce": nonce,
-                "sig": id.sign_b64(nonce.as_bytes()),
-                "delete": !keep,
-            })
-            .to_string();
-            let resp = remote::post(&addr, "/fetch", &body)?;
-            let v: serde_json::Value = serde_json::from_str(&resp)?;
-            let items = v.get("items").and_then(|i| i.as_array()).cloned().unwrap_or_default();
-            if items.is_empty() {
-                println!("nothing waiting on {addr}");
-            }
-            let pending = routes::pending_dir(&identity::home());
-            std::fs::create_dir_all(&pending)?;
-            let mut n = 0;
-            for it in &items {
-                let Some(raw) = it.get("envelope").and_then(|e| e.as_str()) else { continue };
-                let env: seal::Envelope = match serde_json::from_str(raw) {
-                    Ok(e) => e,
-                    Err(e) => {
-                        eprintln!("  skipped an unreadable envelope: {e}");
-                        continue;
-                    }
-                };
-                // Unseal into a temp dir first, read the id from the manifest,
-                // then move it into place: the relay does not get to choose
-                // the directory name an envelope lands in.
-                let tmp = identity::home().join(format!("tmp-pull-{}-{n}", std::process::id()));
-                let _ = std::fs::remove_dir_all(&tmp);
-                if let Err(e) = seal::unseal_to_dir(&env, &id, &tmp) {
-                    eprintln!("  skipped: {e}");
-                    let _ = std::fs::remove_dir_all(&tmp);
-                    continue;
-                }
-                let loaded = bundle::load(&tmp)?;
-                let dest = pending.join(&loaded.manifest.id);
-                if dest.exists() {
-                    println!("  already have {} -- left in place", loaded.manifest.id);
-                } else {
-                    routes::deliver(&tmp, &dest)?;
-                    println!(
-                        "  {}  {}  ({})",
-                        loaded.manifest.id,
-                        loaded.manifest.subject,
-                        loaded.trust.label()
-                    );
-                    n += 1;
-                }
-                let _ = std::fs::remove_dir_all(&tmp);
-            }
-            if n > 0 {
-                println!("\n{n} bundle(s) in inbox/pending -- ctx inbox, then accept or reject");
-            }
+            pull_once(keep)?;
         }
         Cmd::Threads { mine } => {
             let st = state::LocalState::load();
@@ -767,6 +794,38 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             st.close(&thread)?;
             println!("thread {thread} marked closed locally");
             println!("  (your view only -- the other side decides their own)");
+        }
+        Cmd::Watch { every, once, quiet } => {
+            // The interval is a trade: shorter means you hear sooner, and it
+            // also tells the relay operator more precisely when you are
+            // active, since fetch timing is metadata they can see. Two
+            // minutes is slow enough not to be a presence feed.
+            let every = every.max(10);
+            loop {
+                // Pull before counting, so arrivals are collected and then
+                // announced once, rather than announced and collected later.
+                if remote::relay_addr().is_some() {
+                    if let Err(e) = pull_inner(false, true) {
+                        eprintln!("ctx watch: pull failed: {e}");
+                    }
+                }
+                let arrivals = notify::new_arrivals();
+                if !arrivals.is_empty() {
+                    let (title, body) = notify::summarise(&arrivals);
+                    let urgent = arrivals.iter().any(|a| a.expects_reply);
+                    if quiet || !notify::desktop(&title, &body, urgent) {
+                        println!("{title}\n{body}");
+                    }
+                    let ids: Vec<String> = arrivals.iter().map(|a| a.id.clone()).collect();
+                    notify::mark_announced(&ids);
+                } else if once {
+                    println!("nothing new");
+                }
+                if once {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_secs(every));
+            }
         }
         Cmd::Ui { port } => {
             ui::serve(port)?;

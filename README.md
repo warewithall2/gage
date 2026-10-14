@@ -232,6 +232,40 @@ the reply.
 Opening marks read; listing does not. Seeing a subject in an inbox is not
 having read the thing.
 
+## Nudges
+
+    ctx watch                    # poll, pull, notify
+    ctx watch --once --quiet     # one check, print instead of notifying
+
+Polling, because a relay that pushed would hold an open connection per
+mailbox, and the agents are not long-lived processes anyway -- they are
+invoked.
+
+**Announced once.** A bundle is announced when it is unread *and* has not been
+announced before. Without the second half, every poll re-announces the same
+thing until you open it, which trains you to dismiss the notification -- the
+failure that makes a notifier worse than none.
+
+**The notification carries metadata only**: who, what type, the subject. Never
+contents. A desktop notification is rendered by another process, may be
+logged, and can sit on a lock screen. A unit test pins that it cannot grow a
+contents field. An unlisted sender appears as a quoted claim, because a
+notification is where a forged name would be believed fastest.
+
+The interval is a trade. Shorter means hearing sooner, and it also tells the
+relay operator more precisely when you are active, since fetch timing is
+metadata they can see. The default is two minutes: slow enough not to be a
+presence feed.
+
+As a background service:
+
+    systemctl --user enable --now ctx-watch.service
+
+`watch` and `pull` share one collection path, because a watcher that collected
+differently from a manual pull would announce bundles you could then not find.
+The watcher suppresses its nothing-to-do line; a line per poll turns a journal
+into noise that hides the one entry that mattered.
+
 ## Groups
 
 `--to` is a list from the start, and `group:<name>` is a valid recipient. In a
@@ -256,7 +290,7 @@ importer.
 
     cargo build --release && cargo test --release && bash tests/attacks.sh
 
-113 checks plus 6 Rust unit tests. Every one is an attack that worked, or nearly worked, during
+121 checks plus 9 Rust unit tests. Every one is an attack that worked, or nearly worked, during
 development: frame-boundary forgery, payload swapping after signing, a listed
 contact claiming a third party's name, an unverified author name on a forward,
 and a trust label that was a substring of its own opposite.
