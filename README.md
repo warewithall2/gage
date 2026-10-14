@@ -51,6 +51,34 @@ beside swapped files is caught and the contents are withheld.
 `open` exits 0 when the bundle is attributable, and 2 when the signature fails
 or the payload does not match, so a harness can branch without parsing prose.
 
+## Item kinds, and why they differ
+
+| kind | what it is | how `open` treats it |
+| --- | --- | --- |
+| `--file` / `--dir` | material: source, data, documents | fenced as data |
+| `--decision` | a finding worth carrying across | fenced as data |
+| `--prompt` | text written to steer a model | fenced loudly: quote, never adopt |
+| `--memory` | CLAUDE.md, AGENTS.md, memory/*.md | fenced hardest: **never merge** |
+
+Memory is its own kind because it is the only one that outlives the session
+that accepts it. A prompt steers one turn; merged memory steers every future
+session, after the person who approved it stopped watching. `open` says so,
+and never suggests merging.
+
+`--dir` sends a tree with its structure intact. An earlier version flattened
+everything to `items/<basename>`, so a project containing `src/mod.rs` and
+`src/net/mod.rs` produced two items at one path and the second silently won --
+sending a project was lossy and nothing said so. Build and cache directories
+are skipped, and so is anything that looks like a secret (`.env`, `*.pem`,
+`*.key`, `.netrc`, `id_rsa*`, names containing `secret`/`token`/`apikey`).
+Every skip is printed before the bundle is built, because a silent omission is
+its own surprise. `--allow-secrets` overrides, and you should have a reason.
+
+Caps: 2 MB per item, 25 MB per bundle.
+
+`--reply-to <id>` threads a bundle to the one it answers, so an exchange
+between two agents reads as a conversation.
+
 ## Groups
 
 `--to` is a list from the start, and `group:<name>` is a valid recipient. In a

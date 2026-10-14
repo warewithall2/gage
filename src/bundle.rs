@@ -62,28 +62,28 @@ pub fn create(
     subject: &str,
     to: &[String],
     agent: Option<AgentInfo>,
-    specs: &[(ItemKind, PathBuf)],
+    in_reply_to: Option<String>,
+    specs: &[(ItemKind, String, PathBuf)],
 ) -> std::io::Result<Manifest> {
     fs::create_dir_all(out.join("items"))?;
     let now = now_rfc3339();
     let mut items = Vec::new();
-    for (kind, src) in specs {
+    for (kind, rel, src) in specs {
         let data = fs::read(src)?;
-        let name = src
-            .file_name()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_else(|| "item".into());
-        let rel = format!("items/{name}");
-        if !path_is_safe(&rel) {
+        if !path_is_safe(rel) {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
                 format!("unsafe item path: {rel}"),
             ));
         }
-        fs::write(out.join(&rel), &data)?;
+        // Nested paths are now preserved, so the parent dirs must exist.
+        if let Some(parent) = Path::new(rel).parent() {
+            fs::create_dir_all(out.join(parent))?;
+        }
+        fs::write(out.join(rel), &data)?;
         items.push(Item {
             kind: *kind,
-            path: rel,
+            path: rel.clone(),
             sha256: sha256_hex(&data),
             bytes: data.len() as u64,
             note: None,
@@ -119,6 +119,7 @@ pub fn create(
         to: to.to_vec(),
         agent,
         chain: vec![Hop { by: me, at: now, action: HopAction::Created }],
+        in_reply_to,
         items,
     };
     write_signed(out, id, &m)?;
@@ -174,6 +175,9 @@ pub fn forward(src: &Path, out: &Path, id: &Identity, to: &[String]) -> std::io:
     let mut m = loaded.manifest;
     fs::create_dir_all(out.join("items"))?;
     for it in &m.items {
+        if let Some(parent) = std::path::Path::new(&it.path).parent() {
+            fs::create_dir_all(out.join(parent))?;
+        }
         fs::copy(src.join(&it.path), out.join(&it.path))?;
     }
     m.from = Peer { handle: id.handle.clone(), key: id.public_b64() };

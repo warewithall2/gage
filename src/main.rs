@@ -7,6 +7,7 @@
 //! the instant-messenger model that does not transfer.
 
 mod bundle;
+mod collect;
 mod identity;
 mod manifest;
 mod open;
@@ -45,6 +46,17 @@ enum Cmd {
         #[arg(long)] file: Vec<PathBuf>,
         #[arg(long)] prompt: Vec<PathBuf>,
         #[arg(long)] decision: Vec<PathBuf>,
+        /// An agent's persistent memory (CLAUDE.md, AGENTS.md, memory/*.md).
+        /// Fenced hardest on receipt: it outlives the session that accepts it.
+        #[arg(long)] memory: Vec<PathBuf>,
+        /// A whole directory, structure preserved, build dirs and
+        /// secret-looking files skipped
+        #[arg(long)] dir: Vec<PathBuf>,
+        /// Include files that look like secrets (.env, *.pem, *.key). Off by
+        /// default, and you should have a reason.
+        #[arg(long)] allow_secrets: bool,
+        /// Bundle id this one answers
+        #[arg(long)] reply_to: Option<String>,
         #[arg(long)] agent: Option<String>,
         #[arg(long)] model: Option<String>,
     },
@@ -125,14 +137,35 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 println!("group:{g}\t{} member(s)", members.len());
             }
         }
-        Cmd::Send { to, subject, out, file, prompt, decision, agent, model } => {
+        Cmd::Send {
+            to, subject, out, file, prompt, decision, memory, dir,
+            allow_secrets, reply_to, agent, model,
+        } => {
             let id = identity::Identity::load()?;
-            let mut specs: Vec<(ItemKind, PathBuf)> = Vec::new();
-            specs.extend(file.into_iter().map(|p| (ItemKind::File, p)));
-            specs.extend(prompt.into_iter().map(|p| (ItemKind::Prompt, p)));
-            specs.extend(decision.into_iter().map(|p| (ItemKind::Decision, p)));
+            let c = collect::collect(&file, &prompt, &decision, &memory, &dir, allow_secrets)?;
+            // Skips are printed BEFORE the bundle is built, so a sender sees
+            // what is not going out while they can still change their mind.
+            if !c.skipped_secret.is_empty() {
+                println!("skipped (look like secrets, --allow-secrets to include):");
+                for f in &c.skipped_secret {
+                    println!("  {f}");
+                }
+            }
+            if !c.skipped_big.is_empty() {
+                println!("skipped (over the per-item size limit):");
+                for f in &c.skipped_big {
+                    println!("  {f}");
+                }
+            }
+            if !c.skipped_dir.is_empty() {
+                let mut d = c.skipped_dir.clone();
+                d.sort();
+                d.dedup();
+                println!("skipped build/cache dirs: {}", d.join(", "));
+            }
+            let specs = c.items;
             if specs.is_empty() {
-                return Err("nothing to send: pass --file, --prompt or --decision".into());
+                return Err("nothing to send: pass --file, --dir, --prompt, --decision or --memory".into());
             }
             if to.is_empty() {
                 return Err("no recipient: pass --to <handle|group:name>".into());
@@ -145,7 +178,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             let stage = out.clone().unwrap_or_else(|| {
                 identity::home().join(format!("outbox/{}", std::process::id()))
             });
-            let m = bundle::create(&stage, &id, &subject, &to, ag, &specs)?;
+            let m = bundle::create(&stage, &id, &subject, &to, ag, reply_to, &specs)?;
             let mut delivered = Vec::new();
             for who in &to {
                 if let Some(h) = routes.home_of(who) {
@@ -157,7 +190,16 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     delivered.push(format!("{who} -> {}", dest.display()));
                 }
             }
-            println!("bundle {} -- {} item(s), signed by {}", m.id, m.items.len(), id.handle);
+            println!(
+                "bundle {} -- {} item(s), {} bytes, signed by {}",
+                m.id, m.items.len(), m.total_bytes(), id.handle
+            );
+            if m.memory_count() > 0 {
+                println!(
+                    "  {} MEMORY item(s): these persist in whoever accepts them",
+                    m.memory_count()
+                );
+            }
             for d in &delivered {
                 println!("  delivered {d}");
             }

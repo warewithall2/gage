@@ -80,6 +80,9 @@ pub fn deliver(src: &std::path::Path, dest: &std::path::Path) -> std::io::Result
                 format!("refusing to deliver unsafe path: {}", it.path),
             ));
         }
+        if let Some(parent) = std::path::Path::new(&it.path).parent() {
+            fs::create_dir_all(dest.join(parent))?;
+        }
         fs::copy(src.join(&it.path), dest.join(&it.path))?;
     }
     Ok(())

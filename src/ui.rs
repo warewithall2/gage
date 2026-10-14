@@ -126,9 +126,15 @@ fn state_json() -> String {
                     "forwarded": m.is_forwarded(),
                     "hops": m.chain.len(),
                     "prompts": m.prompt_count(),
+                    "memories": m.memory_count(),
+                    "bytes": m.total_bytes(),
+                    "in_reply_to": m.in_reply_to,
                     "items": m.items.iter().map(|i| serde_json::json!({
                         "kind": format!("{:?}", i.kind).to_lowercase(),
-                        "path": i.path, "bytes": i.bytes,
+                        // Strip the items/ prefix for display: the reader cares
+                        // about src/net/mod.rs, not the bundle's internals.
+                        "path": i.path.strip_prefix("items/").unwrap_or(&i.path),
+                        "bytes": i.bytes,
                     })).collect::<Vec<_>>(),
                     "tampered": l.tampered,
                     "agent": m.agent.as_ref().map(|a| serde_json::json!({

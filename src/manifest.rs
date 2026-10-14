@@ -44,6 +44,15 @@ pub enum ItemKind {
     /// A decision or finding the sender wants carried across. Material, but
     /// the part a human actually wants to read first.
     Decision,
+    /// An agent's persistent memory: CLAUDE.md, AGENTS.md, a memory/*.md file.
+    ///
+    /// The HIGHEST-risk kind, and the reason it is not just another file. A
+    /// prompt influences one turn; memory that gets merged influences every
+    /// future session, after the human who approved it has stopped watching.
+    /// Accepting memory is closer to editing your own configuration than to
+    /// reading a message, so `ctx open` fences it hardest and never suggests
+    /// merging it.
+    Memory,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -97,6 +106,10 @@ pub struct Manifest {
     pub agent: Option<AgentInfo>,
     /// Oldest first. `chain[0].by` is the original author.
     pub chain: Vec<Hop>,
+    /// The bundle this one answers, if any. Threading, so an exchange between
+    /// two agents reads as a conversation instead of a pile of files.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub in_reply_to: Option<String>,
     pub items: Vec<Item>,
 }
 
@@ -117,6 +130,14 @@ impl Manifest {
 
     pub fn prompt_count(&self) -> usize {
         self.items.iter().filter(|i| i.kind == ItemKind::Prompt).count()
+    }
+
+    pub fn memory_count(&self) -> usize {
+        self.items.iter().filter(|i| i.kind == ItemKind::Memory).count()
+    }
+
+    pub fn total_bytes(&self) -> u64 {
+        self.items.iter().map(|i| i.bytes).sum()
     }
 }
 
