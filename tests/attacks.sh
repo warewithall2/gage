@@ -187,7 +187,10 @@ CTX_HOME=$T/a $CTX add carol "$ck" >/dev/null 2>&1
 CTX_HOME=$T/c $CTX add alice "$ak" >/dev/null 2>&1
 printf 'OCTOPUSGARDEN must never reach the relay\n' > "$T/w/rl.md"
 CTX_HOME=$T/a $CTX send --to carol --subject "PELICANBRIEF" --decision "$T/w/rl.md" --out "$T/rb" >/dev/null 2>&1
-CTX_HOME=$T/a $CTX push "$T/rb" --to carol >/dev/null 2>&1; code push $? 0
+CTX_HOME=$T/a $CTX push "$T/rb" --to carol > "$T/pg" 2>&1
+code pushgate $? 1
+want "$T/pg" "about to send OFF THIS MACHINE"
+CTX_HOME=$T/a $CTX push "$T/rb" --to carol --yes >/dev/null 2>&1; code push $? 0
 if grep -rqF OCTOPUSGARDEN "$T/rstore" 2>/dev/null; then bad "relay stored plaintext payload"; else ok; fi
 if grep -rqF PELICANBRIEF "$T/rstore" 2>/dev/null; then bad "relay stored the subject"; else ok; fi
 
@@ -217,6 +220,29 @@ if [ -d "$T/c/inbox/pending" ]; then ok; else bad "pull wrote nothing to pending
 # the relay moved it, but trust still comes from the signature, not the relay
 wantno "$T/pulled" "UNVERIFIABLE"
 kill $rpid 2>/dev/null; wait $rpid 2>/dev/null
+
+echo "outbound scan refuses content that should not leave, and redacts it"
+printf 'ask dana.okafor@acmelending.co.uk about limits\n' > "$T/w/leak.md"
+CTX_HOME=$T/a $CTX send --to nobody --subject s --decision "$T/w/leak.md" --out "$T/lk" > "$T/lko" 2>&1
+want "$T/lko" "outbound scan found"
+want "$T/lko" "[email]"
+wantno "$T/lko" "dana.okafor@acmelending.co.uk"
+if [ -d "$T/lk" ]; then bad "built a bundle despite a finding"; else ok; fi
+printf 'Authorization: Bearer ghp_aAbBcCdDeEfFgGhHiIjJkKlLmMnN0123\n' > "$T/w/tok.md"
+CTX_HOME=$T/a $CTX send --to nobody --subject s --decision "$T/w/tok.md" --out "$T/tk" > "$T/tko" 2>&1
+want "$T/tko" "github_token"
+wantno "$T/tko" "aAbBcCdDeEfFgGhHiIjJkKlLmMnN0123"
+CTX_HOME=$T/a $CTX send --to nobody --subject s --decision "$T/w/leak.md" --allow-findings --out "$T/lk2" >/dev/null 2>&1
+if [ -d "$T/lk2" ]; then ok; else bad "--allow-findings did not override"; fi
+printf 'plain prose about exponential backoff\n' > "$T/w/ok.md"
+CTX_HOME=$T/a $CTX send --to nobody --subject s --decision "$T/w/ok.md" --out "$T/okb" > "$T/oko" 2>&1
+if [ -d "$T/okb" ]; then ok; else bad "clean content was blocked"; fi
+
+echo "push stops for confirmation; send never leaves the machine so it does not"
+CTX_HOME=$T/a $CTX send --to bob --subject localsend --decision "$T/w/ok.md" >/dev/null 2>&1
+code localsend $? 0
+CTX_HOME=$T/a $CTX send --to nobody --subject unrouted --decision "$T/w/ok.md" --out "$T/ur" >/dev/null 2>&1
+code unrouted_send $? 0
 
 echo "a good bundle exits 0"
 CTX_HOME=$T/b $CTX open "$T/b1" >/dev/null 2>&1; code good $? 0

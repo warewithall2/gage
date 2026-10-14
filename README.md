@@ -114,6 +114,38 @@ signing key**, so every bundle you signed previously stays verifiable.
 A contact with no encryption key on file can be verified but not sealed to,
 and `ctx seal` refuses rather than silently sending in the clear.
 
+## Outbound safety
+
+Two gates on the way out, because the filename deny list only catches files
+that are *named* like secrets.
+
+**Content scan.** Every item is read before it is sealed. A `notes.md` that
+quotes a customer's address, or a log fragment with a bearer token still in
+it, is what actually leaks -- and its filename says nothing. `ctx send`
+refuses rather than warns: on an outbound path a warning arrives after the
+bundle exists, and for a remote recipient after it has gone.
+
+    outbound scan found 1 item(s) that should not leave:
+      notes.md:2  [email]  dana**********************.uk
+
+Findings are **redacted**. A tool whose job is to stop secrets leaving should
+not print them to a terminal or into an agent's context on the way to
+refusing. Built-in rules cover private-key blocks, AWS/Anthropic/OpenAI/GitHub/
+Slack/Google/Stripe key shapes, bearer tokens and real email addresses;
+`example.com` and a bare `sk-ant-` in prose do not fire. `~/.ctx/scrub.json`
+takes `never_send` literals (a customer domain, a codename) and `disable` for
+rules a repo legitimately trips. `--allow-findings` overrides and says so.
+
+**Confirmation before anything leaves.** `ctx push` prints the recipient,
+subject and file list and refuses without `--yes`. The accept gate protects
+the receiver; this protects the sender, and it is the one that matters when an
+agent is doing the sending.
+
+The gate is on `push`, not `send`, because `send` either delivers to a local
+route or writes a directory you still have to move -- nothing has left yet.
+An earlier version gated `send` on "has no local route", which is not the same
+as "is leaving", and it broke every send to an unrouted handle.
+
 ## Relay
 
 For the case where the other agent is not on your filesystem. The relay is
@@ -186,7 +218,7 @@ importer.
 
     cargo build --release && cargo test --release && bash tests/attacks.sh
 
-77 checks plus 2 Rust unit tests. Every one is an attack that worked, or nearly worked, during
+89 checks plus 6 Rust unit tests. Every one is an attack that worked, or nearly worked, during
 development: frame-boundary forgery, payload swapping after signing, a listed
 contact claiming a third party's name, an unverified author name on a forward,
 and a trust label that was a substring of its own opposite.

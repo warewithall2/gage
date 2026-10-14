@@ -14,6 +14,7 @@ mod open;
 mod relay;
 mod remote;
 mod routes;
+mod scrub;
 mod seal;
 mod ui;
 mod trust;
@@ -71,6 +72,9 @@ enum Cmd {
         #[arg(long)] allow_secrets: bool,
         /// Bundle id this one answers
         #[arg(long)] reply_to: Option<String>,
+        /// Proceed despite findings from the outbound content scan. Prints
+        /// what it is overriding.
+        #[arg(long)] allow_findings: bool,
         #[arg(long)] agent: Option<String>,
         #[arg(long)] model: Option<String>,
     },
@@ -108,6 +112,9 @@ enum Cmd {
     Push {
         dir: PathBuf,
         #[arg(long)] to: String,
+        /// Skip the confirmation. Required for a non-interactive push, so an
+        /// agent has to state that it meant to send this off the machine.
+        #[arg(long)] yes: bool,
     },
     /// Collect anything waiting for you on the relay into inbox/pending
     Pull {
@@ -212,7 +219,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         }
         Cmd::Send {
             to, subject, out, file, prompt, decision, memory, dir,
-            allow_secrets, reply_to, agent, model,
+            allow_secrets, reply_to, allow_findings, agent, model,
         } => {
             let id = identity::Identity::load()?;
             let c = collect::collect(&file, &prompt, &decision, &memory, &dir, allow_secrets)?;
@@ -236,6 +243,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 d.dedup();
                 println!("skipped build/cache dirs: {}", d.join(", "));
             }
+            let routes = routes::Routes::load();
             let skipped = c.skipped_secret.len() + c.skipped_big.len();
             let specs = c.items;
             if specs.is_empty() {
@@ -255,11 +263,33 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             if to.is_empty() {
                 return Err("no recipient: pass --to <handle|group:name>".into());
             }
+            // Outbound CONTENT scan. The filename deny list above catches
+            // .env; it says nothing about an innocent notes.md that quotes a
+            // customer address or still has a bearer token in it. Refuse
+            // rather than warn: on an outbound path a warning arrives after
+            // the bundle exists, and for a remote recipient after it has
+            // gone.
+            let findings = scrub::scan(&specs);
+            if !findings.is_empty() {
+                println!("outbound scan found {} item(s) that should not leave:", findings.len());
+                for f in &findings {
+                    println!("  {}:{}  [{}]  {}", f.path, f.line, f.rule, f.preview);
+                }
+                if !allow_findings {
+                    return Err(
+                        "refusing to build this bundle. Fix the files, add a rule to \
+                         ~/.ctx/scrub.json, or pass --allow-findings if they are false \
+                         positives."
+                            .into(),
+                    );
+                }
+                println!("  --allow-findings given: sending anyway");
+            }
+
             let ag = agent.map(|name| AgentInfo { name, model });
             // Built once into a staging dir, then delivered to each routed
             // recipient. Building per-recipient would give one payload a
             // different content id for every person who received it.
-            let routes = routes::Routes::load();
             let stage = out.clone().unwrap_or_else(|| {
                 identity::home().join(format!("outbox/{}", std::process::id()))
             });
@@ -426,8 +456,30 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             println!("registered with {addr} and saved it as your relay");
             println!("  the relay holds sealed envelopes; it cannot read them");
         }
-        Cmd::Push { dir, to } => {
+        Cmd::Push { dir, to, yes } => {
             let addr = remote::relay_addr().ok_or("no relay set; ctx join <addr> first")?;
+            // The human gate on the way OUT, and it belongs HERE rather than
+            // on `send`: `send` either delivers to a local route or writes a
+            // directory you still have to move, so nothing has left the
+            // machine yet. `push` is the moment it does. An earlier version
+            // gated `send` and broke every send to an unrouted handle,
+            // because "has no local route" is not the same as "is leaving".
+            let loaded = bundle::load(&dir)?;
+            if !yes {
+                println!("about to send OFF THIS MACHINE, via {addr}:");
+                println!("  to      : {to}");
+                println!("  subject : {}", loaded.manifest.subject);
+                println!("  bundle  : {}", loaded.manifest.id);
+                for it in &loaded.manifest.items {
+                    println!(
+                        "  {:?}  {}  ({} bytes)",
+                        it.kind,
+                        it.path.strip_prefix("items/").unwrap_or(&it.path),
+                        it.bytes
+                    );
+                }
+                return Err("not sent. Re-run with --yes once you have read the list above.".into());
+            }
             let c = trust::Contacts::load();
             let sign = c.key_for_name(&to).ok_or(format!("no contact named {to}"))?;
             let boxpub = c
