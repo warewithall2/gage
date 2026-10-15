@@ -28,7 +28,29 @@ See [offline-root.md](offline-root.md). Designed, not built. It changes what a
 person must keep for the life of an identity, so it is a decision rather than
 a patch. Its own designer says build the audit log first.
 
-## 3. The audit log and the policy engine
+## 3. Per-hop signatures on a forwarded bundle
+
+Only the LAST hop signs a bundle. `chain[0]` names the author, and a forwarder
+writes that field, so a forwarder can name anyone -- including a key the
+recipient trusts most -- attach a payload they wrote themselves, and sign it
+as an ordinary forward. The muse reviewer found this.
+
+What is fixed: `forward` now refuses to re-sign a bundle that does not verify,
+revalidates item paths before copying (an absolute path there truncated the
+forwarder's own identity key), and `open` no longer prints a forwarded
+author's local name as though it were established -- it says plainly that only
+the last hop signed and that the author is text the forwarder chose.
+
+What is not fixed: there is no cryptographic provenance across hops. Doing it
+properly means each hop signing what it received, which means carrying the
+original signed manifest inside the forward rather than editing one manifest
+along the way -- a nested envelope, like forwarding an email with the original
+attached. That is a format change and a real design task, not a patch.
+
+Until then the honest position is the one `open` now states: judge a forwarded
+bundle on its sender, who signed it, and treat the author as a claim.
+
+## 4. The audit log and the policy engine
 
 Both reviewers independently said the same thing about these: do not guess the
 schema. "Show me every instruction that crossed from this agent to that one
@@ -36,7 +58,7 @@ last quarter, with authorship and whether it was accepted" is the question an
 enterprise buyer actually asks, and the right shape for the answer comes from
 one design partner rather than from an implementer at 1am.
 
-## 4. The crash gap between the cut and the contact write
+## 5. The crash gap between the cut and the contact write
 
 `keychange --accept` and `retire` now write the retirement **first**, with a
 cut of 0 that places nothing below it, then take the real cut and relax to it.

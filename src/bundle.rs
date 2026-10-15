@@ -254,9 +254,18 @@ pub fn load(dir: &Path) -> std::io::Result<Loaded> {
                 .into(),
         ),
     }
+    let mut seen_paths: std::collections::BTreeSet<&str> = Default::default();
     for it in &manifest.items {
         if !path_is_safe(&it.path) {
             tampered.push(format!("{} (unsafe path)", it.path));
+            continue;
+        }
+        // Two entries naming one file verified independently, so a single
+        // payload could be declared twice with contradictory `kind` -- counted
+        // and fenced as both a file and a memory, which decides how loudly
+        // `open` warns about it.
+        if !seen_paths.insert(it.path.as_str()) {
+            tampered.push(format!("{} (declared more than once)", it.path));
             continue;
         }
         match fs::read(dir.join(&it.path)) {
@@ -277,9 +286,47 @@ pub fn load(dir: &Path) -> std::io::Result<Loaded> {
 /// Re-sign for a forward, appending to the chain rather than replacing it.
 pub fn forward(src: &Path, out: &Path, id: &Identity, to: &[String]) -> std::io::Result<Manifest> {
     let loaded = load(src)?;
+    // Refuse to re-sign a bundle that does not verify.
+    //
+    // `forward` used to call `load` and ignore everything it said, so a
+    // forwarder could take a bundle whose payload no longer matched its
+    // digests, or whose signature was broken, and emit it under their own
+    // signature -- laundering it into something that verifies cleanly for the
+    // next recipient. The muse reviewer found that, and the sharper half of
+    // it: the item paths were copied without revalidation, so a crafted
+    // bundle declaring an ABSOLUTE path had `src.join(path)` and
+    // `out.join(path)` both resolve to that same file, and forwarding it
+    // truncated the forwarder's own `~/.ctx/identity.key`.
+    if !loaded.tampered.is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "refusing to forward a bundle that does not verify ({}). Forwarding \
+                 re-signs it under your key, which would present it to the next \
+                 recipient as sound.",
+                loaded.tampered.join(", ")
+            ),
+        ));
+    }
+    if matches!(loaded.trust, Trust::Unverified) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "refusing to forward a bundle whose signature does not verify: your \
+             signature would be the only one on it, which says it came from you",
+        ));
+    }
     let mut m = loaded.manifest;
     fs::create_dir_all(out.join("items"))?;
     for it in &m.items {
+        // Checked again here rather than trusted from `load`. This loop writes
+        // to the filesystem, and a guard one function away is a guard that a
+        // later refactor removes.
+        if !path_is_safe(&it.path) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("refusing to forward an item with an unsafe path: {}", it.path),
+            ));
+        }
         if let Some(parent) = std::path::Path::new(&it.path).parent() {
             fs::create_dir_all(out.join(parent))?;
         }

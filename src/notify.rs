@@ -55,6 +55,16 @@ pub fn new_arrivals() -> Vec<Pending> {
     let mut out = Vec::new();
     for (_, l) in crate::routes::list(&crate::routes::pending_dir(&home)) {
         let m = &l.manifest;
+        // A bundle that does not verify is not announced at all.
+        //
+        // Announce-once is keyed on the bundle id, so a bundle carrying
+        // somebody else's id got announced, `mark_announced` recorded that
+        // id, and the genuine arrival was then skipped as already seen -- a
+        // real message silenced by a fake one. `load` already reports the id
+        // mismatch; this is the part that was ignoring it.
+        if !l.tampered.is_empty() || matches!(l.trust, crate::trust::Trust::Unverified) {
+            continue;
+        }
         if st.is_read(&m.id) || seen.contains(&m.id) {
             continue;
         }
@@ -66,9 +76,9 @@ pub fn new_arrivals() -> Vec<Pending> {
                 // An unlisted key's claimed handle is quoted, because a
                 // notification is exactly where a forged name would be
                 // believed fastest.
-                .unwrap_or_else(|| format!("\"{}\" (unlisted)", m.from.handle)),
+                .unwrap_or_else(|| format!("\"{}\" (unlisted)", one_line(&m.from.handle, 40))),
             msg_type: m.msg_type.label().to_string(),
-            subject: m.subject.clone(),
+            subject: one_line(&m.subject, 120),
             expects_reply: m.msg_type.expects_reply(),
         });
     }
@@ -83,13 +93,43 @@ pub fn mark_announced(ids: &[String]) {
     save_announced(&s);
 }
 
+/// Flatten sender-controlled text to a single bounded line.
+///
+/// The subject and an unlisted handle go straight into a desktop
+/// notification, and both are written by the sender. Newlines were the
+/// problem: a subject containing them could forge extra arrival lines, or an
+/// "awaiting your reply" that nobody asked for, in a popup the reader has
+/// every reason to treat as the tool's own voice. Markup is stripped for the
+/// same reason -- some notification daemons render it -- and the length is
+/// capped so one subject cannot push the rest off the screen.
+fn one_line(s: &str, max: usize) -> String {
+    let flat: String = s
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .filter(|c| *c != '<' && *c != '>' && *c != '&')
+        .collect();
+    let flat = flat.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() > max {
+        let cut: String = flat.chars().take(max).collect();
+        format!("{cut}…")
+    } else {
+        flat
+    }
+}
+
 /// Fire a desktop notification. Absence of a notifier is not an error: on a
 /// server there is no desktop, and `ctx watch` still has to work there.
 pub fn desktop(title: &str, body: &str, urgent: bool) -> bool {
     let mut c = Command::new("notify-send");
     c.arg("--app-name=ctx")
         .arg(format!("--urgency={}", if urgent { "critical" } else { "normal" }))
-        .arg(title)
+        // `--` before the positional arguments, so a subject that begins with
+        // a dash is a subject rather than an option to notify-send. The
+        // arguments are passed as argv and never through a shell, so nothing
+        // here is executed; the risk was option injection, not command
+        // injection.
+        .arg("--")
+        .arg(one_line(title, 160))
         .arg(body);
     matches!(c.status(), Ok(s) if s.success())
 }
@@ -145,6 +185,27 @@ mod tests {
         let (t, b) = summarise(&v);
         assert!(t.contains('7'), "{t}");
         assert!(b.contains("and 3 more"), "{b}");
+    }
+
+    #[test]
+    fn sender_text_cannot_forge_extra_notification_lines() {
+        // A subject with newlines in it could write its own "awaiting your
+        // reply" line, or invent further arrivals, inside a popup the reader
+        // treats as the tool's own voice.
+        let forged = "innocent\nawaiting your reply\nctx: 4 new bundles";
+        let flat = one_line(forged, 120);
+        assert!(!flat.contains('\n'), "newlines survived: {flat:?}");
+        assert!(flat.starts_with("innocent"));
+    }
+
+    #[test]
+    fn notification_text_is_bounded_and_unmarked_up() {
+        let long = "x".repeat(500);
+        assert!(one_line(&long, 120).chars().count() <= 121);
+        assert_eq!(one_line("<b>bold</b> &amp;", 120), "bbold/b amp;");
+        // control characters go, including the ones that move a cursor
+        // a control character becomes a space, then whitespace collapses
+        assert_eq!(one_line("a\u{1b}[2Kb\tc", 120), "a [2Kb c");
     }
 
     #[test]

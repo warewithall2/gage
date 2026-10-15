@@ -487,9 +487,16 @@ which you keep reading mail they are also reading.
 
 `--to` is a list from the start, and `group:<name>` is a valid recipient. In a
 group most of what you see was not written by whoever posted it, so the
-manifest separates **author** from **sender** and `open` shows forwarded
-content as forwarded, with the hop count and a warning that any hop could have
-altered it before signing.
+manifest separates **author** from **sender**.
+
+Only the **last hop signs**, which is the honest and uncomfortable part: a
+forwarder writes `chain[0]`, so they can name anyone as the author, including
+someone you trust. `open` says that in those words rather than printing a
+known author's name as though it were established, and `forward` refuses to
+re-sign a bundle that does not verify — otherwise a forwarder could launder a
+broken bundle into one that checks out cleanly for the next recipient.
+Cryptographic provenance across hops needs each hop to sign what it received,
+which is a format change; see [docs/open-decisions.md](docs/open-decisions.md).
 
 ## What this is not
 
@@ -507,7 +514,7 @@ importer.
 
     cargo build --release && cargo test --release && bash tests/attacks.sh
 
-313 checks plus 37 Rust unit tests. Every one is an attack that worked, or
+322 checks plus 39 Rust unit tests. Every one is an attack that worked, or
 nearly worked, during development: frame-boundary forgery, payload swapping
 after signing, a listed contact claiming a third party's name, an unverified
 author name on a forward, a trust label that was a substring of its own

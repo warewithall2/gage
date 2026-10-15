@@ -68,7 +68,11 @@ CTX_HOME=$T/c $CTX add bob "$BK" >/dev/null
 CTX_HOME=$T/b $CTX forward "$T/b1" --to group:eng --out "$T/f1" >/dev/null
 CTX_HOME=$T/c $CTX open "$T/f1" > "$T/o7" 2>&1
 want "$T/o7" "FORWARDED"
-want "$T/o7" "CLAIMED, key not on your list"
+want "$T/o7" "a name, and a key not on your list"
+# the author of a forward is a claim by the forwarder even when the key IS
+# known, because only the last hop signs anything
+want "$T/o7" "Only the LAST hop signed"
+want "$T/o7" "forwarder can name anyone"
 
 echo "forwarding preserves the content id"
 id1=$(CTX_HOME=$T/b $CTX inspect "$T/b1" | awk '/^id/{print $3}')
@@ -1037,6 +1041,57 @@ if [ "$c" = "200" ]; then ok; else bad "the viewer did not recover (got '$c')"; 
 c=$(curl -s --noproxy '*' -m 5 -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:$DPORT/api/read/abcdef" 2>/dev/null)
 if [ "$c" = "403" ]; then ok; else bad "the guard was lost in the parser rewrite (got '$c')"; fi
 kill $dpid 2>/dev/null; wait $dpid 2>/dev/null
+
+echo "a forged bundle cannot launder itself through a forward, or silence a real one"
+# Muse's second pass. `forward` called `load` and ignored everything it said,
+# so a forwarder could re-sign a bundle whose payload no longer matched its
+# digests -- and the item paths were copied without revalidation, so a bundle
+# declaring an ABSOLUTE path had src.join(path) and out.join(path) resolve to
+# the same file, and forwarding it truncated the forwarder's own identity key.
+mkdir -p "$T/fw"
+printf 'original content\n' > "$T/w/fw.md"
+CTX_HOME=$T/a $CTX send --to nobody --subject "fwd" --decision "$T/w/fw.md" --out "$T/fw/one" >/dev/null 2>&1
+cp -r "$T/fw/one" "$T/fw/swapped"
+printf 'SWAPPEDPAYLOAD\n' > "$T/fw/swapped/items/fw.md"
+# bob holds a bundle whose payload no longer matches, and tries to forward it
+CTX_HOME=$T/b $CTX forward "$T/fw/swapped" --to group:eng --out "$T/fw/out" > "$T/fwo" 2>&1
+code fwlaunder $? 1
+want "$T/fwo" "refusing to forward a bundle that does not verify"
+if [ -d "$T/fw/out" ]; then bad "a laundered bundle was written anyway"; else ok; fi
+# a bundle with an absolute item path must not be forwardable either
+cp -r "$T/fw/one" "$T/fw/abs"
+python3 -c "
+import json
+p='$T/fw/abs/manifest.json'
+m=json.load(open(p)); m['items'][0]['path']='$T/fw/CANARY'
+json.dump(m, open(p,'w'), indent=2)"
+printf 'untouched\n' > "$T/fw/CANARY"
+CTX_HOME=$T/b $CTX forward "$T/fw/abs" --to group:eng --out "$T/fw/out2" > "$T/fwo2" 2>&1
+code fwabs $? 1
+if grep -q untouched "$T/fw/CANARY"; then ok; else bad "forwarding wrote outside the bundle"; fi
+
+echo "a notification cannot be forged or silenced by sender-controlled text"
+# A bundle carrying someone else's id used to be announced, and announce-once
+# recorded that id, so the genuine arrival was skipped as already seen.
+mkdir -p "$T"/{nf,ng}
+CTX_HOME=$T/nf $CTX init nina >/dev/null
+CTX_HOME=$T/ng $CTX init oren >/dev/null
+CTX_HOME=$T/ng $CTX add nina "$(CTX_HOME=$T/nf $CTX whoami | cut -f2)" >/dev/null
+CTX_HOME=$T/nf $CTX route oren "$T/ng" >/dev/null 2>&1
+printf 'real notice\n' > "$T/w/nf.md"
+nfid=$(CTX_HOME=$T/nf $CTX send --to oren --subject "the real one" --type question \
+       --decision "$T/w/nf.md" 2>/dev/null | head -1 | awk '{print $2}')
+# an impostor directory in oren's pending carrying the same id
+cp -r "$T/ng/inbox/pending/$nfid" "$T/ng/inbox/pending/${nfid%??}ff" 2>/dev/null || true
+CTX_HOME=$T/ng $CTX watch --once --quiet > "$T/nfw" 2>&1
+want "$T/nfw" "the real one"
+# a subject with newlines in it cannot write its own extra lines
+printf 'x\n' > "$T/w/nf2.md"
+CTX_HOME=$T/nf $CTX send --to oren --subject "innocent
+awaiting your reply
+ctx: 9 new bundles" --decision "$T/w/nf2.md" >/dev/null 2>&1
+CTX_HOME=$T/ng $CTX watch --once --quiet > "$T/nfw2" 2>&1
+if [ "$(grep -c 'new bundles' "$T/nfw2")" -le 1 ]; then ok; else bad "a subject forged extra notification lines"; fi
 
 echo "a good bundle exits 0"
 CTX_HOME=$T/b $CTX open "$T/b1" >/dev/null 2>&1; code good $? 0

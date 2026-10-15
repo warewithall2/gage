@@ -111,17 +111,29 @@ pub fn render(l: &Loaded, reveal: bool) -> Result<String, String> {
     }
     match m.author() {
         Some(a) if m.is_forwarded() => {
-            // Same rule for the author, and the same trap: an author key you
-            // have never verified gets its name from the manifest, so a
-            // forwarder could claim anything. Say which case this is.
+            // The author of a forwarded bundle is a CLAIM BY THE FORWARDER,
+            // always, even when the key named is one you know.
+            //
+            // The first version printed the author's local name when the key
+            // was on your list, which read as verification -- and nothing
+            // authenticates it. Only the last hop signs, so a forwarder
+            // writes `chain[0]` to say whatever they like: naming a key you
+            // trust, with a payload they wrote, is a single field edit. The
+            // muse reviewer found that. Recognising the key is still worth
+            // showing, because it tells you WHOSE name is being invoked, but
+            // it cannot be shown as a fact.
             let shown = match contacts.name_for(&a.key) {
-                Some(nm) => nm.to_string(),
-                None => format!("\"{}\" (CLAIMED, key not on your list)", a.handle),
+                Some(nm) => format!("\"{nm}\" -- a key you know, but see below"),
+                None => format!("\"{}\" -- a name, and a key not on your list", a.handle),
             };
             s.push_str(&format!(
-                "  authored by: {} (key {}…) -- FORWARDED, {} hop(s). The sender is\n\
-                 \x20              not the author; judge the content on the author, and\n\
-                 \x20              note that any hop could have altered it before signing.\n",
+                "  authored by: {} (key {}…)\n\
+                 \x20              FORWARDED, {} hop(s). Only the LAST hop signed this\n\
+                 \x20              bundle. Everything above about who wrote it is text\n\
+                 \x20              the forwarder chose, including the author's key, so a\n\
+                 \x20              forwarder can name anyone -- somebody you trust most\n\
+                 \x20              of all. Judge this on the SENDER, who signed it. If\n\
+                 \x20              the authorship matters, ask the named author.\n",
                 shown,
                 &a.key.chars().take(12).collect::<String>(),
                 m.chain.len().saturating_sub(1)
