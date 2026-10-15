@@ -119,6 +119,18 @@ and `ctx seal` refuses rather than silently sending in the clear.
 
 ## Outbound safety
 
+The scan reads bytes rather than text, and scans long lines in overlapping
+windows. Both of those are fixes: it used to read with `read_to_string` and
+skip anything that was not valid UTF-8, so appending one invalid byte to a
+file made the whole scan ignore it, and a line over 4000 bytes was skipped
+rather than truncated, so padding a line hid whatever was on it. A scan that
+can be switched off by the thing it is scanning is decoration.
+
+Findings are redacted to a fixed shape that reveals neither the tail nor the
+length -- the first version showed four leading characters, three trailing
+ones, and a star count that was the exact length, which for a short token is
+most of it, printed on the way to refusing.
+
 Symlinks are refused and reported, never followed. The deny list matches a
 file **name**, and a link's name says nothing about its target: `notes.md ->
 ~/.ssh/id_rsa` passed every check and shipped the key, and the content scan
@@ -489,7 +501,7 @@ importer.
 
     cargo build --release && cargo test --release && bash tests/attacks.sh
 
-295 checks plus 27 Rust unit tests. Every one is an attack that worked, or
+310 checks plus 37 Rust unit tests. Every one is an attack that worked, or
 nearly worked, during development: frame-boundary forgery, payload swapping
 after signing, a listed contact claiming a third party's name, an unverified
 author name on a forward, a trust label that was a substring of its own
@@ -502,5 +514,6 @@ squatted by quoting a public key, a symlink smuggling out a file nobody named,
 a chosen bundle id suppressing a real message, an id
 shaped like a path escaping the inbox, a witness pre-seeded with a junk
 signature and claimed later with a real one, a bundle with no provenance chain
-borrowing another message's id, and a revocation that left the old key trusted
-while it was being written.
+borrowing another message's id, a revocation that left the old key trusted
+while it was being written, a secret hidden from the outbound scan by one
+invalid byte, and an envelope that unpacked half of itself before refusing.

@@ -57,10 +57,13 @@ struct State {
     /// nonce -> box_key it was issued for
     challenges: HashMap<String, String>,
     /// A registration waiting for proof: (box_key, sign_key) -> the nonce the
-    /// relay sealed to that box key. Keyed by the PAIR, so two parties can
-    /// have a pending claim on the same mailbox at once and neither blocks
-    /// the other -- only the one who can open their nonce commits.
-    pending: HashMap<(String, String), String>,
+    /// relay sealed to that box key, and when it was issued. Keyed by the
+    /// PAIR, so two parties can have a pending claim on the same mailbox at
+    /// once and neither blocks the other -- only the one who can open their
+    /// nonce commits.
+    pending: HashMap<(String, String), (String, std::time::Instant)>,
+    /// nonce -> when it was issued, for age-based eviction.
+    challenge_age: HashMap<String, std::time::Instant>,
 }
 
 static STATE: Mutex<Option<State>> = Mutex::new(None);
@@ -90,6 +93,7 @@ pub fn serve(bind: &str, root: PathBuf) -> std::io::Result<()> {
         root: root.clone(),
         owners,
         challenges: HashMap::new(),
+        challenge_age: HashMap::new(),
         pending: HashMap::new(),
     });
     let l = TcpListener::bind(bind)?;
@@ -155,14 +159,19 @@ fn handle(stream: TcpStream) -> std::io::Result<()> {
     }
 }
 
-/// A fresh random nonce, from the same source the fetch challenge uses.
-fn new_nonce() -> String {
+/// A fresh random nonce, or None if the system cannot provide randomness.
+///
+/// The silent fallback this replaces returned 24 zero bytes when
+/// /dev/urandom could not be read, which would have made the registration
+/// nonce a known constant that any squatter could return as proof without
+/// holding the box secret. Unreachable on a healthy host, and a silent
+/// catastrophic default is still the wrong shape.
+fn new_nonce() -> Option<String> {
     use base64::{engine::general_purpose::STANDARD as B64, Engine};
     let mut buf = [0u8; 24];
-    if let Ok(mut f) = std::fs::File::open("/dev/urandom") {
-        let _ = f.read_exact(&mut buf);
-    }
-    B64.encode(buf)
+    let mut f = std::fs::File::open("/dev/urandom").ok()?;
+    f.read_exact(&mut buf).ok()?;
+    Some(B64.encode(buf))
 }
 
 fn do_register(stream: TcpStream, body: &[u8]) -> std::io::Result<()> {
@@ -194,21 +203,26 @@ fn do_register(stream: TcpStream, body: &[u8]) -> std::io::Result<()> {
         // Second leg: the caller returns the nonce, which they could only
         // have read by holding the box secret.
         Some(p) => {
-            let Some(want) = st.pending.get(&key).cloned() else {
+            let Some((want, _)) = st.pending.get(&key).cloned() else {
                 return reply(
                     stream,
                     "401 Unauthorized",
                     r#"{"error":"no registration in progress for that pair"}"#,
                 );
             };
-            // Constant-time is not the issue here: the nonce is single-use and
-            // random, and a wrong answer destroys the attempt either way.
+            // A wrong proof does NOT touch the pending entry.
+            //
+            // It used to remove it, which handed anyone a one-request denial
+            // of service: both keys are public, so an attacker posted a junk
+            // proof for somebody else's pair and deleted the nonce they were
+            // about to answer with, repeatable forever. Only the holder of
+            // the box secret can produce the right answer, so a wrong one
+            // tells the relay nothing except that somebody guessed.
             if p != want {
-                st.pending.remove(&key);
                 return reply(
                     stream,
                     "401 Unauthorized",
-                    r#"{"error":"proof does not match; start again"}"#,
+                    r#"{"error":"proof does not match"}"#,
                 );
             }
             st.pending.remove(&key);
@@ -227,17 +241,46 @@ fn do_register(stream: TcpStream, body: &[u8]) -> std::io::Result<()> {
             let Ok(raw): Result<[u8; 32], _> = raw.try_into() else {
                 return reply(stream, "400 Bad Request", r#"{"error":"bad box key"}"#);
             };
-            let nonce = new_nonce();
+            // An existing fresh claim keeps its nonce. Minting a new one on
+            // every first-leg request let an attacker rotate the nonce out
+            // from under the real owner by replaying leg one, which is the
+            // same denial of service by another route. Returning the same
+            // sealed nonce is safe: it is sealed to the owner's key, so the
+            // asker learns nothing by receiving it again.
+            let fresh = st
+                .pending
+                .get(&key)
+                .filter(|(_, at)| at.elapsed() < std::time::Duration::from_secs(600))
+                .map(|(n, _)| n.clone());
+            let Some(nonce) = fresh.or_else(|| Some(new_nonce()?)) else {
+                return reply(
+                    stream,
+                    "500 Internal Server Error",
+                    r#"{"error":"no randomness available"}"#,
+                );
+            };
             let pk = crypto_box::PublicKey::from_bytes(raw);
             let Ok(ct) = pk.seal(&mut crypto_box::aead::OsRng, nonce.as_bytes()) else {
                 return reply(stream, "500 Internal Server Error", r#"{"error":"seal failed"}"#);
             };
-            st.pending.insert(key, nonce);
-            if st.pending.len() > 10_000 {
-                // Bounded like the challenge map. A squatter can fill this
-                // with pending claims they can never complete, and clearing
-                // it costs legitimate callers one retry.
-                st.pending.clear();
+            st.pending.insert(key, (nonce, std::time::Instant::now()));
+            // Evict by AGE, oldest first, never wholesale. Clearing the whole
+            // map at a size limit was an unauthenticated denial of service:
+            // the first leg needs no proof of anything, so 10,001 junk claims
+            // wiped every legitimate proof in flight, and sustained flooding
+            // kept the window shut.
+            st.pending.retain(|_, (_, at)| at.elapsed() < std::time::Duration::from_secs(600));
+            while st.pending.len() > 10_000 {
+                if let Some(oldest) = st
+                    .pending
+                    .iter()
+                    .min_by_key(|(_, (_, at))| *at)
+                    .map(|(k, _)| k.clone())
+                {
+                    st.pending.remove(&oldest);
+                } else {
+                    break;
+                }
             }
             reply(
                 stream,
@@ -299,19 +342,34 @@ fn do_challenge(stream: TcpStream, body: &[u8]) -> std::io::Result<()> {
     let Ok(req) = serde_json::from_slice::<ChallengeReq>(body) else {
         return reply(stream, "400 Bad Request", r#"{"error":"bad body"}"#);
     };
-    let mut buf = [0u8; 24];
-    if let Ok(mut f) = std::fs::File::open("/dev/urandom") {
-        let _ = f.read_exact(&mut buf);
-    }
-    use base64::{engine::general_purpose::STANDARD as B64, Engine};
-    let nonce = B64.encode(buf);
+    let Some(nonce) = new_nonce() else {
+        return reply(stream, "500 Internal Server Error", r#"{"error":"no randomness available"}"#);
+    };
     let mut g = STATE.lock().unwrap();
     let st = g.as_mut().unwrap();
     // Issued even for an unknown mailbox, and with the same shape, so the
     // endpoint does not become an oracle for which keys are registered.
     st.challenges.insert(nonce.clone(), req.box_key);
-    if st.challenges.len() > 10_000 {
-        st.challenges.clear();
+    st.challenge_age.insert(nonce.clone(), std::time::Instant::now());
+    // Age-based, oldest-first, for the same reason as `pending`: /challenge
+    // needs no authentication at all, so a flood that cleared the map took
+    // every legitimate fetch down with it.
+    let cutoff = std::time::Duration::from_secs(600);
+    st.challenge_age.retain(|_, at| at.elapsed() < cutoff);
+    let live: std::collections::HashSet<String> = st.challenge_age.keys().cloned().collect();
+    st.challenges.retain(|n, _| live.contains(n));
+    while st.challenges.len() > 10_000 {
+        if let Some(oldest) = st
+            .challenge_age
+            .iter()
+            .min_by_key(|(_, at)| *at)
+            .map(|(k, _)| k.clone())
+        {
+            st.challenge_age.remove(&oldest);
+            st.challenges.remove(&oldest);
+        } else {
+            break;
+        }
     }
     reply(stream, "200 OK", &format!(r#"{{"nonce":"{nonce}"}}"#))
 }

@@ -99,11 +99,21 @@ pub fn unseal_to_dir(
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
     let m: crate::manifest::Manifest = serde_json::from_slice(&manifest)?;
 
-    std::fs::create_dir_all(out.join("items"))?;
-    std::fs::write(out.join("manifest.json"), &manifest)?;
-    std::fs::write(out.join("manifest.sig"), &pkg.sig)?;
-    let declared: std::collections::BTreeSet<&str> =
-        m.items.iter().map(|i| i.path.as_str()).collect();
+    // EVERYTHING is checked before anything is written.
+    //
+    // The first version wrote the manifest and then validated items as it
+    // went, so a refusal on the second item left the manifest and the first
+    // item sitting in the output directory -- a rejected envelope that had
+    // already unpacked part of itself. The muse reviewer found that, along
+    // with three more holes in the same loop: an item declared at the literal
+    // path `manifest.json` overwrote the manifest it was supposed to be
+    // described by, a duplicate path silently overwrote its first copy, and
+    // a package that simply omitted a declared item returned Ok.
+    let declared: std::collections::BTreeMap<&str, &crate::manifest::Item> =
+        m.items.iter().map(|i| (i.path.as_str(), i)).collect();
+    let mut seen: std::collections::BTreeSet<&str> = Default::default();
+    let mut writes: Vec<(String, Vec<u8>)> = Vec::new();
+
     for (path, b64) in &pkg.items {
         // Two distinct refusals, reported distinctly. They were one branch
         // with one message, and the path-escape test passed while reading
@@ -115,19 +125,57 @@ pub fn unseal_to_dir(
                 format!("envelope item path escapes the bundle: {path}"),
             ));
         }
-        if !declared.contains(path.as_str()) {
+        // Items live under items/. Anything else is aimed at the bundle's own
+        // files rather than at its payload.
+        if !path.starts_with("items/") {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("envelope item is not inside items/: {path}"),
+            ));
+        }
+        let Some(item) = declared.get(path.as_str()) else {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
                 format!("envelope contained an item the manifest does not declare: {path}"),
+            ));
+        };
+        if !seen.insert(item.path.as_str()) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("envelope declares {path} twice; the second would overwrite the first"),
             ));
         }
         let data = B64
             .decode(b64)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-        if let Some(parent) = Path::new(path).parent() {
+        // The digest is in the signed manifest, so checking it here means a
+        // substituted payload never reaches the disk at all, rather than being
+        // caught later by whoever happens to read the bundle.
+        if crate::bundle::sha256_hex(&data) != item.sha256 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("envelope item {path} does not match the digest in the manifest"),
+            ));
+        }
+        writes.push((path.clone(), data));
+    }
+    if seen.len() != declared.len() {
+        let missing: Vec<&str> =
+            declared.keys().filter(|k| !seen.contains(*k)).copied().collect();
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("envelope is missing declared item(s): {}", missing.join(", ")),
+        ));
+    }
+
+    std::fs::create_dir_all(out.join("items"))?;
+    std::fs::write(out.join("manifest.json"), &manifest)?;
+    std::fs::write(out.join("manifest.sig"), &pkg.sig)?;
+    for (path, data) in writes {
+        if let Some(parent) = Path::new(&path).parent() {
             std::fs::create_dir_all(out.join(parent))?;
         }
-        std::fs::write(out.join(path), data)?;
+        std::fs::write(out.join(&path), data)?;
     }
     Ok(())
 }
@@ -146,12 +194,18 @@ mod tests {
         Envelope { v: 1, to_box: B64.encode(to.as_bytes()), ct: B64.encode(ct) }
     }
 
-    fn manifest_json(paths: &[&str]) -> Vec<u8> {
+    /// `paths` is (bundle path, contents), so the fixture's digests are real.
+    /// They used to be the literal "00", which was fine while nothing checked
+    /// them -- and the moment the digest check landed it fired first and
+    /// short-circuited the test that was aimed at a different refusal.
+    fn manifest_json(paths: &[(&str, &[u8])]) -> Vec<u8> {
         let items: Vec<String> = paths
             .iter()
-            .map(|p| {
+            .map(|(p, body)| {
                 format!(
-                    r#"{{"kind":"file","path":"{p}","sha256":"00","bytes":2}}"#
+                    r#"{{"kind":"file","path":"{p}","sha256":"{}","bytes":{}}}"#,
+                    crate::bundle::sha256_hex(body),
+                    body.len()
                 )
             })
             .collect();
@@ -166,12 +220,15 @@ mod tests {
 
     #[test]
     fn rejects_items_the_manifest_does_not_declare() {
+        let _guard = HOME.lock().unwrap_or_else(|e| e.into_inner());
         let tmp = std::env::temp_dir().join(format!("ctx-seal-test-{}", std::process::id()));
-        // set_var is unsafe in this edition; the tests are single-threaded here.
+        let _ = std::fs::remove_dir_all(&tmp);
+        // set_var is unsafe in this edition; HOME serialises the tests that
+        // depend on it.
         unsafe { std::env::set_var("CTX_HOME", tmp.join("home")) };
         let id = crate::identity::Identity::create("tester").unwrap();
 
-        let man = manifest_json(&["items/ok.txt"]);
+        let man = manifest_json(&[("items/ok.txt", b"ok")]);
         // The package carries a second item the manifest never mentions.
         let pkg = Package {
             manifest: B64.encode(&man),
@@ -194,8 +251,11 @@ mod tests {
 
     #[test]
     fn rejects_a_path_that_escapes_the_bundle() {
+        let _guard = HOME.lock().unwrap_or_else(|e| e.into_inner());
         let tmp = std::env::temp_dir().join(format!("ctx-esc-test-{}", std::process::id()));
-        // set_var is unsafe in this edition; the tests are single-threaded here.
+        let _ = std::fs::remove_dir_all(&tmp);
+        // set_var is unsafe in this edition; HOME serialises the tests that
+        // depend on it.
         unsafe { std::env::set_var("CTX_HOME", tmp.join("home")) };
         let id = crate::identity::Identity::create("tester2").unwrap();
 
@@ -203,7 +263,7 @@ mod tests {
         // thing standing between this and a write outside the bundle is
         // path_is_safe.
         let escape = "items/../../../../tmp/ctx-pwned";
-        let man = manifest_json(&[escape]);
+        let man = manifest_json(&[(escape, b"owned")]);
         let pkg = Package {
             manifest: B64.encode(&man),
             sig: String::new(),
@@ -222,5 +282,110 @@ mod tests {
             "a file was written outside the bundle"
         );
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// `CTX_HOME` is process-global and `identity::home()` reads it, so every
+    /// test here would otherwise race every other one: cargo runs them on
+    /// several threads, one test's `set_var` lands under another's
+    /// `Identity::create`, and the failure looks like a bug in the code under
+    /// test rather than in the harness. The original comment claimed these
+    /// were single-threaded, which was true only while there were two of them.
+    static HOME: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Build an envelope from (declared, carried) and unseal it, returning the
+    /// output directory and the result.
+    fn try_unseal(
+        name: &str,
+        declared: &[(&str, &[u8])],
+        carried: Vec<(String, String)>,
+    ) -> (std::path::PathBuf, std::io::Result<()>) {
+        let _guard = HOME.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = std::env::temp_dir().join(format!("ctx-seal-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        unsafe { std::env::set_var("CTX_HOME", tmp.join("home")) };
+        let id = crate::identity::Identity::create(name).unwrap();
+        let man = manifest_json(declared);
+        let pkg = Package { manifest: B64.encode(&man), sig: String::new(), items: carried };
+        let env = seal_raw(&pkg, &crypto_box::PublicKey::from_bytes(
+            B64.decode(id.box_public_b64()).unwrap().try_into().unwrap(),
+        ));
+        let out = tmp.join("out");
+        let r = unseal_to_dir(&env, &id, &out);
+        (out, r)
+    }
+
+    #[test]
+    fn an_item_aimed_at_the_manifest_itself_is_refused() {
+        // `manifest.json` passes path_is_safe and can be declared, so it used
+        // to overwrite the very file it was described by -- the item write
+        // came after the manifest write, so the item won.
+        let (out, r) = try_unseal(
+            "selfaimed",
+            &[("manifest.json", b"forged")],
+            vec![("manifest.json".into(), B64.encode(b"forged"))],
+        );
+        let err = r.unwrap_err();
+        assert!(err.to_string().contains("not inside items/"), "got: {err}");
+        assert_ne!(
+            std::fs::read(out.join("manifest.json")).unwrap_or_default(),
+            b"forged".to_vec()
+        );
+    }
+
+    #[test]
+    fn nothing_is_written_when_the_envelope_is_refused() {
+        // The manifest and the first item used to be on disk before the loop
+        // reached the item that caused the refusal: a rejected envelope that
+        // had already unpacked part of itself.
+        let (out, r) = try_unseal(
+            "partial",
+            &[("items/ok.txt", b"ok")],
+            vec![
+                ("items/ok.txt".into(), B64.encode(b"ok")),
+                ("items/evil.txt".into(), B64.encode(b"no")),
+            ],
+        );
+        assert!(r.is_err());
+        assert!(!out.join("manifest.json").exists(), "the manifest was written anyway");
+        assert!(!out.join("items/ok.txt").exists(), "an item was written anyway");
+    }
+
+    #[test]
+    fn a_substituted_payload_never_reaches_the_disk() {
+        let (out, r) = try_unseal(
+            "swapped",
+            &[("items/a.txt", b"original")],
+            vec![("items/a.txt".into(), B64.encode(b"substituted"))],
+        );
+        let err = r.unwrap_err();
+        assert!(err.to_string().contains("does not match the digest"), "got: {err}");
+        assert!(!out.join("items/a.txt").exists());
+    }
+
+    #[test]
+    fn a_missing_declared_item_is_not_a_success() {
+        // This returned Ok, so a bundle could arrive with a declared item
+        // simply absent.
+        let (_out, r) = try_unseal(
+            "missing",
+            &[("items/a.txt", b"a"), ("items/b.txt", b"b")],
+            vec![("items/a.txt".into(), B64.encode(b"a"))],
+        );
+        let err = r.unwrap_err();
+        assert!(err.to_string().contains("missing declared item"), "got: {err}");
+    }
+
+    #[test]
+    fn a_duplicate_path_is_refused_rather_than_overwritten() {
+        let (_out, r) = try_unseal(
+            "dupe",
+            &[("items/a.txt", b"first")],
+            vec![
+                ("items/a.txt".into(), B64.encode(b"first")),
+                ("items/a.txt".into(), B64.encode(b"first")),
+            ],
+        );
+        let err = r.unwrap_err();
+        assert!(err.to_string().contains("twice"), "got: {err}");
     }
 }

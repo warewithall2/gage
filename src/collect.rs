@@ -29,29 +29,89 @@ const SKIP_DIRS: &[&str] = &[
     ".turbo", ".gradle", ".terraform", "vendor", ".DS_Store", ".ctx",
 ];
 
+/// Directories whose contents are secrets regardless of what the files in
+/// them are called.
+///
+/// The deny list matched only a basename, so `proj/.ssh/config`,
+/// `proj/.aws/credentials` and `proj/.docker/config.json` -- which holds
+/// base64 registry auth in a file named `config.json` -- all walked straight
+/// through. The muse reviewer found that. A name says nothing about a file
+/// sitting in a directory whose entire purpose is to hold credentials.
+const SECRET_DIRS: &[&str] = &[
+    ".ssh", ".aws", ".gnupg", ".docker", ".kube", ".config/gcloud", "secrets", "secret",
+    ".azure", ".gcp", "keys", ".netlify", ".terraform.d", ".chef", ".vault",
+];
+
 /// Files that should essentially never be handed to another party. Matched on
 /// the file name, lowercased.
 fn looks_secret(name: &str) -> bool {
     let n = name.to_ascii_lowercase();
+    // Suffix forms as well as prefix ones: `.env` was caught and `prod.env`
+    // was not, which is the form a real repository actually contains.
     n.starts_with(".env")
-        || n == ".netrc"
-        || n == ".npmrc"
-        || n == ".pypirc"
-        || n == ".git-credentials"
+        || n.ends_with(".env")
+        || n.contains(".env.")
+        // `contains` rather than `ends_with` for the named credential files,
+        // because the copy that leaks is `.npmrc-old` or `.netrc.bak` -- a
+        // backup somebody made while editing the real one.
+        || n.contains(".netrc")
+        || n.contains(".npmrc")
+        || n.contains(".pypirc")
+        || n.contains("git-credentials")
         || n == "credentials"
+        || n.starts_with("credentials.")
         || n == "identity.key"
         || n.starts_with("id_rsa")
         || n.starts_with("id_ed25519")
         || n.starts_with("id_ecdsa")
+        || n.starts_with("id_dsa")
         || n.ends_with(".pem")
         || n.ends_with(".key")
         || n.ends_with(".p12")
+        || n.ends_with(".p8")
         || n.ends_with(".pfx")
+        || n.ends_with(".jks")
         || n.ends_with(".keystore")
+        || n.ends_with(".kdbx")
+        || n.ends_with(".ovpn")
+        || n == "service-account.json"
+        || n == "token.json"
+        || n == "token"
         || n.contains("secret")
+        // Hyphen as well as underscore: `access-token.txt` and `api-key.txt`
+        // were both missed.
         || n.contains("_token")
+        || n.contains("-token")
+        || n.contains("token_")
         || n.contains("apikey")
         || n.contains("api_key")
+        || n.contains("api-key")
+        || n.contains("passwd")
+        || n.contains("password")
+}
+
+/// True when any directory component on the way to this file is one whose
+/// contents are credentials by definition.
+fn in_secret_dir(rel: &str) -> Option<String> {
+    let lower = rel.to_ascii_lowercase().replace('\\', "/");
+    let parts: Vec<&str> = lower.split('/').collect();
+    // The last component is the file itself, which `looks_secret` handles.
+    for (i, seg) in parts.iter().enumerate() {
+        if i + 1 == parts.len() {
+            break;
+        }
+        if SECRET_DIRS.contains(seg) {
+            return Some((*seg).to_string());
+        }
+        // Two-part entries like .config/gcloud.
+        if i + 2 < parts.len() {
+            let pair = format!("{}/{}", seg, parts[i + 1]);
+            if SECRET_DIRS.contains(&pair.as_str()) {
+                return Some(pair);
+            }
+        }
+    }
+    None
 }
 
 pub struct Collected {
@@ -108,9 +168,15 @@ fn add_one(
         _ => {}
     }
     let name = src.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
-    if looks_secret(&name) && !allow_secret {
-        c.skipped_secret.push(rel);
-        return Ok(());
+    if !allow_secret {
+        if looks_secret(&name) {
+            c.skipped_secret.push(rel);
+            return Ok(());
+        }
+        if let Some(dir) = in_secret_dir(&rel) {
+            c.skipped_secret.push(format!("{rel} (inside {dir}/)"));
+            return Ok(());
+        }
     }
     let len = std::fs::metadata(src)?.len();
     if len > MAX_ITEM_BYTES {
@@ -152,7 +218,8 @@ fn walk(c: &mut Collected, kind: ItemKind, root: &Path, base: &Path, allow_secre
             continue;
         }
         if p.is_dir() {
-            if SKIP_DIRS.contains(&name.as_str()) {
+            let lower = name.to_ascii_lowercase();
+            if SKIP_DIRS.iter().any(|d| d.eq_ignore_ascii_case(&lower)) {
                 c.skipped_dir.push(name);
                 continue;
             }

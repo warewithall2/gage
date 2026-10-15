@@ -943,6 +943,58 @@ d=json.load(open('$T/fd/contacts.json'))
 r=list(d['retired'].values())[0]
 sys.exit(0 if r['retired_seq'] > 0 else 1)" 2>/dev/null; then ok; else bad "the retirement was left at its fail-closed cut of 0"; fi
 
+echo "the outbound scan cannot be switched off by the file it is scanning"
+# Found while reviewing scrub.rs against its own threat model, 2026-10-15.
+# Two bypasses, each one character wide: the file was read with
+# read_to_string, so one invalid UTF-8 byte made the scan skip it entirely;
+# and a line longer than the window was skipped rather than truncated, so
+# padding a line hid whatever was on it.
+TOK=ghp_aAbBcCdDeEfFgGhHiIjJkKlLmMnN0123
+printf "token $TOK\n\xff\xfe binary byte\n" > "$T/w/sc-nonutf8.md"
+python3 -c "
+open('$T/w/sc-long.md','w').write('x'*5000 + ' $TOK\n')"
+python3 -c "
+open('$T/w/sc-straddle.md','w').write('y'*3990 + '$TOK' + 'z'*5000 + '\n')"
+for f in sc-nonutf8 sc-long sc-straddle; do
+  CTX_HOME=$T/a $CTX send --to nobody --subject s --decision "$T/w/$f.md" \
+    --out "$T/scout-$f" > "$T/sco-$f" 2>&1
+  want "$T/sco-$f" "outbound scan found"
+  if [ -d "$T/scout-$f" ]; then bad "$f built a bundle despite the secret"; else ok; fi
+  wantno "$T/sco-$f" "aAbBcCdDeEfFgGhHiIjJkKlLmMnN0123"
+done
+# and long innocent content is still not refused
+python3 -c "
+open('$T/w/sc-prose.md','w').write('ordinary words about exponential backoff '*300 + '\n')"
+CTX_HOME=$T/a $CTX send --to nobody --subject s --decision "$T/w/sc-prose.md" \
+  --out "$T/scout-prose" >/dev/null 2>&1
+if [ -d "$T/scout-prose" ]; then ok; else bad "long clean prose was refused"; fi
+
+echo "the deny list sees suffix forms, backup copies and credential directories"
+# Muse's fourth finding: the list matched a basename with prefix-only rules,
+# so prod.env, credentials.json, token.json, access-token.txt, api-key.txt,
+# id_dsa and key.p8 all walked through, as did anything in a directory whose
+# whole purpose is credentials -- proj/.ssh/config and proj/.docker/config.json
+# are files named `config`.
+mkdir -p "$T/dl/proj/.ssh" "$T/dl/proj/.docker" "$T/dl/proj/keys"
+for f in prod.env credentials.json token.json access-token.txt api-key.txt \
+         id_dsa key.p8 .npmrc-old .netrc.bak password.txt; do
+  printf 'DENYLISTBAIT\n' > "$T/dl/proj/$f"
+done
+printf 'DENYLISTBAIT\n' > "$T/dl/proj/.ssh/config"
+printf 'DENYLISTBAIT\n' > "$T/dl/proj/.docker/config.json"
+printf 'DENYLISTBAIT\n' > "$T/dl/proj/keys/innocuous.txt"
+printf 'ordinary content\n' > "$T/dl/proj/README.md"
+CTX_HOME=$T/a $CTX send --to nobody --subject s --dir "$T/dl/proj" --out "$T/dlout" > "$T/dlo" 2>&1
+if grep -rqF DENYLISTBAIT "$T/dlout" 2>/dev/null; then
+  bad "a secret-shaped file was shipped: $(grep -rlF DENYLISTBAIT "$T/dlout" | head -3 | tr '\n' ' ')"
+else ok; fi
+# the directory cases say which directory, not just that something was skipped
+want "$T/dlo" "inside .ssh/"
+want "$T/dlo" "inside .docker/"
+want "$T/dlo" "inside keys/"
+# and the ordinary file still goes
+if [ -e "$T/dlout/items/proj/README.md" ]; then ok; else bad "the ordinary file was dropped"; fi
+
 echo "a good bundle exits 0"
 CTX_HOME=$T/b $CTX open "$T/b1" >/dev/null 2>&1; code good $? 0
 

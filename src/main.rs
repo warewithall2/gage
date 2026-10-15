@@ -921,7 +921,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 .into()
             })?;
             let l = bundle::load(&dir)?;
-            print!("{}", open::render(&l, reveal));
+            print!("{}", open::render(&l, reveal).map_err(|e| -> Box<dyn std::error::Error> { e.into() })?);
             // Read state is set by rendering, not by listing: having seen a
             // subject line in an inbox is not having read the thing. It is
             // also bookkeeping, and bookkeeping must not turn a successful

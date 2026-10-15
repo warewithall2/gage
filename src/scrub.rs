@@ -48,16 +48,28 @@ impl Policy {
     }
 }
 
-/// Redact the middle of a match. Enough to recognise, not enough to use.
+/// Redact a match to a fixed shape that reveals neither its content nor its
+/// length.
+///
+/// The first version showed four leading characters, three trailing ones, and
+/// a star count that was the exact length up to 31 -- so for a short bearer
+/// token that was seven of sixteen characters plus the length, printed to a
+/// terminal, a log, and an agent's context on the way to refusing. The module
+/// header promises a finding never exposes the secret; this now keeps that
+/// promise rather than approximately keeping it.
+///
+/// Two leading characters survive for one reason: `aws_key` and `anthropic_key`
+/// are told apart by their prefix, and the rule name already says which
+/// matched, so the first two characters add recognisability without adding
+/// usable key material. Nothing from the end is shown, and the mask is a fixed
+/// width, so neither the length nor the tail leaks.
 fn redact(s: &str) -> String {
-    let t: String = s.chars().take(80).collect();
-    let n = t.chars().count();
-    if n <= 10 {
-        return "*".repeat(n);
+    let n = s.chars().count();
+    if n <= 6 {
+        return "*".repeat(8);
     }
-    let head: String = t.chars().take(4).collect();
-    let tail: String = t.chars().skip(n - 3).collect();
-    format!("{head}{}{tail}", "*".repeat(n.saturating_sub(7).min(24)))
+    let head: String = s.chars().take(2).collect();
+    format!("{head}{}", "*".repeat(8))
 }
 
 /// Hand-written matchers rather than a regex dependency. Each returns the
@@ -120,7 +132,11 @@ fn scan_line(line: &str, policy: &Policy) -> Option<(String, String)> {
                         .iter()
                         .any(|x| d.eq_ignore_ascii_case(x))
                 {
-                    return Some(("email".into(), redact(w)));
+                    // An email is reported by DOMAIN rather than redacted
+                    // to nothing: the point of the finding is "this names a
+                    // real person at a real company", and the domain is what
+                    // makes that legible without printing the address.
+                    return Some(("email".into(), format!("**@{d}")));
                 }
             }
         }
@@ -128,17 +144,34 @@ fn scan_line(line: &str, policy: &Policy) -> Option<(String, String)> {
     None
 }
 
+/// How much of one line is looked at in a single pass, and how much the next
+/// pass overlaps it so a token lying across the boundary is still seen. No
+/// credential shape here is anywhere near 256 characters.
+const WINDOW: usize = 4000;
+const OVERLAP: usize = 256;
+
 /// Scan the files that are about to become bundle items.
+///
+/// Two bypasses lived here, each a single character wide:
+///
+/// * the file was read with `read_to_string`, so anything that was not valid
+///   UTF-8 was silently skipped -- appending one invalid byte to a file made
+///   the entire content scan ignore it. It is read as bytes now and converted
+///   lossily, which leaves every ASCII credential shape intact.
+/// * a line longer than 4000 bytes was skipped rather than truncated, so
+///   padding a line past that made the secret on it invisible. Long lines are
+///   scanned in overlapping windows instead.
+///
+/// Both were found while reviewing this file against its own threat model: a
+/// scan that can be turned off by the thing it is scanning is decoration.
 pub fn scan(specs: &[(crate::manifest::ItemKind, String, std::path::PathBuf)]) -> Vec<Finding> {
     let policy = Policy::load();
     let mut out = Vec::new();
     for (_, rel, src) in specs {
-        let Ok(text) = std::fs::read_to_string(src) else { continue };
+        let Ok(raw) = std::fs::read(src) else { continue };
+        let text = String::from_utf8_lossy(&raw);
         for (n, line) in text.lines().enumerate() {
-            if line.len() > 4000 {
-                continue;
-            }
-            if let Some((rule, preview)) = scan_line(line, &policy) {
+            if let Some((rule, preview)) = scan_long_line(line, &policy) {
                 out.push(Finding {
                     path: display_path(rel),
                     line: n + 1,
@@ -150,6 +183,31 @@ pub fn scan(specs: &[(crate::manifest::ItemKind, String, std::path::PathBuf)]) -
         }
     }
     out
+}
+
+/// `scan_line` over a line of any length, in overlapping windows.
+///
+/// Char-indexed rather than byte-indexed: lossy conversion leaves multi-byte
+/// characters in place, and slicing one in half would panic.
+fn scan_long_line(line: &str, policy: &Policy) -> Option<(String, String)> {
+    if line.len() <= WINDOW {
+        return scan_line(line, policy);
+    }
+    let chars: Vec<char> = line.chars().collect();
+    let step = WINDOW - OVERLAP;
+    let mut start = 0;
+    while start < chars.len() {
+        let end = (start + WINDOW).min(chars.len());
+        let window: String = chars[start..end].iter().collect();
+        if let Some(hit) = scan_line(&window, policy) {
+            return Some(hit);
+        }
+        if end == chars.len() {
+            break;
+        }
+        start += step;
+    }
+    None
 }
 
 fn display_path(rel: &str) -> String {
@@ -183,6 +241,42 @@ mod tests {
         scan_line(line, &Policy::default()).map(|(r, _)| r)
     }
 
+    fn long_hit(line: &str) -> Option<String> {
+        scan_long_line(line, &Policy::default()).map(|(r, _)| r)
+    }
+
+    #[test]
+    fn a_long_line_is_scanned_rather_than_skipped() {
+        // The bypass: lines over the window were skipped, so padding a line
+        // past it hid whatever was on it. One character of padding was the
+        // whole attack.
+        let padded = "x".repeat(5000) + " ghp_aAbBcCdDeEfFgGhHiIjJkKlLmMnN0123";
+        assert_eq!(long_hit(&padded).as_deref(), Some("github_token"));
+    }
+
+    #[test]
+    fn a_token_straddling_a_window_boundary_is_still_seen() {
+        // Which is what the overlap is for. Placed deliberately across the
+        // first boundary, where a naive chunker loses it.
+        let tok = "ghp_aAbBcCdDeEfFgGhHiIjJkKlLmMnN0123";
+        let line = "y".repeat(WINDOW - 10) + tok + &"z".repeat(5000);
+        assert_eq!(long_hit(&line).as_deref(), Some("github_token"));
+    }
+
+    #[test]
+    fn a_window_boundary_in_the_middle_of_a_character_does_not_panic() {
+        // Lossy conversion leaves multi-byte characters in place, and the
+        // windows are char-indexed for exactly this reason.
+        let line = "é".repeat(WINDOW + 50) + " ghp_aAbBcCdDeEfFgGhHiIjJkKlLmMnN0123";
+        assert_eq!(long_hit(&line).as_deref(), Some("github_token"));
+    }
+
+    #[test]
+    fn long_prose_with_nothing_in_it_is_still_clean() {
+        let line = "ordinary words about exponential backoff ".repeat(300);
+        assert_eq!(long_hit(&line), None);
+    }
+
     #[test]
     fn catches_credentials_in_otherwise_innocent_text() {
         assert_eq!(hit("export KEY=sk-ant-api03-abcdefghijklmnop").as_deref(), Some("anthropic_key"));
@@ -198,6 +292,19 @@ mod tests {
         assert!(hit("see docs at example.com or mail me@example.com").is_none());
         assert!(hit("the sk-ant- prefix identifies an Anthropic key").is_none(), "a bare prefix in prose is not a credential");
         assert!(hit("bearer of bad news").is_none());
+    }
+
+    #[test]
+    fn a_redaction_reveals_neither_the_tail_nor_the_length() {
+        // Both were leaking: the last three characters, and the star count as
+        // the exact length.
+        let tok = "ghp_aAbBcCdDeEfFgGhHiIjJkKlLmMnN0123";
+        let short = "ghp_aAbBcCdDeEf";
+        let (a, b) = (redact(tok), redact(short));
+        assert!(!a.contains("0123"), "the tail survived: {a}");
+        assert!(!a.contains("aAbBcCdD"), "the body survived: {a}");
+        assert_eq!(a.chars().count(), b.chars().count(), "the mask leaks the length");
+        assert!(a.starts_with("gh"), "the prefix should stay recognisable: {a}");
     }
 
     #[test]
