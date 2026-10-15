@@ -1128,6 +1128,25 @@ cp "$T/rb/inbox/accepted/$reid/manifest.json" "$T/rb/inbox/pending/.partial-1-de
 CTX_HOME=$T/rb $CTX inbox > "$T/reo3" 2>&1
 wantno "$T/reo3" "partial"
 
+echo "a bundle id is accepted where a path is expected, and cannot traverse"
+# Both me and the codex reviewer typed `ctx open <id>` first and got a bare
+# "No such file or directory". The convenience must not become a traversal.
+# A fresh bundle: the restage checks above deliberately corrupted theirs.
+printf 'open me by id\n' > "$T/w/oid.md"
+CTX_HOME=$T/ra $CTX send --to rob --subject "open by id" --decision "$T/w/oid.md" >/dev/null 2>&1
+oid=$(CTX_HOME=$T/rb $CTX inbox 2>/dev/null | awk '/open by id/{print $2; exit}')
+CTX_HOME=$T/rb $CTX accept "$oid" >/dev/null 2>&1
+CTX_HOME=$T/rb $CTX open "$oid" > "$T/oid1" 2>&1; code open_by_id $? 0
+want "$T/oid1" "BEGIN RECEIVED CONTEXT"
+# The resolution note must go to stderr, never into the fenced frame an agent reads.
+CTX_HOME=$T/rb $CTX open "$oid" 2>/dev/null > "$T/oid2"
+wantno "$T/oid2" "$T/rb/inbox"
+for junk in ../../etc .. "a/b" ZZZZZZZZZZZZZZZZ; do
+  CTX_HOME=$T/rb $CTX open "$junk" > "$T/oid3" 2>&1
+  if [ $? -ne 0 ]; then ok; else bad "ctx open accepted junk: $junk"; fi
+  wantno "$T/oid3" "BEGIN RECEIVED CONTEXT"
+done
+
 echo "a good bundle exits 0"
 CTX_HOME=$T/b $CTX open "$T/b1" >/dev/null 2>&1; code good $? 0
 

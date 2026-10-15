@@ -901,6 +901,26 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             }
         }
         Cmd::Open { dir, reveal } => {
+            // `ctx open <id>` is what the other commands' output invites, so
+            // resolve an id to its bundle rather than failing on a path that
+            // was never meant to be one.
+            let dir = match dir.to_str() {
+                Some(s) if !dir.exists() && manifest::id_is_safe(s) => {
+                    match routes::find_by_id(&identity::home(), s) {
+                        Some(p) => {
+                            eprintln!("ctx: {s} -> {}", p.display());
+                            p
+                        }
+                        None => {
+                            return Err(format!(
+                                "no bundle {s} in this ctx home. `ctx inbox` lists what is here"
+                            )
+                            .into())
+                        }
+                    }
+                }
+                _ => dir,
+            };
             // A bundle you only ever `ctx open` would otherwise never be
             // witnessed, and would read as ARRIVAL UNRECORDED after a
             // rotation even though it was sitting in your inbox the whole
@@ -1190,8 +1210,19 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             let me = identity::Identity::load().map(|i| i.public_b64()).unwrap_or_default();
             let contacts = trust::Contacts::load();
             let ts = state::threads(all_manifests(), &st, &me);
-            let Some(t) = ts.iter().find(|t| t.id == id || t.id.starts_with(&id)) else {
-                return Err(format!("no thread {id}").into());
+            // A message id is what every other command hands you, so accept
+            // one here rather than rejecting it: `ctx threads` prints the
+            // thread id, but nothing else does, and "no thread <id>" for an
+            // id the tool can plainly resolve is a dead end. Dogfood, 15 Oct.
+            let found = ts
+                .iter()
+                .find(|t| t.id == id || t.id.starts_with(&id))
+                .or_else(|| ts.iter().find(|t| t.messages.iter().any(|m| m.id == id)));
+            let Some(t) = found else {
+                return Err(format!(
+                    "no thread or message {id}. `ctx threads` lists what is here"
+                )
+                .into());
             };
             println!("{}  [{}]\n", t.subject, t.state.label());
             // Said before the messages, because it changes how they should be

@@ -254,6 +254,27 @@ fn resumable(from: &std::path::Path, dest: &std::path::Path) -> bool {
     })
 }
 
+/// Where a bundle id lives, searched across the stages a bundle can be in.
+///
+/// Every command that prints a bundle prints its id -- `inbox`, `accept`,
+/// `send`, `threads` -- and `open` took only a path, so the obvious next
+/// command failed with a bare "No such file or directory". Two separate
+/// users (me and the codex reviewer) lost time in the same place on the same
+/// day, which is the definition of an ergonomic bug rather than a preference.
+///
+/// Accepted is searched before pending: once a bundle has been staged, that
+/// is the copy the reader means. The id is validated before it reaches the
+/// filesystem, so this cannot be used to walk out of the ctx home.
+pub fn find_by_id(ctx_home: &std::path::Path, id: &str) -> Option<PathBuf> {
+    if !crate::manifest::id_is_safe(id) {
+        return None;
+    }
+    [accepted_dir(ctx_home), pending_dir(ctx_home), sent_dir(ctx_home)]
+        .into_iter()
+        .map(|d| d.join(id))
+        .find(|p| p.join("manifest.json").is_file())
+}
+
 /// Bundles waiting in a stage, newest first.
 pub fn list(stage: &std::path::Path) -> Vec<(String, crate::bundle::Loaded)> {
     let mut out = Vec::new();
@@ -327,6 +348,28 @@ mod tests {
         let _ = fs::remove_dir_all(&d);
         fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    #[test]
+    fn a_bundle_id_resolves_across_the_stages_but_never_out_of_the_home() {
+        let t = scratch("find");
+        let src = src_bundle(&t, &[("items/a", b"one")], &[("items/a", b"one")]);
+        let id = "abcdef0123456789";
+
+        assert_eq!(find_by_id(&t, id), None, "nothing staged yet");
+
+        deliver(&src, &pending_dir(&t).join(id)).unwrap();
+        assert_eq!(find_by_id(&t, id), Some(pending_dir(&t).join(id)));
+
+        // Accepted wins: once staged, that is the copy the reader means.
+        deliver(&src, &accepted_dir(&t).join(id)).unwrap();
+        assert_eq!(find_by_id(&t, id), Some(accepted_dir(&t).join(id)));
+
+        // An id is validated before it touches the filesystem, so the
+        // convenience cannot be turned into a traversal.
+        for bad in ["../../etc", "..", "a/b", "ABCDEF0123456789", "", "zz"] {
+            assert_eq!(find_by_id(&t, bad), None, "{bad:?} should not resolve");
+        }
     }
 
     #[test]
