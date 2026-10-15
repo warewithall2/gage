@@ -71,7 +71,8 @@ impl Trust {
 /// refreshed. Either way the rule is the same: never show a verdict that
 /// could read milder than the truth.
 pub const VERDICT_UNAVAILABLE: &str =
-    "VERDICT UNAVAILABLE (your inbox could not be recorded, so a verdict here could read      milder than the truth)";
+    "VERDICT UNAVAILABLE (your inbox could not be recorded, so a verdict here could \
+     read milder than the truth)";
 
 /// A contact key you have taken out of service.
 ///
@@ -345,6 +346,13 @@ mod tests {
                     );
                 }
             }
+        }
+        // No label carries doubled whitespace. Easy to introduce by editing
+        // a wrapped string literal and invisible in review, but it reaches
+        // the person's screen.
+        for l in all.iter().map(|t| t.label()).chain([VERDICT_UNAVAILABLE]) {
+            assert!(!l.contains("  "), "doubled whitespace in {l:?}");
+            assert_eq!(l.trim(), l, "stray edge whitespace in {l:?}");
         }
         // VERDICT UNAVAILABLE travels the same path through the viewer's
         // startsWith table, so it is held to the same rule.
