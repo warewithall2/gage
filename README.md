@@ -489,7 +489,7 @@ importer.
 
     cargo build --release && cargo test --release && bash tests/attacks.sh
 
-287 checks plus 27 Rust unit tests. Every one is an attack that worked, or
+295 checks plus 27 Rust unit tests. Every one is an attack that worked, or
 nearly worked, during development: frame-boundary forgery, payload swapping
 after signing, a listed contact claiming a third party's name, an unverified
 author name on a forward, a trust label that was a substring of its own
@@ -500,5 +500,7 @@ past its own retirement, a reused bundle id inheriting another document's
 arrival record, two processes overwriting each other's state, a mailbox
 squatted by quoting a public key, a symlink smuggling out a file nobody named,
 a chosen bundle id suppressing a real message, an id
-shaped like a path escaping the inbox, and a witness pre-seeded with a junk
-signature and claimed later with a real one.
+shaped like a path escaping the inbox, a witness pre-seeded with a junk
+signature and claimed later with a real one, a bundle with no provenance chain
+borrowing another message's id, and a revocation that left the old key trusted
+while it was being written.

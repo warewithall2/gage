@@ -57,13 +57,20 @@ pub fn observe_inbox() -> std::io::Result<crate::state::LocalState> {
 
 /// Witnesses for every sound bundle currently in the inbox.
 pub fn scan_inbox() -> Vec<String> {
+    let st = crate::state::LocalState::load();
+    scan_inbox_knowing(&|w| st.witnessed(w).is_some())
+}
+
+/// `known` reports witnesses already on record, so the signature and payload
+/// verification can be skipped for them.
+pub fn scan_inbox_knowing(known: &dyn Fn(&str) -> bool) -> Vec<String> {
     let home = crate::identity::home();
     let mut w = Vec::new();
     for stage in [pending_dir(&home), accepted_dir(&home)] {
         let Ok(rd) = std::fs::read_dir(&stage) else { continue };
         for e in rd.flatten() {
             if e.path().is_dir() {
-                if let Some(x) = crate::bundle::witness_if_sound(&e.path()) {
+                if let Some(x) = crate::bundle::witness_if_sound_unless(&e.path(), known) {
                     w.push(x);
                 }
             }

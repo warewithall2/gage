@@ -739,7 +739,13 @@ import json;print(len(json.load(open('$T/b/state.json')).get('witness',{})))" 2>
 if [ "$after" -ge "$before" ] && [ "$after" -gt 0 ]; then ok; else bad "witnesses went backwards under concurrency: $before -> $after"; fi
 # the file must still be valid JSON after all that, not a half-written mess
 if python3 -c "import json;json.load(open('$T/b/state.json'))" 2>/dev/null; then ok; else bad "state.json was corrupted by concurrent writers"; fi
-if ls "$T/b"/state.json.lock >/dev/null 2>&1; then bad "a lock file was left behind"; else ok; fi
+# The lock file is meant to persist: with flock it is the file DESCRIPTOR that
+# carries the lock, not the name, so there is nothing to unlink and no
+# staleness to misjudge. What matters is that nothing still holds it.
+if CTX_HOME=$T/b timeout 5 $CTX threads >/dev/null 2>&1; then ok; else bad "the state lock was still held after the writers finished"; fi
+# and the kernel really is the thing holding it: a crashed holder releases
+sh -c "CTX_HOME=$T/b $CTX threads >/dev/null 2>&1 & sleep 0.05; kill -9 \$! 2>/dev/null" 2>/dev/null
+if CTX_HOME=$T/b timeout 5 $CTX inbox --all >/dev/null 2>&1; then ok; else bad "a killed writer wedged the lock"; fi
 
 echo "a mailbox cannot be squatted by quoting a public key"
 # Found by the muse reviewer, 2026-10-15. A box key is what you hand out in a
@@ -889,6 +895,53 @@ if python3 -c "
 import json,sys
 d=json.load(open('$T/pr/state.json'))
 sys.exit(0 if len(d.get('witness',{}))==1 else 1)" 2>/dev/null; then ok; else bad "the junk-signed bundle was witnessed anyway"; fi
+
+echo "a bundle with no provenance chain cannot borrow another message's id"
+# Codex round 3. `expected_id()` needs an author to compute from, returns None
+# without a chain, and the check used to pass on None. So a bundle could omit
+# its chain, carry a real message's id, and arrive clean: relay intake stored
+# it at pending/<id>, squatting the path, and the genuine envelope arriving
+# later was discarded as "already have".
+mkdir -p "$T/nochain"
+printf 'legitimate\n' > "$T/w/nc.md"
+CTX_HOME=$T/a $CTX send --to nobody --subject nc --decision "$T/w/nc.md" --out "$T/nochain/one" >/dev/null 2>&1
+cp -r "$T/nochain/one" "$T/nochain/two"
+python3 -c "
+import json
+p='$T/nochain/two/manifest.json'
+m=json.load(open(p)); m['chain']=[]
+json.dump(m, open(p,'w'), indent=2)"
+CTX_HOME=$T/b $CTX open "$T/nochain/two" > "$T/nco" 2>&1; code nochain $? 2
+want "$T/nco" "no provenance chain"
+wantno "$T/nco" "legitimate"
+
+echo "retiring a key fails closed while it is being recorded"
+# Codex round 3: the cut was taken and only then were contacts saved, so in
+# between the old key was still on the list and read as SENDER VERIFIED -- a
+# fail-open window opened by the act of revoking. The retirement is written
+# first with a cut of zero, which places nothing below it, and only then
+# relaxed to the real cut.
+mkdir -p "$T"/{fc,fd}
+CTX_HOME=$T/fc $CTX init quinn >/dev/null
+CTX_HOME=$T/fd $CTX init rae   >/dev/null
+CTX_HOME=$T/fd $CTX add quinn "$(CTX_HOME=$T/fc $CTX whoami | cut -f2)" >/dev/null
+CTX_HOME=$T/fc $CTX route rae "$T/fd" >/dev/null 2>&1
+printf 'FERNGULLY before\n' > "$T/w/fc.md"
+fcid=$(CTX_HOME=$T/fc $CTX send --to rae --subject "before" --decision "$T/w/fc.md" \
+       2>/dev/null | head -1 | awk '{print $2}')
+CTX_HOME=$T/fd $CTX threads >/dev/null 2>&1
+CTX_HOME=$T/fd $CTX retire quinn >/dev/null 2>&1
+# the retirement completed, so the real cut is in place and what was already
+# here is still attributable
+CTX_HOME=$T/fd $CTX open "$T/fd/inbox/pending/$fcid" > "$T/fco" 2>&1; code failclosed $? 0
+want "$T/fco" "SENDER KEY RETIRED"
+want "$T/fco" "FERNGULLY"
+# and the recorded cut is a real observation, not the provisional zero
+if python3 -c "
+import json,sys
+d=json.load(open('$T/fd/contacts.json'))
+r=list(d['retired'].values())[0]
+sys.exit(0 if r['retired_seq'] > 0 else 1)" 2>/dev/null; then ok; else bad "the retirement was left at its fail-closed cut of 0"; fi
 
 echo "a good bundle exits 0"
 CTX_HOME=$T/b $CTX open "$T/b1" >/dev/null 2>&1; code good $? 0

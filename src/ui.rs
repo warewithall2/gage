@@ -309,8 +309,16 @@ fn reply_from_ui(body: &str) -> Result<String, (&'static str, String)> {
     }
 }
 
+/// The viewer polls, so it cannot fail a request over this -- but it must not
+/// hide it either. The terminal running `ctx ui` gets the warning.
+fn observe_or_log() {
+    if let Err(e) = crate::routes::observe_inbox() {
+        eprintln!("ctx ui: WARNING -- inbox not recorded ({e}); verdicts shown may read milder than the truth");
+    }
+}
+
 fn state_json() -> String {
-    let _ = crate::routes::observe_inbox();
+    observe_or_log();
     let me = crate::identity::home();
     let contacts = crate::trust::Contacts::load();
     let routes = crate::routes::Routes::load();
@@ -371,7 +379,7 @@ fn state_json() -> String {
 /// bundle list answered "what arrived"; this answers "what is going on and
 /// does any of it need me".
 fn threads_json() -> String {
-    let _ = crate::routes::observe_inbox();
+    observe_or_log();
     let me_id = crate::identity::Identity::load().ok();
     let mine = me_id.as_ref().map(|i| i.public_b64()).unwrap_or_default();
     let st = crate::state::LocalState::load();

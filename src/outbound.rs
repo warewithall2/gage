@@ -26,8 +26,11 @@ pub fn find_manifest(id: &str) -> Option<manifest::Manifest> {
 /// Every manifest held locally, for thread grouping.
 pub fn all_manifests() -> Vec<manifest::Manifest> {
     let home = identity::home();
-    // Observation first, verdicts second.
-    let _ = routes::observe_inbox();
+    // Observation first, verdicts second. A failure is reported rather than
+    // swallowed: every caller is about to show a verdict that depends on it.
+    if let Err(e) = routes::observe_inbox() {
+        eprintln!("ctx: WARNING -- inbox not recorded ({e}); verdicts below may read milder than the truth");
+    }
     let mut out = Vec::new();
     for stage in [
         routes::accepted_dir(&home),

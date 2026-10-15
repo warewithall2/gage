@@ -46,8 +46,24 @@ pub fn witness_of(from_key: &str, manifest_bytes: &[u8]) -> String {
 /// although nothing authentic had ever been seen. The codex reviewer found
 /// that sequence.
 pub fn witness_if_sound(dir: &Path) -> Option<String> {
+    witness_if_sound_unless(dir, &|_| false)
+}
+
+/// As `witness_if_sound`, but `known` lets the caller say a witness is already
+/// recorded so the expensive half can be skipped.
+///
+/// The cheap half is reading `manifest.json` and hashing it. The expensive
+/// half is one signature verification plus a full re-read and re-hash of every
+/// payload, and the retirement path does that for the whole inbox while
+/// holding the state lock. Bounding it to bundles that are actually new keeps
+/// a large inbox from pushing that hold past anyone's patience.
+pub fn witness_if_sound_unless(dir: &Path, known: &dyn Fn(&str) -> bool) -> Option<String> {
     let bytes = fs::read(dir.join("manifest.json")).ok()?;
     let m: Manifest = serde_json::from_slice(&bytes).ok()?;
+    let w = witness_of(&m.from.key, &bytes);
+    if known(&w) {
+        return Some(w);
+    }
     let sig = fs::read_to_string(dir.join("manifest.sig")).ok()?;
     if sig.trim().is_empty() || !crate::identity::verify(&m.from.key, &bytes, &sig) {
         return None;
@@ -64,7 +80,7 @@ pub fn witness_if_sound(dir: &Path) -> Option<String> {
             _ => return None,
         }
     }
-    Some(witness_of(&m.from.key, &bytes))
+    Some(w)
 }
 
 pub fn sha256_hex(bytes: &[u8]) -> String {
@@ -221,11 +237,22 @@ pub fn load(dir: &Path) -> std::io::Result<Loaded> {
     // name, thread dedup, read state, announce-once -- becomes a way to
     // suppress a real message if a sender can choose a collision.
     match manifest.expected_id() {
-        Some(want) if want != manifest.id => tampered.push(format!(
+        Some(want) if want == manifest.id => {}
+        Some(want) => tampered.push(format!(
             "manifest id {} does not address this content (expected {want})",
             manifest.id
         )),
-        _ => {}
+        // No chain means no author to compute the id from, and the check used
+        // to pass on that. So a bundle could omit its chain, carry a real
+        // message's id, and sail through: relay intake stored it at
+        // pending/<id>, squatting the path, and the genuine envelope arriving
+        // later was discarded as "already have". Absence of provenance is now
+        // a defect rather than an exemption.
+        None => tampered.push(
+            "manifest has no provenance chain, so its id addresses nothing and its \
+             author is unknown"
+                .into(),
+        ),
     }
     for it in &manifest.items {
         if !path_is_safe(&it.path) {

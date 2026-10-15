@@ -403,12 +403,19 @@ fn fetch_mailbox(
             println!("  already have {} -- left in place", loaded.manifest.id);
         } else {
             routes::deliver(&tmp, &dest)?;
+            // Observe, then re-read the verdict. The line printed here used to
+            // come from the load of the TEMPORARY directory, before the
+            // delivered copy had been observed at all -- so a valid old-key
+            // bundle pulled after a retirement printed ARRIVAL UNRECORDED
+            // when observing it first would have placed it after the cut and
+            // called it a rejection.
+            observe_or_warn();
+            let verdict = bundle::load(&dest)
+                .map(|l| l.trust.label().to_string())
+                .unwrap_or_else(|e| format!("could not be read back: {e}"));
             println!(
                 "  {}  {}  ({}){}",
-                loaded.manifest.id,
-                loaded.manifest.subject,
-                loaded.trust.label(),
-                label
+                loaded.manifest.id, loaded.manifest.subject, verdict, label
             );
             n += 1;
         }
@@ -594,10 +601,29 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             // Everything in the inbox is witnessed, and the cut is taken
             // after that, so honest mail already here stays attributable
             // while anything arriving later does not.
-            let seq = state::LocalState::observe_and_cut(routes::scan_inbox)?;
-            c.retire(&v.old_sign, &now, seq, compromised, Some(v.new_sign.clone()));
+            // Retire the key BEFORE taking the cut, with a cut of 0 so that
+            // nothing at all is below it.
+            //
+            // The order matters and the first version had it backwards: the
+            // cut was taken, then contacts were saved, and in between the old
+            // key was still in `keys` -- so a concurrent read returned
+            // SENDER VERIFIED for a bundle delivered after the retirement
+            // decision. A crash in that window left the key trusted
+            // indefinitely. Fail-open, immediately after a revocation
+            // decision, which is the worst possible moment for it.
+            //
+            // Retiring first inverts that: during the window every bundle
+            // from the old key reads as rejected or unrecorded, and a crash
+            // leaves it over-strict rather than over-trusting. Re-running
+            // keychange then relaxes it to the real cut.
+            c.retire(&v.old_sign, &now, 0, compromised, Some(v.new_sign.clone()));
             if let Some(r) = c.retired.get_mut(&v.old_sign) {
                 r.claimed_at = Some(v.claim.at.clone());
+            }
+            c.save()?;
+            let seq = state::LocalState::observe_and_cut(routes::scan_inbox_knowing)?;
+            if let Some(r) = c.retired.get_mut(&v.old_sign) {
+                r.retired_seq = seq;
             }
             c.keys.insert(v.new_sign.clone(), name.clone());
             match &v.new_box {
@@ -647,10 +673,18 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 .filter(|(_, r)| !r.compromised)
                 .map(|(k, _)| k.clone())
                 .collect();
-            let seq = state::LocalState::observe_and_cut(routes::scan_inbox)?;
-            c.retire(&key, &bundle::now_rfc3339(), seq, compromised, None);
+            // Fail-closed first, then the real cut. See the comment in
+            // keychange: a window in which the key is still trusted is a
+            // window opened by the act of revoking it.
+            let now = bundle::now_rfc3339();
+            c.retire(&key, &now, 0, compromised, None);
             if all {
                 c.mark_history_compromised(&name, &earlier);
+            }
+            c.save()?;
+            let seq = state::LocalState::observe_and_cut(routes::scan_inbox_knowing)?;
+            if let Some(r) = c.retired.get_mut(&key) {
+                r.retired_seq = seq;
             }
             c.save()?;
             println!("retired {name}'s key");
@@ -870,9 +904,22 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             // A bundle you only ever `ctx open` would otherwise never be
             // witnessed, and would read as ARRIVAL UNRECORDED after a
             // rotation even though it was sitting in your inbox the whole
-            // time. A failure here is not ignorable: it changes the verdict
-            // that is about to be printed.
-            observe_or_warn();
+            // time.
+            //
+            // And here it is fatal rather than a warning. `open` is the one
+            // command that exists to render a trust verdict, and a verdict
+            // computed from state that could not be refreshed can be milder
+            // than the truth -- "no record either way" in place of a
+            // rejection. Refusing to print is the only safe failure.
+            routes::observe_inbox().map_err(|e| -> Box<dyn std::error::Error> {
+                format!(
+                    "refusing to render a trust verdict: could not record what is in your \
+                     inbox ({e}). The verdict would be computed from stale state and could \
+                     read milder than the truth. Re-run once no other ctx process is \
+                     writing."
+                )
+                .into()
+            })?;
             let l = bundle::load(&dir)?;
             print!("{}", open::render(&l, reveal));
             // Read state is set by rendering, not by listing: having seen a
@@ -904,7 +951,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             println!("{handle} -> {}", home.display());
         }
         Cmd::Inbox { json, all, unread } => {
-            let _ = routes::observe_inbox();
+            observe_or_warn();
             let me = identity::home();
             let pending = routes::list(&routes::pending_dir(&me));
             let accepted = if all { routes::list(&routes::accepted_dir(&me)) } else { vec![] };

@@ -51,95 +51,82 @@ pub struct LocalState {
     pub witness: BTreeMap<String, u64>,
 }
 
-/// An advisory lock around `state.json`.
+/// A kernel advisory lock around `state.json`.
 ///
 /// Both halves of read-modify-write used to happen on a value loaded earlier,
 /// and the whole file was written back whole. The viewer polls every 2.5
 /// seconds while the CLI writes, so two processes could each load the old
 /// state and overwrite the other's changes -- silently losing a witness,
-/// which is the one record that must not be lost. Mutations now run under
-/// this lock, against a fresh read, and land by rename.
-struct Lock {
-    path: PathBuf,
-    /// Written into the file, so release and stale-breaking can tell OUR lock
-    /// from somebody else's.
-    ///
-    /// Age alone cannot prove abandonment. With a bare unlink, a process
-    /// paused past the staleness window had its live lock broken by a second
-    /// writer, and then its own `Drop` deleted the second writer's lock by
-    /// name, letting a third in. Now a breaker only removes the exact file it
-    /// judged stale, and release only removes a file that still says it is
-    /// ours.
-    nonce: String,
+/// which is the one record that must not be lost.
+///
+/// The first fix was a lockfile with an owner nonce and an age-based staleness
+/// breaker. The codex reviewer took it apart: read-then-unlink is not atomic,
+/// so a paused breaker could delete a lock somebody else had since taken, and
+/// a crash between creating the file and writing the nonce left an empty lock
+/// that the breaker refused to touch -- wedging every later write forever.
+/// Age cannot prove abandonment and a userspace protocol cannot fix that.
+///
+/// `flock` can. The kernel releases it when the file descriptor closes, which
+/// includes the process dying for any reason, so there is no staleness to
+/// detect, nothing to break, and no unlink to race. The lock file is created
+/// once and left in place; it is the descriptor that carries the lock, not
+/// the name.
+struct Lock(fs::File);
+
+#[cfg(unix)]
+mod flock {
+    unsafe extern "C" {
+        fn flock(fd: i32, operation: i32) -> i32;
+    }
+    pub const EX: i32 = 2;
+    pub const NB: i32 = 4;
+    pub const UN: i32 = 8;
+
+    pub fn try_lock(fd: i32) -> bool {
+        unsafe { flock(fd, EX | NB) == 0 }
+    }
+    pub fn unlock(fd: i32) {
+        unsafe { flock(fd, UN) };
+    }
 }
 
+#[cfg(unix)]
 impl Drop for Lock {
     fn drop(&mut self) {
-        if fs::read_to_string(&self.path).map(|s| s.trim() == self.nonce).unwrap_or(false) {
-            let _ = fs::remove_file(&self.path);
-        }
+        use std::os::unix::io::AsRawFd;
+        flock::unlock(self.0.as_raw_fd());
     }
 }
 
-fn lock_nonce() -> String {
-    use std::io::Read;
-    let mut b = [0u8; 12];
-    if let Ok(mut f) = fs::File::open("/dev/urandom") {
-        let _ = f.read_exact(&mut b);
-    }
-    b.iter().map(|x| format!("{x:02x}")).collect::<String>() + &format!(".{}", std::process::id())
-}
-
+#[cfg(unix)]
 fn take_lock(target: &Path) -> io::Result<Lock> {
+    use std::os::unix::io::AsRawFd;
     let lp = target.with_extension("json.lock");
     if let Some(d) = lp.parent() {
         fs::create_dir_all(d)?;
     }
-    let deadline = Instant::now() + Duration::from_secs(10);
-    let nonce = lock_nonce();
+    let f = fs::OpenOptions::new().create(true).write(true).truncate(false).open(&lp)?;
+    // Generous, because the retirement path holds this across a scan of the
+    // inbox. Nothing here waits on a human or on the network, so a hold that
+    // outlasts this really is a stuck process rather than a slow one.
+    let deadline = Instant::now() + Duration::from_secs(30);
     loop {
-        match fs::OpenOptions::new().write(true).create_new(true).open(&lp) {
-            Ok(mut f) => {
-                use std::io::Write;
-                f.write_all(nonce.as_bytes())?;
-                f.sync_all()?;
-                return Ok(Lock { path: lp, nonce });
-            }
-            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
-                // A crash between create and remove would otherwise wedge
-                // every later run, so a lock nobody has touched for a long
-                // while is treated as abandoned. Compare-and-delete: the
-                // holder's own nonce is read first and the file is removed
-                // only if it still carries that same nonce, so a breaker
-                // cannot destroy a lock somebody else has since taken.
-                let held = fs::read_to_string(&lp).unwrap_or_default();
-                let stale = fs::metadata(&lp)
-                    .and_then(|m| m.modified())
-                    .ok()
-                    .and_then(|t| t.elapsed().ok())
-                    .map(|d| d > Duration::from_secs(120))
-                    .unwrap_or(false);
-                if stale && !held.trim().is_empty() {
-                    if fs::read_to_string(&lp).unwrap_or_default() == held {
-                        let _ = fs::remove_file(&lp);
-                    }
-                    // Jittered, so two breakers do not retry in lockstep.
-                    std::thread::sleep(Duration::from_millis(
-                        17 + (std::process::id() as u64 % 29),
-                    ));
-                    continue;
-                }
-                if Instant::now() > deadline {
-                    return Err(io::Error::new(
-                        io::ErrorKind::TimedOut,
-                        format!("{} stayed locked; another ctx process may be stuck", lp.display()),
-                    ));
-                }
-                std::thread::sleep(Duration::from_millis(25));
-            }
-            Err(e) => return Err(e),
+        if flock::try_lock(f.as_raw_fd()) {
+            return Ok(Lock(f));
         }
+        if Instant::now() > deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!("{} stayed locked; another ctx process is stuck", lp.display()),
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(20));
     }
+}
+
+#[cfg(not(unix))]
+fn take_lock(_target: &Path) -> io::Result<Lock> {
+    Err(io::Error::new(io::ErrorKind::Unsupported, "state locking needs a unix host"))
 }
 
 impl LocalState {
@@ -224,13 +211,14 @@ impl LocalState {
     /// observed afterwards is necessarily above it.
     pub fn observe_and_cut<F>(scan: F) -> std::io::Result<u64>
     where
-        F: FnOnce() -> Vec<String>,
+        F: FnOnce(&dyn Fn(&str) -> bool) -> Vec<String>,
     {
         let mut cut = 0;
         Self::mutate(|s| {
             let batch = s.seq + 1;
             cut = s.seq + 2;
-            for w in scan() {
+            let already: BTreeSet<String> = s.witness.keys().cloned().collect();
+            for w in scan(&|x| already.contains(x)) {
                 s.witness.entry(w).or_insert(batch);
             }
             s.seq = cut;
