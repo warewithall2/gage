@@ -597,7 +597,7 @@ in the message. See [Authority](#authority-the-one-thing-that-says-you-may-act).
 
     cargo build --release && cargo test --release && bash tests/attacks.sh
 
-406 checks plus 58 Rust unit tests. Every one is an attack that worked, or
+412 checks plus 58 Rust unit tests. Every one is an attack that worked, or
 nearly worked, during development: frame-boundary forgery, payload swapping
 after signing, a listed contact claiming a third party's name, an unverified
 author name on a forward, a trust label that was a substring of its own

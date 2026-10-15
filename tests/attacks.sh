@@ -1468,6 +1468,41 @@ print(d.split(b'\r\n')[0].decode(errors='replace'))")
 case "$nh" in *403*) ok;; *) bad "no Host was not refused: $nh";; esac
 kill $uipid 2>/dev/null; wait $uipid 2>/dev/null
 
+echo "the viewer's own policy permits the fetch the viewer depends on"
+# The one a human found, in one sentence, by opening the page. CSP falls
+# connect-src back to default-src, which is 'none', so the page's own
+# fetch('/api/threads') -- its only data source -- was blocked by the header
+# the server itself sent. The loader caught it and returned, so the result was
+# a blank page with nothing in any log. It had never worked in a browser.
+#
+# Every other check in this file is curl, which does not enforce CSP, so the
+# suite exercised the server and never once exercised the page. This check
+# reads the policy and asserts it admits what the page actually does.
+UIP2=7814
+CTX_HOME=$T/b $CTX ui --port $UIP2 >/dev/null 2>&1 &
+uipid2=$!
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  curl -s -o /dev/null "http://127.0.0.1:$UIP2/" && break
+  sleep 0.3
+done
+curl -s -D "$T/hdr" -o "$T/pagehtml" "http://127.0.0.1:$UIP2/" >/dev/null
+csp=$(grep -i '^content-security-policy:' "$T/hdr" | tr -d '\r')
+# Whatever the policy says, it must admit each kind of load the page performs.
+# A `fetch` is connect-src; with default-src 'none' it has to be named.
+case "$csp" in *"connect-src 'self'"*) ok;;
+  *) bad "the page fetches, and the policy does not permit it: $csp";; esac
+# The page's scripts and styles are inline, so those two stay named too.
+case "$csp" in *"script-src 'unsafe-inline'"*) ok;; *) bad "inline script blocked: $csp";; esac
+case "$csp" in *"style-src 'unsafe-inline'"*) ok;; *) bad "inline style blocked: $csp";; esac
+# And the page really does fetch that path, so the check is not guarding a
+# policy for a request nobody makes.
+want "$T/pagehtml" "fetch('/api/threads')"
+# A load failure must be visible rather than swallowed. The loader returned
+# silently, which is how a blocked fetch became a blank screen.
+wantno "$T/pagehtml" "catch{return;}"
+want "$T/pagehtml" "Could not load your inbox from this server"
+kill $uipid2 2>/dev/null; wait $uipid2 2>/dev/null
+
 echo "a good bundle exits 0"
 CTX_HOME=$T/b $CTX open "$T/b1" >/dev/null 2>&1; code good $? 0
 

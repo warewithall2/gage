@@ -263,7 +263,7 @@ function avatar(m){
 }
 const nameOf=m=>m.mine?'you':(m.known_as?m.known_as:`"${m.claimed_name}"`);
 
-let DATA={threads:[],contacts:[]}, SEL=null, FILTER='all', DRAFT={}, CERR='', SENDING=false;
+let DATA={threads:[],contacts:[]}, LERR='', SEL=null, FILTER='all', DRAFT={}, CERR='', SENDING=false;
 
 function alerts(m){
   const out=[];
@@ -342,9 +342,12 @@ function render(){
   // When the inbox could not be recorded, every verdict in this payload was
   // withheld server-side. Saying why beats leaving the labels to explain
   // themselves.
+  // A load failure takes the same banner, and takes it first: with no data
+  // there is nothing else on the page to look at.
   const st=document.getElementById('stale');
-  st.hidden=!DATA.verdicts_stale;
-  if(DATA.verdicts_stale) st.textContent=
+  if(LERR){ st.hidden=false; st.textContent=LERR; }
+  else st.hidden=!DATA.verdicts_stale;
+  if(!LERR && DATA.verdicts_stale) st.textContent=
     'Verdicts withheld: your inbox could not be recorded, so a verdict here could read '+
     'milder than the truth. Usually another ctx process is writing \u2014 it clears on '+
     'the next poll. Until then, read bundles with ctx open in a terminal.';
@@ -448,7 +451,21 @@ async function send(){
   await load();
 }
 async function load(){
-  try{DATA=await (await fetch('/api/threads')).json();}catch{return;}
+  // Never return silently. The first version did, and when the server's own
+  // CSP blocked this fetch the result was a blank page: no error, no clue,
+  // and nothing in any log. A loader that fails invisibly is worse than one
+  // that crashes.
+  try{
+    const r=await fetch('/api/threads');
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    DATA=await r.json();
+    LERR='';
+  }catch(e){
+    LERR='Could not load your inbox from this server: '+(e&&e.message?e.message:e)
+      +'. The server is at '+location.origin+'; ctx ui logs to the terminal it runs in.';
+    render();
+    return;
+  }
   if(SEL&&!DATA.threads.some(t=>t.id===SEL))SEL=null;
   render();
 }

@@ -191,11 +191,23 @@ pub fn serve(port: u16) -> std::io::Result<()> {
     Ok(())
 }
 
+/// `connect-src 'self'` is not decoration. `default-src 'none'` covers
+/// `connect-src` by fallback, so without it the page's own
+/// `fetch('/api/threads')` is blocked by this very header -- and the page's
+/// loader caught the failure and returned, leaving a blank screen with
+/// nothing on it and nothing in the log. The viewer had never once worked in
+/// a browser, from the commit that added this policy until it was found by
+/// the person it is for.
+///
+/// Four hundred adversarial checks did not catch it because every one of them
+/// is `curl`, which does not enforce CSP. A test that exercises the server
+/// does not exercise the page.
 fn respond(mut s: TcpStream, status: &str, ctype: &str, body: &str) -> std::io::Result<()> {
     let head = format!(
         "HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\n\
          X-Content-Type-Options: nosniff\r\n\
-         Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'\r\n\
+         Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; \
+         script-src 'unsafe-inline'; connect-src 'self'; form-action 'none'; base-uri 'none'\r\n\
          Connection: close\r\n\r\n",
         body.len()
     );
