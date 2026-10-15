@@ -741,6 +741,71 @@ if [ "$after" -ge "$before" ] && [ "$after" -gt 0 ]; then ok; else bad "witnesse
 if python3 -c "import json;json.load(open('$T/b/state.json'))" 2>/dev/null; then ok; else bad "state.json was corrupted by concurrent writers"; fi
 if ls "$T/b"/state.json.lock >/dev/null 2>&1; then bad "a lock file was left behind"; else ok; fi
 
+echo "a mailbox cannot be squatted by quoting a public key"
+# Found by the muse reviewer, 2026-10-15. A box key is what you hand out in a
+# `ctx whoami` line, and registration took it at face value. Anyone could
+# register someone else's mailbox against their own signing key BEFORE the
+# owner got there; first-registration-wins then locked the owner out for good,
+# and mail pushed to them landed where the squatter could collect and delete
+# it. Sealed, so never readable -- but gone, with the sender believing it was
+# delivered.
+SPORT=7898
+mkdir -p "$T"/{sv,sm}
+CTX_HOME=$T/sv $CTX init vera    >/dev/null
+CTX_HOME=$T/sm $CTX init mallory >/dev/null
+VBOX=$(CTX_HOME=$T/sv $CTX whoami | cut -f2 | cut -d. -f2)
+MSIGN=$(CTX_HOME=$T/sm $CTX whoami | cut -f2 | cut -d. -f1)
+$CTX relay --bind 127.0.0.1:$SPORT --store "$T/sstore" >/dev/null 2>&1 &
+spid=$!
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  curl -s --noproxy '*' -m 1 -o /dev/null http://127.0.0.1:$SPORT/ 2>/dev/null
+  ss -ltn 2>/dev/null | grep -q "127.0.0.1:$SPORT" && break
+  sleep 0.3
+done
+# mallory claims vera's mailbox. She gets a nonce sealed to vera's key, which
+# she cannot open, and no binding is committed.
+sq=$(curl -s --noproxy '*' -m 3 -X POST "http://127.0.0.1:$SPORT/register" \
+     -d "{\"sign_key\":\"$MSIGN\",\"box_key\":\"$VBOX\"}")
+case "$sq" in *'"prove"'*) ok;; *) bad "register committed without proof: $sq";; esac
+case "$sq" in *'"ok":true'*) bad "register said ok before any proof";; *) ok;; esac
+# a wrong proof is refused and burns the attempt
+bad_try=$(curl -s --noproxy '*' -m 3 -X POST "http://127.0.0.1:$SPORT/register" \
+     -d "{\"sign_key\":\"$MSIGN\",\"box_key\":\"$VBOX\",\"proof\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"}")
+case "$bad_try" in *"does not match"*) ok;; *) bad "a bogus proof was accepted: $bad_try";; esac
+# vera, who holds the secret, registers normally
+CTX_HOME=$T/sv $CTX join 127.0.0.1:$SPORT > "$T/sjoin" 2>&1; code squatjoin $? 0
+want "$T/sjoin" "proved the mailbox is yours"
+# and the mailbox is hers: mallory still cannot bind it
+sq2=$(curl -s --noproxy '*' -m 3 -X POST "http://127.0.0.1:$SPORT/register" \
+      -d "{\"sign_key\":\"$MSIGN\",\"box_key\":\"$VBOX\"}")
+case "$sq2" in *"already registered to another"*) ok;; *) bad "mailbox was rebindable: $sq2";; esac
+kill $spid 2>/dev/null; wait $spid 2>/dev/null
+
+echo "a symlink cannot smuggle a file you did not name"
+# Also muse's, same day. The deny list matches a NAME, and a link's name says
+# nothing about its target: notes.md -> ~/.ssh/id_rsa passed every check and
+# shipped the key. The content scan did not catch it either, since a
+# .env-shaped target is neither a PEM block nor a vendor key pattern.
+mkdir -p "$T/lnk/proj"
+printf 'PRIVATEKEYMATERIAL do not share\n' > "$T/lnk/secret.pem"
+printf 'ordinary content\n' > "$T/lnk/proj/real.md"
+ln -s "$T/lnk/secret.pem" "$T/lnk/proj/notes.md"
+ln -s "$HOME" "$T/lnk/proj/home"
+CTX_HOME=$T/a $CTX send --to nobody --subject s --dir "$T/lnk/proj" --out "$T/lnkout" > "$T/lnko" 2>&1
+want "$T/lnko" "skipped (symlinks"
+want "$T/lnko" "notes.md -> "
+if grep -rqF PRIVATEKEYMATERIAL "$T/lnkout" 2>/dev/null; then bad "a symlink smuggled a secret into the bundle"; else ok; fi
+if [ -e "$T/lnkout/items/proj/real.md" ]; then ok; else bad "the real file was dropped too"; fi
+# --allow-secrets is an override for names you can see; it must not follow links
+CTX_HOME=$T/a $CTX send --to nobody --subject s --dir "$T/lnk/proj" --allow-secrets \
+  --out "$T/lnkout2" >/dev/null 2>&1
+if grep -rqF PRIVATEKEYMATERIAL "$T/lnkout2" 2>/dev/null; then bad "--allow-secrets followed a symlink"; else ok; fi
+# and a linked directory as the root is refused outright rather than walked
+ln -s "$T/lnk/proj" "$T/lnk/linkroot"
+CTX_HOME=$T/a $CTX send --to nobody --subject s --dir "$T/lnk/linkroot" --out "$T/lnkout3" > "$T/lnko3" 2>&1
+code symlinkroot $? 1
+want "$T/lnko3" "is a symlink"
+
 echo "a good bundle exits 0"
 CTX_HOME=$T/b $CTX open "$T/b1" >/dev/null 2>&1; code good $? 0
 

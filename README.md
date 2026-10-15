@@ -119,6 +119,16 @@ and `ctx seal` refuses rather than silently sending in the clear.
 
 ## Outbound safety
 
+Symlinks are refused and reported, never followed. The deny list matches a
+file **name**, and a link's name says nothing about its target: `notes.md ->
+~/.ssh/id_rsa` passed every check and shipped the key, and the content scan
+did not save it either, because a `.env`-shaped target is neither a PEM block
+nor a vendor key pattern. `--allow-secrets` does not override this -- it is an
+override for files whose names you can see, and the whole problem with a link
+is that you cannot. A linked directory passed as `--dir` is an error rather
+than a skip, since walking it would collect a tree from somewhere nobody named.
+
+
 Two gates on the way out, because the filename deny list only catches files
 that are *named* like secrets.
 
@@ -150,6 +160,20 @@ An earlier version gated `send` on "has no local route", which is not the same
 as "is leaving", and it broke every send to an unrouted handle.
 
 ## Relay
+
+Registration proves possession of the box **secret**, not just knowledge of
+the box key. That key is what you hand out in a `ctx whoami` line, so a relay
+that took the claim at face value could have its mailboxes squatted: register
+someone else's box key against your own signing key before they get there,
+and first-registration-wins locks the owner out permanently -- they can never
+fetch, and mail pushed to them lands where the squatter can collect and delete
+it. Sealed, so never readable, but gone, with the sender believing it arrived.
+
+So the relay seals a random nonce to the claimed box key and commits the
+binding only when the caller sends that nonce back. A squatter gets a sealed
+nonce they cannot open and a pending claim that blocks nobody, since pending
+claims are keyed by the pair rather than the mailbox.
+
 
 For the case where the other agent is not on your filesystem. The relay is
 deliberately stupid: it holds sealed envelopes addressed to an X25519 public
@@ -465,7 +489,7 @@ importer.
 
     cargo build --release && cargo test --release && bash tests/attacks.sh
 
-261 checks plus 24 Rust unit tests. Every one is an attack that worked, or
+276 checks plus 24 Rust unit tests. Every one is an attack that worked, or
 nearly worked, during development: frame-boundary forgery, payload swapping
 after signing, a listed contact claiming a third party's name, an unverified
 author name on a forward, a trust label that was a substring of its own
@@ -473,4 +497,6 @@ opposite, a rotation notice countersigned by the wrong key, a retired key
 still signing new mail, a cross-site POST to the viewer, a bundle grafted onto
 someone else's thread to collect the reply, a retired key backdating its way
 past its own retirement, a reused bundle id inheriting another document's
-arrival record, and two processes overwriting each other's state.
+arrival record, two processes overwriting each other's state, a mailbox
+squatted by quoting a public key, and a symlink smuggling out a file nobody
+named.

@@ -13,8 +13,21 @@
 //!
 //! Signing and encryption keys are bound by the ADDRESSING: an envelope is
 //! sealed to a box key, and the fetch is authorised by the signing key that
-//! was registered alongside it. Registration is therefore the only moment
-//! where the relay takes anyone's word for anything, and it takes it once.
+//! was registered alongside it.
+//!
+//! Registration used to be the one moment the relay took somebody's word --
+//! and the word it took was a PUBLIC value. A box key is what you hand out in
+//! a `ctx whoami` line, so anyone could register someone else's mailbox
+//! against their own signing key, before the owner got there. First
+//! registration wins, so the owner was then locked out permanently: they
+//! could never fetch, and mail pushed to them landed in a mailbox the squatter
+//! could collect and delete. Sealed, so not readable -- but gone, with the
+//! sender believing it was delivered. The muse reviewer found it.
+//!
+//! So registration proves possession of the box SECRET. The relay seals a
+//! nonce to the claimed box key and will only commit the binding when the
+//! caller sends that nonce back. A squatter gets a sealed nonce they cannot
+//! open, and a pending registration nobody else is blocked by.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -31,6 +44,10 @@ pub struct Registration {
     pub sign_key: String,
     /// X25519 public key, base64. The mailbox address.
     pub box_key: String,
+    /// The nonce the relay sealed to `box_key`, returned to prove the caller
+    /// holds the matching secret. Absent on the first leg.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proof: Option<String>,
 }
 
 struct State {
@@ -39,6 +56,11 @@ struct State {
     owners: HashMap<String, String>,
     /// nonce -> box_key it was issued for
     challenges: HashMap<String, String>,
+    /// A registration waiting for proof: (box_key, sign_key) -> the nonce the
+    /// relay sealed to that box key. Keyed by the PAIR, so two parties can
+    /// have a pending claim on the same mailbox at once and neither blocks
+    /// the other -- only the one who can open their nonce commits.
+    pending: HashMap<(String, String), String>,
 }
 
 static STATE: Mutex<Option<State>> = Mutex::new(None);
@@ -68,6 +90,7 @@ pub fn serve(bind: &str, root: PathBuf) -> std::io::Result<()> {
         root: root.clone(),
         owners,
         challenges: HashMap::new(),
+        pending: HashMap::new(),
     });
     let l = TcpListener::bind(bind)?;
     println!("ctx relay on {bind}, store at {}", root.display());
@@ -132,7 +155,18 @@ fn handle(stream: TcpStream) -> std::io::Result<()> {
     }
 }
 
+/// A fresh random nonce, from the same source the fetch challenge uses.
+fn new_nonce() -> String {
+    use base64::{engine::general_purpose::STANDARD as B64, Engine};
+    let mut buf = [0u8; 24];
+    if let Ok(mut f) = std::fs::File::open("/dev/urandom") {
+        let _ = f.read_exact(&mut buf);
+    }
+    B64.encode(buf)
+}
+
 fn do_register(stream: TcpStream, body: &[u8]) -> std::io::Result<()> {
+    use base64::{engine::general_purpose::STANDARD as B64, Engine};
     let Ok(reg) = serde_json::from_slice::<Registration>(body) else {
         return reply(stream, "400 Bad Request", r#"{"error":"bad body"}"#);
     };
@@ -154,11 +188,68 @@ fn do_register(stream: TcpStream, body: &[u8]) -> std::io::Result<()> {
         }
         return reply(stream, "200 OK", r#"{"ok":true,"note":"already registered"}"#);
     }
-    st.owners.insert(reg.box_key.clone(), reg.sign_key.clone());
-    let path = st.root.join("owners.json");
-    let data = serde_json::to_vec_pretty(&st.owners).unwrap_or_default();
-    let _ = std::fs::write(path, data);
-    reply(stream, "200 OK", r#"{"ok":true}"#)
+
+    let key = (reg.box_key.clone(), reg.sign_key.clone());
+    match reg.proof.as_deref() {
+        // Second leg: the caller returns the nonce, which they could only
+        // have read by holding the box secret.
+        Some(p) => {
+            let Some(want) = st.pending.get(&key).cloned() else {
+                return reply(
+                    stream,
+                    "401 Unauthorized",
+                    r#"{"error":"no registration in progress for that pair"}"#,
+                );
+            };
+            // Constant-time is not the issue here: the nonce is single-use and
+            // random, and a wrong answer destroys the attempt either way.
+            if p != want {
+                st.pending.remove(&key);
+                return reply(
+                    stream,
+                    "401 Unauthorized",
+                    r#"{"error":"proof does not match; start again"}"#,
+                );
+            }
+            st.pending.remove(&key);
+            st.owners.insert(reg.box_key.clone(), reg.sign_key.clone());
+            let path = st.root.join("owners.json");
+            let data = serde_json::to_vec_pretty(&st.owners).unwrap_or_default();
+            let _ = std::fs::write(path, data);
+            reply(stream, "200 OK", r#"{"ok":true}"#)
+        }
+        // First leg: issue a nonce the holder of the box secret can read and
+        // nobody else can.
+        None => {
+            let Ok(raw) = B64.decode(&reg.box_key) else {
+                return reply(stream, "400 Bad Request", r#"{"error":"bad box key"}"#);
+            };
+            let Ok(raw): Result<[u8; 32], _> = raw.try_into() else {
+                return reply(stream, "400 Bad Request", r#"{"error":"bad box key"}"#);
+            };
+            let nonce = new_nonce();
+            let pk = crypto_box::PublicKey::from_bytes(raw);
+            let Ok(ct) = pk.seal(&mut crypto_box::aead::OsRng, nonce.as_bytes()) else {
+                return reply(stream, "500 Internal Server Error", r#"{"error":"seal failed"}"#);
+            };
+            st.pending.insert(key, nonce);
+            if st.pending.len() > 10_000 {
+                // Bounded like the challenge map. A squatter can fill this
+                // with pending claims they can never complete, and clearing
+                // it costs legitimate callers one retry.
+                st.pending.clear();
+            }
+            reply(
+                stream,
+                "200 OK",
+                &serde_json::json!({
+                    "prove": B64.encode(&ct),
+                    "note": "unseal this with your box secret and re-register with it as `proof`"
+                })
+                .to_string(),
+            )
+        }
+    }
 }
 
 #[derive(Deserialize)]

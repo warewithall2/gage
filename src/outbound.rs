@@ -239,6 +239,12 @@ pub fn send_bundle(a: SendArgs) -> Result<manifest::Manifest, Box<dyn std::error
                     println!("  {f}");
                 }
             }
+            if !c.skipped_link.is_empty() {
+                println!("skipped (symlinks -- a link's name says nothing about its target):");
+                for f in &c.skipped_link {
+                    println!("  {f}");
+                }
+            }
             if !c.skipped_big.is_empty() {
                 println!("skipped (over the per-item size limit):");
                 for f in &c.skipped_big {
@@ -252,7 +258,7 @@ pub fn send_bundle(a: SendArgs) -> Result<manifest::Manifest, Box<dyn std::error
                 println!("skipped build/cache dirs: {}", d.join(", "));
             }
             let routes = routes::Routes::load();
-            let skipped = c.skipped_secret.len() + c.skipped_big.len();
+            let skipped = c.skipped_secret.len() + c.skipped_big.len() + c.skipped_link.len();
             let specs = c.items;
             if specs.is_empty() {
                 // Distinguish "you passed nothing" from "everything you passed

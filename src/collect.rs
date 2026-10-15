@@ -11,6 +11,13 @@
 //! sender is an agent that will not think to check. Those files are skipped by
 //! default and the skip is REPORTED, because a silent omission is its own
 //! kind of surprise.
+//!
+//! Symlinks are refused outright, which is the third thing. The deny list
+//! matches on a NAME, and a symlink's name says nothing about what it points
+//! at: `notes.md -> ~/.ssh/id_rsa` passed every check and shipped the key.
+//! The content scan did not save it either, since a .env-shaped target is
+//! neither a PEM block nor a vendor key pattern. A link is an instruction to
+//! read somewhere else, and a bundle contains the files you named.
 
 use crate::manifest::ItemKind;
 use std::path::{Path, PathBuf};
@@ -53,6 +60,8 @@ pub struct Collected {
     pub skipped_secret: Vec<String>,
     pub skipped_dir: Vec<String>,
     pub skipped_big: Vec<String>,
+    /// Links, with what they point at, so the report says why.
+    pub skipped_link: Vec<String>,
 }
 
 pub const MAX_ITEM_BYTES: u64 = 2 * 1024 * 1024;
@@ -65,6 +74,7 @@ impl Collected {
             skipped_secret: Vec::new(),
             skipped_dir: Vec::new(),
             skipped_big: Vec::new(),
+            skipped_link: Vec::new(),
         }
     }
 
@@ -83,6 +93,20 @@ fn add_one(
     src: &Path,
     allow_secret: bool,
 ) -> std::io::Result<()> {
+    // Checked with symlink_metadata, which does NOT follow the link, before
+    // anything reads through it. `--allow-secrets` does not override this: it
+    // is an override for files you can see the names of, and the whole problem
+    // with a link is that you cannot.
+    match std::fs::symlink_metadata(src) {
+        Ok(md) if md.file_type().is_symlink() => {
+            let target = std::fs::read_link(src)
+                .map(|t| t.display().to_string())
+                .unwrap_or_else(|_| "?".into());
+            c.skipped_link.push(format!("{rel} -> {target}"));
+            return Ok(());
+        }
+        _ => {}
+    }
     let name = src.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
     if looks_secret(&name) && !allow_secret {
         c.skipped_secret.push(rel);
@@ -115,6 +139,18 @@ fn walk(c: &mut Collected, kind: ItemKind, root: &Path, base: &Path, allow_secre
         let e = e?;
         let p = e.path();
         let name = e.file_name().to_string_lossy().to_string();
+        // A directory symlink is worse than a file one: following it walks a
+        // whole tree from somewhere the person did not name, and `--dir
+        // ./shared` with a link to $HOME in it would collect everything.
+        // `is_dir()` below follows links, so this has to come first.
+        if std::fs::symlink_metadata(&p).map(|m| m.file_type().is_symlink()).unwrap_or(false) {
+            let target = std::fs::read_link(&p)
+                .map(|t| t.display().to_string())
+                .unwrap_or_else(|_| "?".into());
+            let rel = p.strip_prefix(root).unwrap_or(&p).to_string_lossy().replace('\\', "/");
+            c.skipped_link.push(format!("{rel} -> {target}"));
+            continue;
+        }
         if p.is_dir() {
             if SKIP_DIRS.contains(&name.as_str()) {
                 c.skipped_dir.push(name);
@@ -161,6 +197,17 @@ pub fn collect(
         }
     }
     for d in dirs {
+        // The root itself, too: `--dir link-to-home` would otherwise walk it.
+        if std::fs::symlink_metadata(d).map(|m| m.file_type().is_symlink()).unwrap_or(false) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "--dir {} is a symlink. Pass the real path: a link is a pointer \
+                     somewhere else, and what it points at is not what you named.",
+                    d.display()
+                ),
+            ));
+        }
         if !d.is_dir() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::NotFound,

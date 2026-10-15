@@ -203,6 +203,39 @@ enum Cmd {
     },
 }
 
+/// Both legs of registration: claim a mailbox, then prove it by opening a
+/// nonce the relay sealed to it.
+///
+/// Naming a box key proves nothing -- it is in every `ctx whoami` line -- so
+/// a relay that took the claim at face value could have its mailboxes squatted
+/// by anyone who had seen one.
+fn register_with_proof(
+    addr: &str,
+    id: &identity::Identity,
+    body: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let resp = remote::post(addr, "/register", body)?;
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap_or_default();
+    // An older relay, or one that already knows this pair, asks for nothing.
+    let Some(sealed) = v.get("prove").and_then(|p| p.as_str()) else {
+        return Ok(());
+    };
+    use base64::{engine::general_purpose::STANDARD as B64, Engine};
+    let ct = B64
+        .decode(sealed.trim())
+        .map_err(|e| format!("relay sent an unreadable registration challenge: {e}"))?;
+    let nonce = id
+        .unseal(&ct)
+        .map_err(|e| format!("could not open the relay's registration challenge: {e}"))?;
+    let again = serde_json::json!({
+        "sign_key": id.public_b64(),
+        "box_key": id.box_public_b64(),
+        "proof": String::from_utf8_lossy(&nonce) })
+        .to_string();
+    remote::post(addr, "/register", &again)?;
+    Ok(())
+}
+
 /// Restore the default SIGPIPE disposition. Declared here rather than taking
 /// a libc dependency for one constant.
 #[cfg(unix)]
@@ -419,7 +452,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 let body = serde_json::json!({
                     "sign_key": id.public_b64(), "box_key": id.box_public_b64() })
                     .to_string();
-                match remote::post(&addr, "/register", &body) {
+                match register_with_proof(&addr, &id, &body) {
                     Ok(_) => println!("\nregistered the new mailbox with {addr}"),
                     Err(e) => println!("\ncould not register with {addr}: {e}\n  run ctx join {addr} once it is reachable"),
                 }
@@ -944,9 +977,11 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             let body = serde_json::json!({
                 "sign_key": id.public_b64(), "box_key": id.box_public_b64() })
                 .to_string();
-            remote::post(&addr, "/register", &body)?;
+            register_with_proof(&addr, &id, &body)?;
             remote::set_relay(&addr)?;
             println!("registered with {addr} and saved it as your relay");
+            println!("  proved the mailbox is yours by opening a sealed nonce, so nobody");
+            println!("  can claim it by quoting your public key");
             println!("  the relay holds sealed envelopes; it cannot read them");
         }
         Cmd::Push { dir, to, yes } => {
