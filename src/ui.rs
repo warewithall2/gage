@@ -27,7 +27,7 @@
 //! Hand-rolled HTTP rather than a web framework, so the one network-facing
 //! surface in this tool is about eighty lines a reader can audit in full.
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 
 /// What one request told us. Only the few headers that matter are kept.
@@ -40,8 +40,25 @@ struct Req {
     body: String,
 }
 
+/// Caps on the request head. `read_line` reads until a newline with no limit
+/// of its own, so a client that sends bytes and never a newline makes it
+/// allocate until the process dies -- and a client that connects and sends
+/// nothing at all blocks it forever, which on a single-threaded server is the
+/// whole viewer. Any local process could do either. Found reviewing my own
+/// parser the morning after writing it.
+const MAX_HEAD_BYTES: u64 = 64 * 1024;
+const MAX_HEADERS: usize = 200;
+const MAX_BODY_BYTES: usize = 256 * 1024;
+const IO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 fn read_req(stream: &TcpStream) -> std::io::Result<Req> {
-    let mut reader = BufReader::new(stream.try_clone()?);
+    // Nothing here waits on a human, so a read that stalls is a client that
+    // has stopped talking, and the server should not wait on it.
+    stream.set_read_timeout(Some(IO_TIMEOUT))?;
+    stream.set_write_timeout(Some(IO_TIMEOUT))?;
+    // The head is read through a limited reader: a line with no newline in it
+    // cannot grow past the cap, because the underlying reader reports EOF.
+    let mut reader = BufReader::new(stream.try_clone()?.take(MAX_HEAD_BYTES));
     let mut line = String::new();
     reader.read_line(&mut line)?;
     let mut parts = line.split_whitespace();
@@ -52,7 +69,15 @@ fn read_req(stream: &TcpStream) -> std::io::Result<Req> {
     let mut fetch_site = None;
     let mut guard = false;
     let mut len = 0usize;
+    let mut seen = 0usize;
     loop {
+        seen += 1;
+        if seen > MAX_HEADERS {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "too many request headers",
+            ));
+        }
         let mut h = String::new();
         if reader.read_line(&mut h)? == 0 {
             break;
@@ -70,13 +95,15 @@ fn read_req(stream: &TcpStream) -> std::io::Result<Req> {
             // Capped well below anything legitimate. The body is one short
             // reply, and an unbounded read here is a one-line denial of
             // service against a server with no other limits.
-            "content-length" => len = v.parse().unwrap_or(0).min(256 * 1024),
+            "content-length" => len = v.parse().unwrap_or(0).min(MAX_BODY_BYTES),
             _ => {}
         }
     }
+    // The body is read from the limited reader too, and `read_exact` now has
+    // a timeout behind it: a client that declares a length and then goes quiet
+    // fails rather than parking the server.
     let mut body = vec![0u8; len];
     if len > 0 {
-        use std::io::Read;
         reader.read_exact(&mut body)?;
     }
     Ok(Req {

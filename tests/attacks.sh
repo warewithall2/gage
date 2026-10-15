@@ -995,6 +995,49 @@ want "$T/dlo" "inside keys/"
 # and the ordinary file still goes
 if [ -e "$T/dlout/items/proj/README.md" ]; then ok; else bad "the ordinary file was dropped"; fi
 
+echo "the viewer survives a client that stalls or floods its request head"
+# Found reviewing my own parser the morning after writing it. read_line has no
+# size limit of its own, so a client sending bytes and never a newline made it
+# allocate until the process died, and a client that connected and sent
+# nothing blocked it forever -- on a single-threaded server that is the whole
+# viewer, and any local process could do it.
+DPORT=7895
+CTX_HOME=$T/b $CTX ui --port $DPORT >/dev/null 2>&1 &
+dpid=$!
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  curl -s --noproxy '*' -m 1 -o /dev/null "http://127.0.0.1:$DPORT/api/threads" 2>/dev/null && break
+  sleep 0.3
+done
+# 2 MB of header with no newline in it
+python3 - "$DPORT" <<'PY' 2>/dev/null
+import socket, sys
+s = socket.create_connection(('127.0.0.1', int(sys.argv[1])), timeout=5)
+try:
+    s.sendall(b'GET /api/threads HTTP/1.1
+X-Pad: ' + b'A' * 2_000_000)
+except Exception:
+    pass
+PY
+# a connection that says nothing at all
+python3 - "$DPORT" <<'PY' 2>/dev/null &
+import socket, sys, time
+s = socket.create_connection(('127.0.0.1', int(sys.argv[1])), timeout=5)
+time.sleep(2)
+PY
+sleep 0.4
+c=$(curl -s --noproxy '*' -m 15 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$DPORT/api/threads" 2>/dev/null)
+if [ "$c" = "200" ]; then ok; else bad "the viewer stopped answering after a flood or a stall (got '$c')"; fi
+# NOT a bare `wait`: this script has a relay and a viewer in the background
+# that never exit, so `wait` would block the suite rather than the stalled
+# client. Sleep past the stall instead.
+sleep 2
+c=$(curl -s --noproxy '*' -m 15 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$DPORT/api/threads" 2>/dev/null)
+if [ "$c" = "200" ]; then ok; else bad "the viewer did not recover (got '$c')"; fi
+# and it still refuses a cross-site POST, which the new parsing must not have lost
+c=$(curl -s --noproxy '*' -m 5 -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:$DPORT/api/read/abcdef" 2>/dev/null)
+if [ "$c" = "403" ]; then ok; else bad "the guard was lost in the parser rewrite (got '$c')"; fi
+kill $dpid 2>/dev/null; wait $dpid 2>/dev/null
+
 echo "a good bundle exits 0"
 CTX_HOME=$T/b $CTX open "$T/b1" >/dev/null 2>&1; code good $? 0
 

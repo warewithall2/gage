@@ -302,6 +302,12 @@ your own key is not on your list.
 
     ctx ui            # http://127.0.0.1:7777
 
+The request head is bounded and the socket has a timeout. `read_line` has no
+size limit of its own, so a client that sent bytes and never a newline made
+the viewer allocate until it died, and one that connected and said nothing
+blocked it forever -- which on a single-threaded server is the whole viewer,
+and any local process could do either.
+
 Two panes: conversations on the left, the thread on the right, with a
 composer at the bottom. Loopback only, never `0.0.0.0`: an inbox viewer on a
 laptop has no business being reachable from the network it happens to be on.
@@ -501,7 +507,7 @@ importer.
 
     cargo build --release && cargo test --release && bash tests/attacks.sh
 
-310 checks plus 37 Rust unit tests. Every one is an attack that worked, or
+313 checks plus 37 Rust unit tests. Every one is an attack that worked, or
 nearly worked, during development: frame-boundary forgery, payload swapping
 after signing, a listed contact claiming a third party's name, an unverified
 author name on a forward, a trust label that was a substring of its own
