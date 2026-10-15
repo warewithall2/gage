@@ -47,6 +47,7 @@ beside swapped files is caught and the contents are withheld.
 
     ctx inspect ./handoff              # summary, no contents in context
     ctx open    ./handoff              # render for an agent, inside the frame
+    ctx reply   <id> --text "..."      # answer a thread, recipient inferred
     ctx forward ./handoff --to group:eng --out ./fwd
 
 `open` exits 0 when the bundle is attributable, and 2 when the signature fails,
@@ -234,6 +235,53 @@ the reply.
 Opening marks read; listing does not. Seeing a subject in an inbox is not
 having read the thing.
 
+## Replying
+
+    ctx reply <thread-or-message-id> --text "Full jitter, cap 30s."
+
+The id can be a thread or a single message, and a unique prefix is enough.
+Everything else is worked out: the recipient comes from the **key that signed
+the message being answered**, never from its `from.handle` or its `to` list,
+both of which the sender writes. The type defaults to `answer` when the parent
+expected a reply and `share` when it did not, and the subject is the thread's
+own, not re-prefixed twice.
+
+`--text` is written to a file and sent like any other item, so a reply typed
+in a hurry goes through the same outbound scan as a file. A prefix matching
+two messages is refused rather than resolved to one of them: a reply landing
+in the wrong conversation with nothing in the output saying so is worse than
+an error. Replying to your own message says that, instead of reporting that
+your own key is not on your list.
+
+## The viewer
+
+    ctx ui            # http://127.0.0.1:7777
+
+Two panes: conversations on the left, the thread on the right, with a
+composer at the bottom. Loopback only, never `0.0.0.0`: an inbox viewer on a
+laptop has no business being reachable from the network it happens to be on.
+
+It never renders payload contents. A page that pastes a stranger's prompt into
+a browser is a different risk surface, and `ctx open` is where content is read,
+inside its frame. What the page shows instead is the verdict, the warnings and
+the file list, with the **verdict at the weight of a headline** rather than a
+caption, because it is the product and a redesign that buried it would be a
+regression.
+
+Each correspondent gets a monogram coloured from their **key**, so two contacts
+both calling themselves `codex` look different before you read a word. It is an
+aid and never a verdict; the verdict is always spelled out beside it.
+
+A reply written here is delivered to a **local route** only. Anything leaving
+the machine still goes through `ctx push`, where you see the list first, because
+a button in a web page is not that confirmation. Every mutating request must
+carry a custom header and may not name a cross-site `Origin` or
+`Sec-Fetch-Site`: a page on the open internet can POST to `127.0.0.1` with a
+plain form, and without those checks any site you happened to visit could accept
+bundles in your inbox or send a reply in your name. A form cannot set a custom
+header, and a fetch that sets one has to pass a preflight this server does not
+answer.
+
 ## Nudges
 
     ctx watch                    # poll, pull, notify
@@ -353,9 +401,9 @@ importer.
 
     cargo build --release && cargo test --release && bash tests/attacks.sh
 
-188 checks plus 19 Rust unit tests. Every one is an attack that worked, or
+221 checks plus 19 Rust unit tests. Every one is an attack that worked, or
 nearly worked, during development: frame-boundary forgery, payload swapping
 after signing, a listed contact claiming a third party's name, an unverified
 author name on a forward, a trust label that was a substring of its own
-opposite, a rotation notice countersigned by the wrong key, and a retired key
-still signing new mail.
+opposite, a rotation notice countersigned by the wrong key, a retired key
+still signing new mail, and a cross-site POST to the viewer.

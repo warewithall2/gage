@@ -11,6 +11,7 @@ mod collect;
 mod identity;
 mod manifest;
 mod notify;
+mod outbound;
 mod open;
 mod relay;
 mod remote;
@@ -23,7 +24,7 @@ mod ui;
 mod trust;
 
 use clap::{Parser, Subcommand};
-use manifest::AgentInfo;
+use outbound::{all_manifests, resolve_reply, send_bundle, SendArgs};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -105,6 +106,27 @@ enum Cmd {
         #[arg(long)] allow_findings: bool,
         #[arg(long)] agent: Option<String>,
         #[arg(long)] model: Option<String>,
+    },
+    /// Answer a thread without typing its id or working out the recipient
+    Reply {
+        /// Thread or message id. A unique prefix is enough.
+        id: String,
+        /// The reply itself, as text. Scanned on the way out like any file.
+        #[arg(long)] text: Option<String>,
+        #[arg(long)] file: Vec<PathBuf>,
+        #[arg(long)] prompt: Vec<PathBuf>,
+        #[arg(long)] decision: Vec<PathBuf>,
+        #[arg(long)] memory: Vec<PathBuf>,
+        #[arg(long)] dir: Vec<PathBuf>,
+        /// Override the inferred type (answer for a question, otherwise share)
+        #[arg(long)] r#type: Option<String>,
+        /// Override the inferred subject
+        #[arg(long)] subject: Option<String>,
+        #[arg(long)] allow_secrets: bool,
+        #[arg(long)] allow_findings: bool,
+        #[arg(long)] agent: Option<String>,
+        #[arg(long)] model: Option<String>,
+        #[arg(long)] out: Option<PathBuf>,
     },
     /// Summarise a bundle without putting its contents in context
     Inspect { dir: PathBuf },
@@ -191,41 +213,6 @@ unsafe fn libc_signal_default() {
     const SIGPIPE: i32 = 13;
     const SIG_DFL: usize = 0;
     unsafe { signal(SIGPIPE, SIG_DFL) };
-}
-
-/// Look for a bundle by id in pending and accepted. Used to inherit a thread
-/// when replying.
-fn find_manifest(id: &str) -> Option<manifest::Manifest> {
-    let home = identity::home();
-    for stage in [routes::accepted_dir(&home), routes::pending_dir(&home)] {
-        let d = stage.join(id);
-        if d.is_dir() {
-            if let Ok(l) = bundle::load(&d) {
-                return Some(l.manifest);
-            }
-        }
-    }
-    None
-}
-
-/// Every manifest held locally, for thread grouping.
-fn all_manifests() -> Vec<manifest::Manifest> {
-    let home = identity::home();
-    let mut out = Vec::new();
-    for stage in [
-        routes::accepted_dir(&home),
-        routes::pending_dir(&home),
-        routes::sent_dir(&home),
-    ] {
-        for (_, l) in routes::list(&stage) {
-            out.push(l.manifest);
-        }
-    }
-    // The same bundle can sit in more than one stage; a thread must not count
-    // it twice.
-    out.sort_by(|a, b| a.id.cmp(&b.id));
-    out.dedup_by(|a, b| a.id == b.id);
-    out
 }
 
 /// Collect anything waiting on the relay into inbox/pending.
@@ -681,131 +668,55 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             to, subject, out, file, prompt, decision, memory, dir,
             allow_secrets, reply_to, r#type, allow_findings, agent, model,
         } => {
-            let id = identity::Identity::load()?;
-            let c = collect::collect(&file, &prompt, &decision, &memory, &dir, allow_secrets)?;
-            // Skips are printed BEFORE the bundle is built, so a sender sees
-            // what is not going out while they can still change their mind.
-            if !c.skipped_secret.is_empty() {
-                println!("skipped (look like secrets, --allow-secrets to include):");
-                for f in &c.skipped_secret {
-                    println!("  {f}");
-                }
-            }
-            if !c.skipped_big.is_empty() {
-                println!("skipped (over the per-item size limit):");
-                for f in &c.skipped_big {
-                    println!("  {f}");
-                }
-            }
-            if !c.skipped_dir.is_empty() {
-                let mut d = c.skipped_dir.clone();
-                d.sort();
-                d.dedup();
-                println!("skipped build/cache dirs: {}", d.join(", "));
-            }
-            let routes = routes::Routes::load();
-            let skipped = c.skipped_secret.len() + c.skipped_big.len();
-            let specs = c.items;
-            if specs.is_empty() {
-                // Distinguish "you passed nothing" from "everything you passed
-                // was filtered". The second read as the first, which sends you
-                // looking for a flag you already used.
-                if skipped > 0 {
-                    return Err(format!(
-                        "nothing left to send: all {skipped} item(s) were skipped \
-                         (listed above). Rename them, pick different paths, or pass \
-                         --allow-secrets if you are sure."
-                    )
-                    .into());
-                }
-                return Err("nothing to send: pass --file, --dir, --prompt, --decision or --memory".into());
-            }
-            if to.is_empty() {
-                return Err("no recipient: pass --to <handle|group:name>".into());
-            }
-            // Outbound CONTENT scan. The filename deny list above catches
-            // .env; it says nothing about an innocent notes.md that quotes a
-            // customer address or still has a bearer token in it. Refuse
-            // rather than warn: on an outbound path a warning arrives after
-            // the bundle exists, and for a remote recipient after it has
-            // gone.
-            let findings = scrub::scan(&specs);
-            if !findings.is_empty() {
-                println!("outbound scan found {} item(s) that should not leave:", findings.len());
-                for f in &findings {
-                    println!("  {}:{}  [{}]  {}", f.path, f.line, f.rule, f.preview);
-                }
-                if !allow_findings {
-                    return Err(
-                        "refusing to build this bundle. Fix the files, add a rule to \
-                         ~/.ctx/scrub.json, or pass --allow-findings if they are false \
-                         positives."
-                            .into(),
-                    );
-                }
-                println!("  --allow-findings given: sending anyway");
-            }
-
-            let msg_type = manifest::MsgType::parse(&r#type).ok_or_else(|| {
-                format!("unknown --type {type_in:?}; use share, question, answer, review-request or ack",
-                        type_in = r#type)
+            send_bundle(SendArgs {
+                to, subject, out, file, prompt, decision, memory, dir,
+                allow_secrets, reply_to, msg_type: r#type, allow_findings, agent, model,
             })?;
-            // A reply inherits its parent's thread. Looked up locally rather
-            // than walked at read time: over a relay you may hold only part
-            // of a thread, and a chain you cannot walk is a thread you cannot
-            // group. Falling back to the parent id still groups the pair.
-            let thread = reply_to.as_ref().map(|rid| {
-                find_manifest(rid)
-                    .map(|m| m.thread_id().to_string())
-                    .unwrap_or_else(|| rid.clone())
-            });
-            let ag = agent.map(|name| AgentInfo { name, model });
-            // Built once into a staging dir, then delivered to each routed
-            // recipient. Building per-recipient would give one payload a
-            // different content id for every person who received it.
-            let stage = out.clone().unwrap_or_else(|| {
-                identity::home().join(format!("outbox/{}", std::process::id()))
-            });
-            let m = bundle::create(&stage, &id, &subject, &to, ag, reply_to, thread, msg_type, &specs)?;
-            // Keep our own copy before delivering anywhere.
-            let sent = routes::sent_dir(&identity::home()).join(&m.id);
-            if !sent.exists() {
-                if let Some(parent) = sent.parent() {
-                    std::fs::create_dir_all(parent)?;
+        }
+        Cmd::Reply {
+            id, text, file, prompt, decision, memory, dir, r#type, subject,
+            allow_secrets, allow_findings, agent, model, out,
+        } => {
+            let t = resolve_reply(&id)?;
+            // --text is written to a file rather than handled specially, so a
+            // typed reply goes through the same collection and the same
+            // outbound scan as everything else. A secret pasted into a reply
+            // is caught exactly like a secret in a file.
+            let tmp = identity::home().join(format!("tmp-reply-{}", std::process::id()));
+            let mut decision = decision;
+            if let Some(body) = &text {
+                std::fs::create_dir_all(&tmp)?;
+                let f = tmp.join("reply.md");
+                let mut body = body.clone();
+                if !body.ends_with('\n') {
+                    body.push('\n');
                 }
-                routes::deliver(&stage, &sent)?;
+                std::fs::write(&f, body)?;
+                decision.push(f);
             }
-            let mut delivered = Vec::new();
-            for who in &to {
-                if let Some(h) = routes.home_of(who) {
-                    let dest = routes::pending_dir(&h).join(&m.id);
-                    if let Some(parent) = dest.parent() {
-                        std::fs::create_dir_all(parent)?;
-                    }
-                    routes::deliver(&stage, &dest)?;
-                    delivered.push(format!("{who} -> {}", dest.display()));
-                }
+            let has_items = !file.is_empty()
+                || !prompt.is_empty()
+                || !decision.is_empty()
+                || !memory.is_empty()
+                || !dir.is_empty();
+            if !has_items {
+                let _ = std::fs::remove_dir_all(&tmp);
+                return Err("nothing to reply with: pass --text \"...\" or a file".into());
             }
-            println!(
-                "bundle {} [{}] -- {} item(s), {} bytes, signed by {}",
-                m.id, m.msg_type.label(), m.items.len(), m.total_bytes(), id.handle
-            );
-            if m.memory_count() > 0 {
-                println!(
-                    "  {} MEMORY item(s): these persist in whoever accepts them",
-                    m.memory_count()
-                );
-            }
-            for d in &delivered {
-                println!("  delivered {d}");
-            }
-            let unrouted: Vec<String> =
-                to.iter().filter(|w| routes.home_of(w).is_none()).cloned().collect();
-            if !unrouted.is_empty() {
-                println!("  no local route for: {}", unrouted.join(", "));
-                println!("  bundle is at {} -- move it yourself, or", stage.display());
-                println!("  ctx route <handle> <their-ctx-home> to deliver automatically");
-            }
+            println!("replying to {} ({})", t.parent, t.to);
+            let r = send_bundle(SendArgs {
+                to: vec![t.to.clone()],
+                subject: subject.unwrap_or(t.subject),
+                out,
+                file, prompt, decision, memory, dir,
+                allow_secrets,
+                reply_to: Some(t.parent),
+                msg_type: r#type.unwrap_or(t.msg_type),
+                allow_findings,
+                agent, model,
+            });
+            let _ = std::fs::remove_dir_all(&tmp);
+            r?;
         }
         Cmd::Inspect { dir } => {
             let l = bundle::load(&dir)?;
@@ -1102,7 +1013,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     println!("      {:?}  {}", it.kind, it.path.strip_prefix("items/").unwrap_or(&it.path));
                 }
             }
-            println!("\nctx open <path> to read one, ctx send --reply-to <id> --type answer to reply");
+            println!("\nctx open <path> to read one, ctx reply {} --text \"...\" to answer", t.id);
         }
         Cmd::Close { thread } => {
             let mut st = state::LocalState::load();

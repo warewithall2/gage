@@ -5,17 +5,117 @@
 //! subject line. It exists because the verdict is the product, and a verdict
 //! nobody looks at is not a control.
 //!
-//! Deliberately read-plus-accept only. The browser can accept or reject a
-//! pending bundle, because that is the human gate this design is built
-//! around, but it cannot render payload contents: a page that pastes a
-//! stranger's prompt into a browser is a different risk surface, and
-//! `ctx open` is where content is meant to be read, inside its frame.
+//! It never renders payload contents. A page that pastes a stranger's prompt
+//! into a browser is a different risk surface, and `ctx open` is where
+//! content is meant to be read, inside its frame. What the browser may do is
+//! accept, reject, mark read, settle a thread, and write a reply -- the human
+//! gates this design is built around, plus the one thing a viewer could not
+//! do and still be an app.
+//!
+//! A reply from here is delivered to a LOCAL ROUTE only. Sending off the
+//! machine stays in the terminal behind `ctx push --yes`, because that
+//! confirmation is the last point at which a person sees what is leaving, and
+//! a button in a web page is not that.
+//!
+//! Every mutating route demands a custom header and refuses a cross-site
+//! Origin or Sec-Fetch-Site. A page on the open internet can POST to
+//! 127.0.0.1 with a plain form, and without those checks any site you
+//! happened to visit could accept bundles in your inbox or send a reply in
+//! your name. A form cannot set a custom header, and a fetch that sets one
+//! must first pass a preflight this server does not answer.
 //!
 //! Hand-rolled HTTP rather than a web framework, so the one network-facing
 //! surface in this tool is about eighty lines a reader can audit in full.
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
+
+/// What one request told us. Only the few headers that matter are kept.
+struct Req {
+    method: String,
+    target: String,
+    origin: Option<String>,
+    fetch_site: Option<String>,
+    guard: bool,
+    body: String,
+}
+
+fn read_req(stream: &TcpStream) -> std::io::Result<Req> {
+    let mut reader = BufReader::new(stream.try_clone()?);
+    let mut line = String::new();
+    reader.read_line(&mut line)?;
+    let mut parts = line.split_whitespace();
+    let method = parts.next().unwrap_or("").to_string();
+    let target = parts.next().unwrap_or("/").to_string();
+
+    let mut origin = None;
+    let mut fetch_site = None;
+    let mut guard = false;
+    let mut len = 0usize;
+    loop {
+        let mut h = String::new();
+        if reader.read_line(&mut h)? == 0 {
+            break;
+        }
+        let h = h.trim_end();
+        if h.is_empty() {
+            break;
+        }
+        let Some((k, v)) = h.split_once(':') else { continue };
+        let (k, v) = (k.trim().to_ascii_lowercase(), v.trim().to_string());
+        match k.as_str() {
+            "origin" => origin = Some(v),
+            "sec-fetch-site" => fetch_site = Some(v),
+            "x-ctx" => guard = true,
+            // Capped well below anything legitimate. The body is one short
+            // reply, and an unbounded read here is a one-line denial of
+            // service against a server with no other limits.
+            "content-length" => len = v.parse().unwrap_or(0).min(256 * 1024),
+            _ => {}
+        }
+    }
+    let mut body = vec![0u8; len];
+    if len > 0 {
+        use std::io::Read;
+        reader.read_exact(&mut body)?;
+    }
+    Ok(Req {
+        method,
+        target,
+        origin,
+        fetch_site,
+        guard,
+        body: String::from_utf8_lossy(&body).to_string(),
+    })
+}
+
+/// Is this request allowed to change anything?
+///
+/// Three independent conditions, because each covers the others' gaps: the
+/// custom header is what a cross-site form cannot produce, Sec-Fetch-Site is
+/// what a modern browser volunteers, and the Origin check catches a request
+/// that names some other site outright.
+fn may_mutate(r: &Req, port: u16) -> bool {
+    if !r.guard {
+        return false;
+    }
+    if let Some(site) = &r.fetch_site {
+        if site != "same-origin" && site != "none" {
+            return false;
+        }
+    }
+    if let Some(o) = &r.origin {
+        let ok = [
+            format!("http://127.0.0.1:{port}"),
+            format!("http://localhost:{port}"),
+            format!("http://[::1]:{port}"),
+        ];
+        if !ok.iter().any(|x| x == o) {
+            return false;
+        }
+    }
+    true
+}
 
 pub fn serve(port: u16) -> std::io::Result<()> {
     // Loopback only, never 0.0.0.0. An inbox viewer on a laptop has no
@@ -25,7 +125,7 @@ pub fn serve(port: u16) -> std::io::Result<()> {
     for stream in listener.incoming() {
         match stream {
             Ok(s) => {
-                if let Err(e) = handle(s) {
+                if let Err(e) = handle(s, port) {
                     eprintln!("ctx ui: {e}");
                 }
             }
@@ -48,15 +148,20 @@ fn respond(mut s: TcpStream, status: &str, ctype: &str, body: &str) -> std::io::
     s.flush()
 }
 
-fn handle(stream: TcpStream) -> std::io::Result<()> {
-    let mut reader = BufReader::new(stream.try_clone()?);
-    let mut line = String::new();
-    reader.read_line(&mut line)?;
-    let mut parts = line.split_whitespace();
-    let method = parts.next().unwrap_or("");
-    let target = parts.next().unwrap_or("/");
+fn handle(stream: TcpStream, port: u16) -> std::io::Result<()> {
+    let req = read_req(&stream)?;
+    let (method, target) = (req.method.as_str(), req.target.as_str());
 
-    // Only the three routes below exist. Anything else is a 404 rather than a
+    if method == "POST" && !may_mutate(&req, port) {
+        return respond(
+            stream,
+            "403 Forbidden",
+            "application/json",
+            "{\"error\":\"cross-site request refused\"}",
+        );
+    }
+
+    // Only the routes below exist. Anything else is a 404 rather than a
     // filesystem lookup, so there is no path to traverse.
     match (method, target) {
         ("GET", "/") => respond(stream, "200 OK", "text/html; charset=utf-8", INDEX),
@@ -124,7 +229,83 @@ fn handle(stream: TcpStream) -> std::io::Result<()> {
                 ),
             }
         }
+        ("POST", "/api/reply") => {
+            let out = reply_from_ui(&req.body);
+            match out {
+                Ok(id) => respond(stream, "200 OK", "application/json",
+                    &serde_json::json!({ "ok": true, "id": id }).to_string()),
+                Err((code, msg)) => respond(stream, code, "application/json",
+                    &serde_json::json!({ "error": msg }).to_string()),
+            }
+        }
         _ => respond(stream, "404 Not Found", "text/plain", "not found\n"),
+    }
+}
+
+/// Send a reply on behalf of the page.
+///
+/// Routed recipients only. A bundle for someone with no local route would sit
+/// in the outbox looking sent, and the page cannot run the confirmation that
+/// `ctx push` exists to show -- so it says so instead of pretending.
+fn reply_from_ui(body: &str) -> Result<String, (&'static str, String)> {
+    let v: serde_json::Value = serde_json::from_str(body)
+        .map_err(|e| ("400 Bad Request", format!("unreadable request: {e}")))?;
+    let thread = v.get("thread").and_then(|t| t.as_str()).unwrap_or("").trim().to_string();
+    let text = v.get("text").and_then(|t| t.as_str()).unwrap_or("");
+    let msg_type = v.get("type").and_then(|t| t.as_str()).map(|s| s.to_string());
+    if thread.is_empty() || !thread.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(("400 Bad Request", "bad thread id".into()));
+    }
+    if text.trim().is_empty() {
+        return Err(("400 Bad Request", "nothing to send".into()));
+    }
+
+    let t = crate::outbound::resolve_reply(&thread)
+        .map_err(|e| ("409 Conflict", e.to_string()))?;
+    if crate::routes::Routes::load().home_of(&t.to).is_none() {
+        return Err((
+            "409 Conflict",
+            format!(
+                "{} has no local route, so this reply cannot be delivered from here. \
+                 In a terminal: ctx reply {} --text \"...\" then ctx push <dir> --to {} --yes",
+                t.to, thread, t.to
+            ),
+        ));
+    }
+
+    let tmp = crate::identity::home().join(format!("tmp-ui-{}", std::process::id()));
+    std::fs::create_dir_all(&tmp).map_err(|e| ("500 Internal Server Error", e.to_string()))?;
+    let f = tmp.join("reply.md");
+    let mut body = text.to_string();
+    if !body.ends_with('\n') {
+        body.push('\n');
+    }
+    std::fs::write(&f, body).map_err(|e| ("500 Internal Server Error", e.to_string()))?;
+
+    // Same path as the CLI, outbound scan included. A reply typed into a
+    // browser gets exactly the checks a reply typed into a shell gets.
+    let r = crate::outbound::send_bundle(crate::outbound::SendArgs {
+        to: vec![t.to.clone()],
+        subject: t.subject,
+        out: None,
+        file: vec![],
+        prompt: vec![],
+        decision: vec![f],
+        memory: vec![],
+        dir: vec![],
+        allow_secrets: false,
+        reply_to: Some(t.parent),
+        msg_type: msg_type.unwrap_or(t.msg_type),
+        allow_findings: false,
+        agent: None,
+        model: None,
+    });
+    let _ = std::fs::remove_dir_all(&tmp);
+    match r {
+        Ok(m) => Ok(m.id),
+        // The scan refusing is the most likely failure and it is not a bug,
+        // so it comes back as a 409 the page can show verbatim.
+        Err(e) => Err(("409 Conflict", e.to_string())),
     }
 }
 
@@ -193,6 +374,7 @@ fn threads_json() -> String {
     let mine = me_id.as_ref().map(|i| i.public_b64()).unwrap_or_default();
     let st = crate::state::LocalState::load();
     let contacts = crate::trust::Contacts::load();
+    let routes = crate::routes::Routes::load();
     let home = crate::identity::home();
 
     // Where each bundle lives decides what can be done with it: a pending one
@@ -232,6 +414,10 @@ fn threads_json() -> String {
                     serde_json::json!({
                         "id": m.id,
                         "mine": is_mine,
+                        // The page colours each correspondent from the KEY, so
+                        // two contacts using the same display name look
+                        // different before anyone reads a word.
+                        "key": m.from.key,
                         "type": m.msg_type.label(),
                         "expects_reply": m.msg_type.expects_reply(),
                         "created": m.created,
@@ -256,11 +442,32 @@ fn threads_json() -> String {
                     })
                 })
                 .collect();
+            // Who a reply would go to, worked out the same way `ctx reply`
+            // works it out: the newest message that is not yours, and the KEY
+            // that signed it. The page shows the name but never decides from
+            // it, and when the answer is "nobody" it says why rather than
+            // offering a box that fails on submit.
+            let parent = t.messages.iter().rev().find(|m| m.from.key != mine);
+            let reply = match parent {
+                None => serde_json::json!({ "can": false,
+                    "why": "every message here is your own" }),
+                Some(p) => match contacts.name_for(&p.from.key) {
+                    None => serde_json::json!({ "can": false,
+                        "why": "the key that signed the last message is not on your list" }),
+                    Some(name) if routes.home_of(name).is_none() => serde_json::json!({
+                        "can": false, "to": name,
+                        "why": format!("{name} has no local route, so a reply has to go out \
+                                        through ctx push in a terminal") }),
+                    Some(name) => serde_json::json!({ "can": true, "to": name,
+                        "type": if p.msg_type.expects_reply() { "answer" } else { "share" } }),
+                },
+            };
             serde_json::json!({
                 "id": t.id,
                 "subject": t.subject,
                 "state": t.state.label(),
                 "unread": t.unread,
+                "reply": reply,
                 "messages": msgs,
             })
         })

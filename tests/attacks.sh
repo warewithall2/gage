@@ -121,9 +121,13 @@ done
 if ss -ltn 2>/dev/null | grep -q '127.0.0.1:7891'; then ok; else bad "ui is not bound to 127.0.0.1"; fi
 if ss -ltn 2>/dev/null | grep -q '0.0.0.0:7891'; then bad "ui is listening on all interfaces"; else ok; fi
 for p in "/api/accept/../../etc" "/etc/passwd" "/api/accept/zzzz"; do
-  c=$(curl -s -o /dev/null -m 2 -w '%{http_code}' -X POST "http://127.0.0.1:7891$p")
+  c=$(curl -s -o /dev/null -m 2 -w '%{http_code}' -X POST -H 'X-Ctx: 1' "http://127.0.0.1:7891$p")
   case "$c" in 400|404) ok;; *) bad "ui returned $c for $p";; esac
 done
+# a POST with no custom header is what a cross-site form produces, and a form
+# is the one thing that can reach 127.0.0.1 from the open internet
+c=$(curl -s -o /dev/null -m 2 -w '%{http_code}' -X POST "http://127.0.0.1:7891/api/read/abcdef")
+if [ "$c" = "403" ]; then ok; else bad "an unguarded POST returned $c"; fi
 kill $uipid 2>/dev/null; wait $uipid 2>/dev/null
 
 echo "sealing hides contents, sender and subject from a relay"
@@ -336,6 +340,97 @@ CTX_HOME=$T/b $CTX accept "$rid" >/dev/null 2>&1
 CTX_HOME=$T/b $CTX open "$T/b/inbox/accepted/$rid" >/dev/null 2>&1
 CTX_HOME=$T/b $CTX watch --once --quiet > "$T/w4" 2>&1
 wantno "$T/w4" "read me"
+
+echo "reply works out the recipient, the type and the thread by itself"
+printf 'which backoff?\n' > "$T/w/rq.md"
+rqid=$(CTX_HOME=$T/a $CTX send --to bob --subject "backoff policy" --type question \
+       --decision "$T/w/rq.md" 2>/dev/null | head -1 | awk '{print $2}')
+CTX_HOME=$T/b $CTX reply "${rqid:0:8}" --text 'Full jitter, cap 30s.' > "$T/rp" 2>&1
+code reply $? 0
+# the recipient comes from the KEY that signed the parent, never from its
+# from.handle or its to list, both of which the sender writes
+want "$T/rp" "replying to $rqid (alice)"
+want "$T/rp" "[answer]"
+CTX_HOME=$T/a $CTX thread "$rqid" > "$T/rth" 2>&1
+want "$T/rth" "answer"
+want "$T/rth" "backoff policy"
+wantno "$T/rth" "re: re:"
+
+echo "a reply with nothing in it is refused, and --text goes through the scan"
+CTX_HOME=$T/b $CTX reply "${rqid:0:8}" > "$T/rp2" 2>&1; code replyempty $? 1
+want "$T/rp2" "nothing to reply with"
+CTX_HOME=$T/b $CTX reply "${rqid:0:8}" \
+  --text 'use Authorization: Bearer ghp_aAbBcCdDeEfFgGhHiIjJkKlLmMnN0123' > "$T/rp3" 2>&1
+code replyscan $? 1
+want "$T/rp3" "outbound scan found"
+wantno "$T/rp3" "aAbBcCdDeEfFgGhHiIjJkKlLmMnN0123"
+if ls "$T/b/outbox" >/dev/null 2>&1 && grep -rqF "aAbBcCdDeEfFgGhHiIjJkKlLmMnN0123" "$T/b" 2>/dev/null; then
+  bad "the scanned reply text was left behind in the ctx home"
+else ok; fi
+
+echo "an ambiguous id is refused rather than resolved to one of them"
+CTX_HOME=$T/b $CTX reply "" --text x > "$T/rp4" 2>&1; code replyambig $? 1
+want "$T/rp4" "Use more characters"
+
+echo "you cannot reply to a thread that is all your own messages"
+mid=$(CTX_HOME=$T/a $CTX send --to bob --subject "monologue" --decision "$T/w/ok.md" \
+      2>/dev/null | head -1 | awk '{print $2}')
+CTX_HOME=$T/a $CTX reply "$mid" --text x > "$T/rp5" 2>&1; code replyself $? 1
+want "$T/rp5" "is your own message"
+# and by thread id, where there is no non-yours message to fall back to
+CTX_HOME=$T/a $CTX reply "${mid:0:8}" --text x > "$T/rp5b" 2>&1; code replyselfthread $? 1
+want "$T/rp5b" "nobody to reply to"
+
+echo "replying to an unlisted key is refused, and names the key not the handle"
+mkdir -p "$T/h"
+CTX_HOME=$T/h $CTX init henry >/dev/null
+CTX_HOME=$T/h $CTX route bob "$T/b" >/dev/null 2>&1
+hid=$(CTX_HOME=$T/h $CTX send --to bob --subject "cold open" --type question \
+      --decision "$T/w/ok.md" 2>/dev/null | head -1 | awk '{print $2}')
+CTX_HOME=$T/b $CTX reply "$hid" --text x > "$T/rp6" 2>&1; code replyunlisted $? 1
+want "$T/rp6" "not on your list"
+want "$T/rp6" "proves nothing"
+
+echo "the viewer can reply, and only from its own origin"
+UPORT=7892
+CTX_HOME=$T/b $CTX ui --port $UPORT >/dev/null 2>&1 &
+uipid2=$!
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  curl -s -m 1 http://127.0.0.1:$UPORT/api/threads >/dev/null 2>&1 && break
+  sleep 0.3
+done
+curl -s -m 2 "http://127.0.0.1:$UPORT/api/threads" > "$T/uth" 2>&1
+want "$T/uth" "backoff policy"
+# the page is told who a reply would go to, worked out from the signing key
+want "$T/uth" '"can":true'
+# ... and never the payload itself
+wantno "$T/uth" "which backoff?"
+U="http://127.0.0.1:$UPORT/api/reply"
+B="{\"thread\":\"$rqid\",\"text\":\"Confirmed, full jitter.\"}"
+for hdr in "Origin: https://evil.example" "Sec-Fetch-Site: cross-site"; do
+  c=$(curl -s -o /dev/null -m 3 -w '%{http_code}' -X POST -H 'X-Ctx: 1' \
+      -H 'Content-Type: application/json' -H "$hdr" -d "$B" "$U")
+  if [ "$c" = "403" ]; then ok; else bad "a cross-site reply returned $c ($hdr)"; fi
+done
+c=$(curl -s -o /dev/null -m 3 -w '%{http_code}' -X POST \
+    -H 'Content-Type: application/json' -d "$B" "$U")
+if [ "$c" = "403" ]; then ok; else bad "an unguarded reply returned $c"; fi
+curl -s -m 5 -X POST -H 'X-Ctx: 1' -H 'Content-Type: application/json' \
+     -H "Origin: http://127.0.0.1:$UPORT" -d "$B" "$U" > "$T/urep" 2>&1
+want "$T/urep" '"ok":true'
+uid=$(sed -n 's/.*"id":"\([a-f0-9]*\)".*/\1/p' "$T/urep")
+CTX_HOME=$T/a $CTX thread "$rqid" > "$T/uthread" 2>&1
+if [ -n "$uid" ] && grep -qF "$uid" "$T/uthread"; then ok; else bad "the reply from the viewer did not arrive"; fi
+# the same outbound scan, on a reply typed into a browser
+BAD="{\"thread\":\"$rqid\",\"text\":\"key ghp_aAbBcCdDeEfFgGhHiIjJkKlLmMnN0123\"}"
+curl -s -m 5 -X POST -H 'X-Ctx: 1' -H 'Content-Type: application/json' -d "$BAD" "$U" > "$T/uscan" 2>&1
+want "$T/uscan" "refusing to build this bundle"
+wantno "$T/uscan" "aAbBcCdDeEfFgGhHiIjJkKlLmMnN0123"
+# a thread whose last sender is not on your list offers no reply at all
+HB="{\"thread\":\"$hid\",\"text\":\"hello\"}"
+curl -s -m 5 -X POST -H 'X-Ctx: 1' -H 'Content-Type: application/json' -d "$HB" "$U" > "$T/ucold" 2>&1
+want "$T/ucold" "not on your list"
+kill $uipid2 2>/dev/null; wait $uipid2 2>/dev/null
 
 echo "key rotation: the old key keeps the past and loses the future"
 mkdir -p "$T"/{d,e}

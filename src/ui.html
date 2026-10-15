@@ -3,134 +3,218 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>ctx</title>
 <style>
+/* One accent, one warm neutral, semantic colour reserved for trust verdicts
+   so nothing decorative ever borrows the colour that means "unverified".
+   No webfont: this page is served under a CSP with no network access, and
+   loosening that for typography would be a poor trade. */
 :root{
-  --bg:#0a0c10; --panel:#0f1218; --raise:#161a22; --line:#232834; --line2:#2d3340;
-  --fg:#e9ecf1; --dim:#949db0; --faint:#626b7c;
-  --ok:#3ddc97; --warn:#f5b544; --bad:#ff6b81; --accent:#6fb3ff;
-  --prompt:#f5b544; --memory:#ff6b81; --decision:#b39bff; --file:#6fb3ff;
-  --r:12px;
+  --bg:#fbfaf8; --sheet:#ffffff; --sunk:#f4f2ee; --line:#e6e2db; --line2:#d3cec4;
+  --fg:#1c1b19; --dim:#605c55; --faint:#8d887f;
+  --accent:#2f5d50; --accent-ink:#ffffff; --accent-soft:#e8efea;
+  --ok:#2f6b55; --warn:#8a5a16; --bad:#9c2f2f;
+  --prompt:#8a5a16; --memory:#9c2f2f; --decision:#4a4a8a; --file:#2f5d50;
+  --shadow:0 1px 2px rgba(28,27,25,.05), 0 8px 24px -16px rgba(28,27,25,.25);
+  --r:10px;
+  --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
 }
-@media (prefers-color-scheme:light){:root:not([data-theme=dark]){
-  --bg:#f4f6f9; --panel:#fff; --raise:#fff; --line:#e4e8ee; --line2:#d6dbe4;
-  --fg:#0f1319; --dim:#59616f; --faint:#8a93a3;
-  --ok:#0a8f5b; --warn:#9a6b00; --bad:#c3304a; --accent:#1a6fd4;
-  --prompt:#9a6b00; --memory:#c3304a; --decision:#6a4cd6; --file:#1a6fd4;
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){
+  --bg:#16171a; --sheet:#1d1f23; --sunk:#232529; --line:#2e3137; --line2:#3b3f47;
+  --fg:#eceae6; --dim:#a7a49e; --faint:#7b7873;
+  --accent:#7fc0ac; --accent-ink:#11201c; --accent-soft:#23312d;
+  --ok:#7fc0ac; --warn:#d9a95f; --bad:#e58b86;
+  --prompt:#d9a95f; --memory:#e58b86; --decision:#a6a6e0; --file:#7fc0ac;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 30px -18px rgba(0,0,0,.8);
+  color-scheme:dark;
 }}
+:root[data-theme=dark]{
+  --bg:#16171a; --sheet:#1d1f23; --sunk:#232529; --line:#2e3137; --line2:#3b3f47;
+  --fg:#eceae6; --dim:#a7a49e; --faint:#7b7873;
+  --accent:#7fc0ac; --accent-ink:#11201c; --accent-soft:#23312d;
+  --ok:#7fc0ac; --warn:#d9a95f; --bad:#e58b86;
+  --prompt:#d9a95f; --memory:#e58b86; --decision:#a6a6e0; --file:#7fc0ac;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 30px -18px rgba(0,0,0,.8);
+  color-scheme:dark;
+}
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%}
-body{background:var(--bg);color:var(--fg);
-  font:14px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
-  -webkit-font-smoothing:antialiased}
-button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+body{background:var(--bg);color:var(--fg);font-family:var(--sans);
+  font-size:14px;line-height:1.55;-webkit-font-smoothing:antialiased}
+button,input,select,textarea{font:inherit;color:inherit}
+button{background:none;border:0;cursor:pointer}
+::selection{background:var(--accent-soft)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 
-.app{display:grid;grid-template-columns:330px 1fr;height:100dvh}
-@media (max-width:820px){
+.app{display:grid;grid-template-columns:minmax(300px,344px) 1fr;height:100dvh}
+@media (max-width:880px){
   .app{grid-template-columns:1fr}
   .right{display:none}
   .app.detail .left{display:none}
   .app.detail .right{display:flex}
 }
 
-/* ---- left rail ---- */
-.left{border-right:1px solid var(--line);background:var(--panel);
+/* ---------- rail ---------- */
+.left{border-right:1px solid var(--line);background:var(--sheet);
   display:flex;flex-direction:column;min-height:0}
-.brand{padding:16px 18px 12px;display:flex;align-items:center;gap:10px;
-  border-bottom:1px solid var(--line)}
-.mark{width:26px;height:26px;border-radius:8px;display:grid;place-items:center;
-  background:linear-gradient(140deg,var(--accent),var(--decision));
-  color:#fff;font-weight:800;font-size:12px;letter-spacing:.04em}
-.brandtxt{font-weight:700;letter-spacing:.14em;font-size:12px}
-.me{margin-left:auto;font:11px/1.3 ui-monospace,monospace;color:var(--faint);
-  text-align:right;max-width:150px;overflow:hidden;text-overflow:ellipsis}
-.filters{display:flex;gap:6px;padding:10px 14px;border-bottom:1px solid var(--line)}
-.chip{font-size:12px;padding:5px 11px;border-radius:999px;color:var(--dim);
-  border:1px solid var(--line2)}
-.chip.on{background:var(--accent);border-color:var(--accent);color:#061018;font-weight:600}
-.chip .n{opacity:.75;margin-left:5px}
-.list{overflow-y:auto;flex:1;min-height:0}
-.t{width:100%;text-align:left;padding:13px 16px;border-bottom:1px solid var(--line);
-  display:block;position:relative}
-.t:hover{background:var(--raise)}
-.t.sel{background:var(--raise);box-shadow:inset 3px 0 0 var(--accent)}
-.t .ts{display:flex;justify-content:space-between;gap:10px;align-items:baseline}
-.t .subj{font-weight:600;font-size:14px;overflow:hidden;text-overflow:ellipsis;
-  white-space:nowrap}
-.t .when{font:11px ui-monospace,monospace;color:var(--faint);flex:none}
-.t .meta{font-size:12px;color:var(--dim);margin-top:3px;display:flex;gap:8px;
-  align-items:center;flex-wrap:wrap}
-.pip{width:7px;height:7px;border-radius:50%;background:var(--accent);flex:none}
-.state{font-size:10.5px;letter-spacing:.04em;font-weight:700;padding:2px 7px;
-  border-radius:5px;border:1px solid currentColor}
-.s-you{color:var(--warn)} .s-them{color:var(--dim)}
-.s-settled{color:var(--ok)} .s-closed{color:var(--faint)}
-.empty{padding:40px 20px;color:var(--faint);text-align:center;font-size:13px}
+.brand{display:flex;align-items:center;gap:10px;padding:18px 18px 14px}
+.logo{width:28px;height:28px;border-radius:9px;flex:none;display:grid;place-items:center;
+  background:var(--accent);color:var(--accent-ink);font-weight:700;font-size:13px;
+  letter-spacing:.02em}
+.wordmark{font-weight:650;letter-spacing:.02em;font-size:15px}
+.whoami{margin-left:auto;text-align:right;min-width:0}
+.whoami .h{font-size:12.5px;font-weight:600;color:var(--dim)}
+.whoami .k{font-family:var(--mono);font-size:10.5px;color:var(--faint)}
 
-/* ---- right pane ---- */
-.right{display:flex;flex-direction:column;min-height:0}
-.head{padding:16px 22px;border-bottom:1px solid var(--line);background:var(--panel);
-  display:flex;gap:12px;align-items:center}
-.back{display:none;font-size:18px;color:var(--dim)}
-@media (max-width:820px){.back{display:block}}
-.head h1{font-size:16px;font-weight:650;overflow:hidden;text-overflow:ellipsis;
-  white-space:nowrap}
+.filters{display:flex;gap:6px;padding:0 14px 12px}
+.chip{font-size:12.5px;padding:5px 10px;border-radius:7px;color:var(--dim);
+  border:1px solid transparent;transition:background .12s,color .12s}
+.chip:hover{background:var(--sunk)}
+.chip.on{background:var(--accent-soft);color:var(--accent);font-weight:600}
+.chip .n{font-family:var(--mono);font-size:11px;opacity:.7;margin-left:5px}
+
+.list{overflow-y:auto;flex:1;min-height:0;padding:0 8px 16px;
+  scrollbar-width:thin}
+.t{width:100%;text-align:left;padding:11px 12px;border-radius:var(--r);
+  display:grid;grid-template-columns:auto 1fr;gap:11px;position:relative}
+.t:hover{background:var(--sunk)}
+.t.sel{background:var(--accent-soft)}
+.t + .t{margin-top:2px}
+.avatar{width:30px;height:30px;border-radius:9px;flex:none;display:grid;
+  place-items:center;font-size:12px;font-weight:650;margin-top:2px}
+.tbody{min-width:0}
+.trow{display:flex;gap:8px;align-items:baseline}
+.subj{font-weight:600;font-size:13.5px;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap;flex:1}
+.when{font-family:var(--mono);font-size:10.5px;color:var(--faint);flex:none}
+.tmeta{display:flex;gap:7px;align-items:center;margin-top:2px;font-size:12px;
+  color:var(--dim);min-width:0}
+.tmeta .peers{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pip{width:6px;height:6px;border-radius:50%;background:var(--accent);flex:none}
+.state{font-size:10px;letter-spacing:.06em;text-transform:uppercase;font-weight:700;
+  padding:2px 6px;border-radius:5px;flex:none;white-space:nowrap}
+.s-you{color:var(--warn);background:color-mix(in srgb,var(--warn) 13%,transparent)}
+.s-them{color:var(--dim);background:var(--sunk)}
+.s-settled{color:var(--ok);background:color-mix(in srgb,var(--ok) 13%,transparent)}
+.s-closed{color:var(--faint);background:var(--sunk)}
+.empty{padding:48px 24px;color:var(--faint);text-align:center;font-size:13px;
+  line-height:1.7}
+
+/* ---------- conversation ---------- */
+.right{display:flex;flex-direction:column;min-height:0;background:var(--bg)}
+.head{padding:14px 24px;border-bottom:1px solid var(--line);background:var(--sheet);
+  display:flex;gap:12px;align-items:center;flex:none}
+.back{display:none;font-size:17px;color:var(--dim);padding:2px 6px}
+@media (max-width:880px){.back{display:block}}
+.head h1{font-size:15.5px;font-weight:650;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap;letter-spacing:-.005em}
 .head .sp{flex:1}
-.msgs{overflow-y:auto;flex:1;min-height:0;padding:20px 22px 60px}
-.m{margin-bottom:18px;max-width:780px}
+.headbtn{font-size:12.5px;color:var(--dim);padding:4px 9px;border-radius:7px;
+  border:1px solid var(--line2);white-space:nowrap}
+.headbtn:hover{border-color:var(--accent);color:var(--accent)}
+
+.msgs{overflow-y:auto;flex:1;min-height:0;padding:22px 24px 10px;
+  display:flex;flex-direction:column;gap:16px}
+.m{max-width:720px;min-width:0}
 .m.mine{margin-left:auto}
-.mhead{display:flex;gap:9px;align-items:center;margin-bottom:6px;flex-wrap:wrap}
-.who{font-weight:650;font-size:13px}
-.ty{font-size:10.5px;font-weight:700;letter-spacing:.04em;padding:2px 7px;
-  border-radius:5px;border:1px solid currentColor;color:var(--dim)}
+.mhead{display:flex;gap:8px;align-items:center;margin-bottom:6px;flex-wrap:wrap;
+  padding-inline:2px}
+.m.mine .mhead{justify-content:flex-end}
+.who{font-weight:650;font-size:12.5px}
+.ty{font-size:10px;letter-spacing:.06em;text-transform:uppercase;font-weight:700;
+  padding:2px 6px;border-radius:5px;background:var(--sunk);color:var(--dim)}
 .ty.question,.ty.review-request{color:var(--warn)}
 .ty.answer{color:var(--ok)}
-.when2{font:11px ui-monospace,monospace;color:var(--faint)}
-.unread{width:7px;height:7px;border-radius:50%;background:var(--accent)}
-.body{background:var(--raise);border:1px solid var(--line);border-radius:var(--r);
-  overflow:hidden}
-.m.mine .body{border-color:var(--line2)}
-.verdict{padding:9px 14px;font-size:11.5px;font-weight:650;letter-spacing:.03em;
-  border-bottom:1px solid var(--line);display:flex;gap:8px;align-items:center}
-.v-ok{color:var(--ok)} .v-warn{color:var(--warn)} .v-bad{color:var(--bad)}
-.alert{padding:9px 14px;font-size:12.5px;border-bottom:1px solid var(--line);
-  color:var(--warn)}
+.at{font-family:var(--mono);font-size:10.5px;color:var(--faint)}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--accent)}
+
+.sheet{background:var(--sheet);border:1px solid var(--line);border-radius:14px;
+  overflow:hidden;box-shadow:var(--shadow)}
+.m.mine .sheet{background:var(--sunk);box-shadow:none}
+/* The verdict keeps the weight of a headline. It is the product; a redesign
+   that quietly turned it into a caption would be a regression, not a style. */
+.verdict{display:flex;gap:8px;align-items:center;padding:10px 15px;
+  font-size:12px;font-weight:700;letter-spacing:.05em;text-transform:uppercase}
+.verdict .vdot{width:7px;height:7px;border-radius:50%;background:currentColor;flex:none}
+.v-ok{color:var(--ok);background:color-mix(in srgb,var(--ok) 10%,transparent)}
+.v-warn{color:var(--warn);background:color-mix(in srgb,var(--warn) 10%,transparent)}
+.v-bad{color:var(--bad);background:color-mix(in srgb,var(--bad) 12%,transparent)}
+.alert{padding:9px 15px;font-size:12.5px;line-height:1.5;color:var(--warn);
+  border-top:1px solid var(--line)}
 .alert.bad{color:var(--bad)}
-.files{padding:4px 0}
-.f{display:flex;gap:10px;align-items:center;padding:6px 14px;
-  font:12px ui-monospace,monospace}
-.tag{font-size:9.5px;font-weight:700;letter-spacing:.04em;padding:2px 6px;
-  border-radius:4px;border:1px solid currentColor;width:66px;text-align:center;flex:none}
+.alert b{font-weight:650}
+.alert code{font-family:var(--mono);font-size:11.5px}
+.files{border-top:1px solid var(--line);padding:5px 0}
+.f{display:flex;gap:10px;align-items:center;padding:5px 15px;
+  font-family:var(--mono);font-size:11.5px}
+.tag{font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;font-weight:700;
+  padding:2px 0;border-radius:4px;width:62px;text-align:center;flex:none;
+  font-family:var(--sans);background:var(--sunk)}
+.m.mine .tag{background:var(--sheet)}
 .t-file{color:var(--file)} .t-prompt{color:var(--prompt)}
 .t-memory{color:var(--memory)} .t-decision{color:var(--decision)}
 .fp{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .fb{color:var(--faint);flex:none}
-.acts{display:flex;gap:8px;padding:11px 14px;border-top:1px solid var(--line);
-  align-items:center;flex-wrap:wrap}
-.btn{font-size:13px;padding:6px 13px;border-radius:8px;border:1px solid var(--line2)}
-.btn:hover{border-color:var(--accent)}
-.btn.go{border-color:var(--ok);color:var(--ok);font-weight:600}
-.btn.no{border-color:var(--bad);color:var(--bad)}
-.cmd{font:11.5px ui-monospace,monospace;color:var(--faint);margin-left:auto;
-  user-select:all;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:50%}
-.hint{padding:30px 22px;color:var(--faint);font-size:13px;max-width:560px}
-.hint code{font-family:ui-monospace,monospace;color:var(--dim)}
+.acts{display:flex;gap:7px;align-items:center;flex-wrap:wrap;padding:11px 15px;
+  border-top:1px solid var(--line)}
+.btn{font-size:12.5px;padding:5px 12px;border-radius:8px;border:1px solid var(--line2);
+  white-space:nowrap}
+.btn:hover{border-color:var(--accent);color:var(--accent)}
+.btn.go{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);
+  font-weight:600}
+.btn.go:hover{opacity:.9;color:var(--accent-ink)}
+.btn.no{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 40%,transparent)}
+.btn.no:hover{border-color:var(--bad);color:var(--bad)}
+.cmd{font-family:var(--mono);font-size:11px;color:var(--faint);margin-left:auto;
+  user-select:all;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  max-width:55%}
+
+/* ---------- composer ---------- */
+.composer{flex:none;border-top:1px solid var(--line);background:var(--sheet);
+  padding:12px 24px 14px}
+.cwrap{max-width:720px;margin-inline:auto;display:flex;flex-direction:column;gap:8px}
+.cto{font-size:12px;color:var(--dim);display:flex;gap:8px;align-items:center;
+  flex-wrap:wrap}
+.cto b{font-weight:650;color:var(--fg)}
+.cto select{font-size:11.5px;padding:2px 5px;border-radius:6px;
+  border:1px solid var(--line2);background:var(--bg)}
+textarea{width:100%;min-height:62px;max-height:40vh;resize:vertical;
+  background:var(--bg);border:1px solid var(--line2);border-radius:10px;
+  padding:10px 12px;font-size:13.5px;line-height:1.55}
+textarea:focus{border-color:var(--accent);outline:none}
+.crow{display:flex;gap:10px;align-items:center}
+.chint{font-size:11.5px;color:var(--faint);flex:1;min-width:0}
+.cerr{font-size:12px;color:var(--bad);line-height:1.5;
+  background:color-mix(in srgb,var(--bad) 9%,transparent);
+  border-radius:8px;padding:8px 11px;white-space:pre-wrap}
+.cblocked{font-size:12.5px;color:var(--dim);background:var(--sunk);
+  border-radius:10px;padding:11px 13px;line-height:1.55}
+.cblocked code{font-family:var(--mono);font-size:11.5px;color:var(--fg)}
+.hint{padding:44px 26px;color:var(--dim);font-size:13px;max-width:560px;line-height:1.75}
+.hint h2{font-size:14px;font-weight:650;color:var(--fg);margin-bottom:8px}
+.hint code{font-family:var(--mono);font-size:12px;color:var(--fg);
+  background:var(--sunk);padding:1px 5px;border-radius:5px}
+.hint p + p{margin-top:12px}
 </style>
 
 <div class="app" id="app">
   <div class="left">
     <div class="brand">
-      <span class="mark">C</span><span class="brandtxt">CTX</span>
-      <span class="me" id="me"></span>
+      <span class="logo">ctx</span>
+      <span class="wordmark">Conversations</span>
+      <span class="whoami" id="me"></span>
     </div>
     <div class="filters" id="filters"></div>
     <div class="list" id="list"></div>
   </div>
   <div class="right">
     <div class="head">
-      <button class="back" onclick="back()">&larr;</button>
+      <button class="back" onclick="back()" title="Back">&larr;</button>
       <h1 id="title">ctx</h1><span class="sp"></span>
       <span id="hstate"></span>
+      <button class="headbtn" id="settle" hidden onclick="act('close',SEL)">Mark settled</button>
     </div>
     <div class="msgs" id="msgs"></div>
+    <div class="composer" id="composer" hidden></div>
   </div>
 </div>
 
@@ -141,40 +225,50 @@ const ago=iso=>{const d=(Date.now()-Date.parse(iso))/1000;
   if(!isFinite(d))return'';
   if(d<60)return'now'; if(d<3600)return Math.floor(d/60)+'m';
   if(d<86400)return Math.floor(d/3600)+'h'; return Math.floor(d/86400)+'d';};
+
 // Every verdict the tool can produce is listed. The fallback shows the raw
 // label rather than the nearest friendly word: an unrecognised trust verdict
 // rendered as a recognised one is how a new, worse verdict gets displayed as
 // an old, milder one.
-const V=[['SENDER VERIFIED','VERIFIED','v-ok'],
-         ['SENDER NOT','NOT ON YOUR LIST','v-warn'],
-         ['SENDER KEY RETIRED','RETIRED KEY','v-warn'],
-         ['SENDER KEY REJECTED','KEY REJECTED','v-bad'],
-         ['SENDER UNVERIFIABLE','UNVERIFIABLE','v-bad']];
+const V=[['SENDER VERIFIED','Verified','v-ok'],
+         ['SENDER NOT','Not on your list','v-warn'],
+         ['SENDER KEY RETIRED','Retired key','v-warn'],
+         ['SENDER KEY REJECTED','Key rejected','v-bad'],
+         ['SENDER UNVERIFIABLE','Unverifiable','v-bad']];
 const vRow=t=>V.find(r=>(t||'').startsWith(r[0]));
 const vClass=t=>{const r=vRow(t);return r?r[2]:'v-bad';};
-const vShort=t=>{const r=vRow(t);return r?r[1]:(t||'NO VERDICT');};
+const vShort=t=>{const r=vRow(t);return r?r[1]:(t||'No verdict');};
 const sClass=s=>s.includes('YOU')?'s-you':s.includes('them')?'s-them':s==='closed'?'s-closed':'s-settled';
+const sShort=s=>s.includes('YOU')?'needs you':s;
 
-let DATA={threads:[],contacts:[]}, SEL=null, FILTER='all';
-
-function nameOf(m){
-  if(m.mine) return 'you';
-  return m.known_as ? m.known_as : `"${m.claimed_name}"`;
+// A monogram coloured from the KEY, not the name. Two contacts who both call
+// themselves "codex" get different marks, so an impersonation shows up as a
+// changed colour before anyone reads a word. It is an aid and never a verdict:
+// the verdict is always spelled out next to it.
+function keyHue(k){let h=0;for(const c of String(k||'')) h=(h*31+c.charCodeAt(0))%360;return h;}
+function avatar(m){
+  const label=(m.known_as||m.claimed_name||'?').trim()[0]||'?';
+  if(m.mine) return `<span class="avatar" style="background:var(--accent);color:var(--accent-ink)">${esc(label.toUpperCase())}</span>`;
+  const h=keyHue(m.key||m.known_as||m.claimed_name);
+  return `<span class="avatar" style="background:hsl(${h} 42% 88%);color:hsl(${h} 55% 28%)">${esc(label.toUpperCase())}</span>`;
 }
+const nameOf=m=>m.mine?'you':(m.known_as?m.known_as:`"${m.claimed_name}"`);
+
+let DATA={threads:[],contacts:[]}, SEL=null, FILTER='all', DRAFT={}, CERR='', SENDING=false;
 
 function alerts(m){
   const out=[];
   if(m.tampered&&m.tampered.length) out.push(['bad',
     `Payload does not match the signed manifest (${esc(m.tampered.join(', '))}). Contents withheld.`]);
   if(!m.mine && m.known_as && m.known_as!==m.claimed_name) out.push(['bad',
-    `Name mismatch — this key is <b>${esc(m.known_as)}</b> on your list but the bundle claims "${esc(m.claimed_name)}".`]);
+    `Name mismatch. This key is <b>${esc(m.known_as)}</b> on your list, but the bundle claims "${esc(m.claimed_name)}". The claimed name is text the sender chose.`]);
   if(!m.mine && !m.known_as) out.push(['',
-    `Key is not on your list. It claims the name "${esc(m.claimed_name)}", which is unverified.`]);
-  if(m.forwarded) out.push(['',`Forwarded — ${m.hops} hop(s). The sender is not the author.`]);
+    `This key is not on your list. It claims the name "${esc(m.claimed_name)}", which is unverified.`]);
+  if(m.forwarded) out.push(['',`Forwarded, ${m.hops} hop(s). The sender is not the author, and any hop could have altered it before signing.`]);
   if(m.memories) out.push(['bad',
-    `${m.memories} memory file(s) — memory outlives the session that accepts it. Never merged automatically.`]);
+    `${m.memories} memory file(s). Memory outlives the session that accepts it, so it is never merged automatically.`]);
   if(m.prompts) out.push(['',
-    `${m.prompts} prompt(s) — text written to steer a model. Read with <code>ctx open</code>, which frames it as data.`]);
+    `${m.prompts} prompt(s): text written to steer a model. Read it with <code>ctx open</code>, which frames it as data.`]);
   return out.map(([c,h])=>`<div class="alert ${c}">${h}</div>`).join('');
 }
 
@@ -186,30 +280,57 @@ function msgHtml(m){
     ? `<div class="acts">
         <button class="btn go" onclick="act('accept','${esc(m.id)}')">Accept</button>
         <button class="btn no" onclick="act('reject','${esc(m.id)}')">Reject unread</button>
-        <span class="cmd">ctx accept ${esc(m.id)}</span></div>`
+        <span class="cmd">arriving is not accepting</span></div>`
     : m.stage==='accepted'
       ? `<div class="acts">
           ${m.read?'':`<button class="btn" onclick="act('read','${esc(m.id)}')">Mark read</button>`}
           <span class="cmd">ctx open ${esc(m.path)}</span></div>`
-      : `<div class="acts"><span class="cmd">sent · ${esc(m.id)}</span></div>`;
+      : `<div class="acts"><span class="cmd">sent &middot; ${esc(m.id)}</span></div>`;
   return `<div class="m ${m.mine?'mine':''}">
     <div class="mhead">
-      ${m.read?'':'<span class="unread"></span>'}
+      ${m.read?'':'<span class="dot"></span>'}
       <span class="who">${esc(nameOf(m))}</span>
       <span class="ty ${esc(m.type)}">${esc(m.type)}</span>
-      <span class="when2">${esc(m.created)}</span>
+      <span class="at">${esc(m.created)}</span>
     </div>
-    <div class="body">
-      ${m.mine?'':`<div class="verdict ${vClass(m.trust)}">${vShort(m.trust)}</div>`}
+    <div class="sheet">
+      ${m.mine?'':`<div class="verdict ${vClass(m.trust)}"><span class="vdot"></span>${vShort(m.trust)}</div>`}
       ${alerts(m)}
       ${files?`<div class="files">${files}</div>`:''}
       ${acts}
     </div></div>`;
 }
 
+const TYPES=['answer','share','question','review-request','ack'];
+
+function composerHtml(t){
+  const r=t.reply||{};
+  if(!r.can){
+    return `<div class="cwrap"><div class="cblocked">
+      Cannot reply from here: ${esc(r.why||'no recipient')}.
+      ${r.to?`<br><code>ctx reply ${esc(t.id)} --text "..."</code>`:''}
+    </div></div>`;
+  }
+  const d=DRAFT[t.id]||{text:'',type:r.type||'answer'};
+  return `<div class="cwrap">
+    ${CERR?`<div class="cerr">${esc(CERR)}</div>`:''}
+    <div class="cto">Reply to <b>${esc(r.to)}</b> as
+      <select id="ctype" onchange="draft()">${TYPES.map(x=>
+        `<option value="${x}"${x===d.type?' selected':''}>${x}</option>`).join('')}</select>
+    </div>
+    <textarea id="ctext" placeholder="Write a reply. It is scanned for credentials on the way out, like any file."
+      oninput="draft()" onkeydown="ckey(event)">${esc(d.text)}</textarea>
+    <div class="crow">
+      <span class="chint">Delivered to ${esc(r.to)}'s inbox on this machine. ${SENDING?'Sending...':'&#8984;/Ctrl + Enter to send.'}</span>
+      <button class="btn go" onclick="send()" ${SENDING?'disabled':''}>Send reply</button>
+    </div></div>`;
+}
+
 function render(){
   const me=DATA.me;
-  document.getElementById('me').textContent = me ? me.handle : 'run ctx init';
+  document.getElementById('me').innerHTML = me
+    ? `<div class="h">${esc(me.handle)}</div><div class="k">${esc((me.key||'').slice(0,10))}&hellip;</div>`
+    : `<div class="h">no identity</div><div class="k">run ctx init</div>`;
   const th=DATA.threads||[];
   const needYou=th.filter(t=>t.state.includes('YOU')).length;
   const unread=th.reduce((a,t)=>a+t.unread,0);
@@ -223,41 +344,86 @@ function render(){
 
   document.getElementById('list').innerHTML = shown.length ? shown.map(t=>{
     const last=t.messages[t.messages.length-1]||{};
+    const other=[...t.messages].reverse().find(m=>!m.mine)||last;
     const who=[...new Set(t.messages.map(nameOf))].join(', ');
     return `<button class="t ${SEL===t.id?'sel':''}" onclick="sel('${esc(t.id)}')">
-      <div class="ts"><span class="subj">${esc(t.subject)}</span>
-        <span class="when">${esc(ago(last.created))}</span></div>
-      <div class="meta">
-        ${t.unread?'<span class="pip"></span>':''}
-        <span class="state ${sClass(t.state)}">${esc(t.state)}</span>
-        <span>${t.messages.length} msg${t.messages.length>1?'s':''}</span>
-        <span>· ${esc(who)}</span></div>
+      ${avatar(other)}
+      <span class="tbody">
+        <span class="trow"><span class="subj">${esc(t.subject)}</span>
+          <span class="when">${esc(ago(last.created))}</span></span>
+        <span class="tmeta">
+          ${t.unread?'<span class="pip"></span>':''}
+          <span class="state ${sClass(t.state)}">${esc(sShort(t.state))}</span>
+          <span class="peers">${esc(who)}</span></span>
+      </span>
     </button>`;}).join('')
-    : `<div class="empty">Nothing here.<br>Bundles land in <b>pending</b> first — arriving is not accepting.</div>`;
+    : `<div class="empty">Nothing here yet.<br>Bundles land in <b>pending</b> first.<br>Arriving is not accepting.</div>`;
 
   const t=th.find(x=>x.id===SEL);
   document.getElementById('title').textContent = t ? t.subject : 'ctx';
   document.getElementById('hstate').innerHTML = t
-    ? `<span class="state ${sClass(t.state)}">${esc(t.state)}</span>` : '';
+    ? `<span class="state ${sClass(t.state)}">${esc(sShort(t.state))}</span>` : '';
+  document.getElementById('settle').hidden = !t || t.state==='closed';
+  const comp=document.getElementById('composer');
+  comp.hidden = !t;
   document.getElementById('msgs').innerHTML = t
-    ? t.messages.map(msgHtml).join('') +
-      (t.state!=='closed'?`<div class="acts" style="border:0;padding-left:0">
-         <button class="btn" onclick="act('close','${esc(t.id)}')">Mark settled</button>
-         <span class="cmd">ctx send --reply-to ${esc(t.messages[t.messages.length-1].id)} --type answer</span>
-       </div>`:'')
-    : `<div class="hint">Pick a conversation.<br><br>
-        <code>ctx send --to codex --type question --decision q.md</code><br>
-        <code>ctx send --reply-to &lt;id&gt; --type answer --decision a.md</code><br><br>
-        Read state and thread state are yours — a sender cannot mark their own
-        message read in your inbox.</div>`;
+    ? t.messages.map(msgHtml).join('')
+    : `<div class="hint">
+        <h2>Pick a conversation</h2>
+        <p>Threads group by the message that started them. What is read, and what
+           counts as settled, is yours: a sender cannot mark their own message
+           read in your inbox.</p>
+        <p><code>ctx send --to codex --type question --decision q.md</code><br>
+           <code>ctx reply &lt;id&gt; --text "..."</code></p>
+        <p>Replies written here are delivered to a local route. Anything leaving
+           this machine goes through <code>ctx push</code>, where you see the list
+           first.</p>
+      </div>`;
+  if(t){
+    const prev=document.activeElement&&document.activeElement.id;
+    const caret=prev==='ctext'?document.activeElement.selectionStart:null;
+    comp.innerHTML=composerHtml(t);
+    if(prev==='ctext'){
+      const el=document.getElementById('ctext');
+      if(el){el.focus();if(caret!=null)el.setSelectionRange(caret,caret);}
+    }
+  }
 }
 
 function setF(f){FILTER=f;render();}
-function sel(id){SEL=id;document.getElementById('app').classList.add('detail');render();}
+function sel(id){SEL=id;CERR='';document.getElementById('app').classList.add('detail');render();
+  const m=document.getElementById('msgs');if(m)m.scrollTop=m.scrollHeight;}
 function back(){document.getElementById('app').classList.remove('detail');SEL=null;render();}
+function draft(){
+  const te=document.getElementById('ctext'), ty=document.getElementById('ctype');
+  if(SEL) DRAFT[SEL]={text:te?te.value:'',type:ty?ty.value:'answer'};
+}
+function ckey(e){ if((e.metaKey||e.ctrlKey)&&e.key==='Enter'){e.preventDefault();send();} }
+
+// The custom header is the point: a cross-site form cannot set one, and a
+// cross-site fetch that tries must first pass a preflight the server does not
+// answer. Without it, any page you visited could act on your inbox.
+const post=(path,body)=>fetch(path,{method:'POST',headers:
+  Object.assign({'X-Ctx':'1'},body?{'Content-Type':'application/json'}:{}),
+  body:body?JSON.stringify(body):undefined});
+
 async function act(what,id){
-  const r=await fetch(`/api/${what}/${id}`,{method:'POST'});
-  if(!r.ok){const j=await r.json().catch(()=>({}));alert(j.error||'failed');}
+  if(!id)return;
+  const r=await post(`/api/${what}/${id}`);
+  if(!r.ok){const j=await r.json().catch(()=>({}));CERR=j.error||'that did not work';}
+  await load();
+}
+async function send(){
+  draft();
+  const d=DRAFT[SEL]; if(!d||!d.text.trim()||SENDING) return;
+  SENDING=true;CERR='';render();
+  try{
+    const r=await post('/api/reply',{thread:SEL,text:d.text,type:d.type});
+    const j=await r.json().catch(()=>({}));
+    if(r.ok){ DRAFT[SEL]={text:'',type:d.type}; }
+    else { CERR=j.error||'the reply was not sent'; }
+  }catch(e){ CERR=String(e); }
+  SENDING=false;
   await load();
 }
 async function load(){
