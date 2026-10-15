@@ -505,9 +505,26 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             // history stops being attributable. Their date is kept as what it
             // is -- a claim.
             let now = bundle::now_rfc3339();
-            // Everything already in the inbox is witnessed, and the cut is
-            // taken after that, so honest mail already here stays
-            // attributable while anything arriving later does not.
+            // Collect before retiring, as one operation. Accepting a notice
+            // closes the set of bundles that can ever be attributed to the old
+            // key, so mail still sitting on the relay would be stranded by the
+            // very act of accepting -- and the person doing it has no reason
+            // to expect that. If the pull fails, nothing is retired: a partial
+            // transaction here costs attribution permanently.
+            if remote::relay_addr().is_some() {
+                println!("collecting anything still on the relay before retiring the key...");
+                pull_once(false).map_err(|e| -> Box<dyn std::error::Error> {
+                    format!(
+                        "not applied: could not collect from the relay first ({e}). \
+                         Retiring now would strand any mail still waiting there, \
+                         permanently unattributable. Fix the relay and re-run."
+                    )
+                    .into()
+                })?;
+            }
+            // Everything in the inbox is witnessed, and the cut is taken
+            // after that, so honest mail already here stays attributable
+            // while anything arriving later does not.
             let _ = routes::observe_inbox();
             let seq = state::LocalState::load().cut()?;
             c.retire(&v.old_sign, &now, seq, compromised, Some(v.new_sign.clone()));
@@ -523,8 +540,14 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             }
             c.save()?;
             println!("\n{name} moved onto the new key.");
-            println!("  cutoff recorded as {now} (your clock). They state they rotated at");
-            println!("  {} -- that is their claim, and it is not what the verdict uses.", v.claim.at);
+            println!("  cutoff recorded at {now}, observation {seq} (this machine's own");
+            println!("  record). They state they rotated at {} -- that is their", v.claim.at);
+            println!("  claim, and it is not what the verdict uses.");
+            // Said because the consequence is surprising: the same bundle can
+            // read as attributable on one machine and not on another.
+            println!("  this is recorded for THIS ctx home only. Another machine sharing");
+            println!("  your identity has its own record and needs its own keychange,");
+            println!("  and until then the old key is still live over there.");
             println!("  their old bundles stay verifiable, marked as signed with a retired key");
             println!("  anything NEW signed with the old key is now rejected");
         }
@@ -566,10 +589,14 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             println!("retired {name}'s key");
             if compromised {
                 println!("  marked COMPROMISED: every bundle it signed is now rejected,");
-                println!("  old ones included, because a thief chooses the date too");
+                println!("  old ones included, because a thief signs as well as the owner");
             } else {
-                println!("  bundles it signed BEFORE now stay attributable; newer ones are rejected");
+                println!("  bundles this machine had already seen stay attributable; anything");
+                println!("  arriving later is rejected, and a bundle with no record either way");
+                println!("  reads as ARRIVAL UNRECORDED rather than as an accusation");
             }
+            println!("  recorded for THIS ctx home only -- another machine on the same");
+            println!("  identity keeps its own record");
             // Said out loud rather than left to be discovered. Someone who
             // runs this believing it covers everything from that person, when
             // it covers one key, has a false sense of what they just did.

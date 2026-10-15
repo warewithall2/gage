@@ -153,8 +153,11 @@ pub fn render(l: &Loaded, reveal: bool) -> String {
                  \x20              retirement. Contents withheld. The ordinary cause is mail\n\
                  \x20              that was sealed before the rotation and collected after\n\
                  \x20              it; the other cause is someone using the old key now.\n\
-                 \x20              Confirm the content with them over a channel that is not\n\
-                 \x20              this one, then --reveal if you want to read it anyway.\n",
+                 \x20              Confirming with them over another channel can tell YOU\n\
+                 \x20              which it was. It does not move this verdict, and nothing\n\
+                 \x20              can: no command adds a record after the fact, because a\n\
+                 \x20              thief could use it too. --reveal shows the contents and\n\
+                 \x20              leaves the verdict exactly as it is.\n",
             );
         } else {
             s.push_str(

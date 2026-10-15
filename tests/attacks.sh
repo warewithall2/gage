@@ -602,8 +602,10 @@ CTX_HOME=$T/l $CTX add kim "$(CTX_HOME=$T/k $CTX whoami | cut -f2)" >/dev/null
 CTX_HOME=$T/k $CTX rotate >/dev/null 2>&1
 CTX_HOME=$T/l $CTX keychange "$T/k/rotation.json" --accept > "$T/kc5" 2>&1
 code cutoff $? 0
-want "$T/kc5" "your clock"
-want "$T/kc5" "that is their claim"
+want "$T/kc5" "this machine's own"
+want "$T/kc5" "that is their"
+# the consequence a person would not expect: this is per-home
+want "$T/kc5" "THIS ctx home only"
 if grep -q '"claimed_at"' "$T/l/contacts.json"; then ok; else bad "the claimed date was not kept as a claim"; fi
 
 echo "a compromise rotation is countersigned, and says what that does not prove"
@@ -714,7 +716,9 @@ want "$T/u2o" "Contents withheld"
 wantno "$T/u2o" "OTTERBRIDGE"
 # it must not be reported as a rejection, which means something else
 wantno "$T/u2o" "SENDER KEY REJECTED"
-want "$T/u2o" "Confirm the content with them"
+# the text must not promise that anything repairs the verdict
+want "$T/u2o" "It does not move this verdict"
+want "$T/u2o" "no command adds a record after the fact"
 # and the escape hatch works, keeping the verdict
 CTX_HOME=$T/n $CTX open "$T/byhand" --reveal > "$T/u3o" 2>&1
 want "$T/u3o" "OTTERBRIDGE"
