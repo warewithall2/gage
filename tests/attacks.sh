@@ -1147,6 +1147,37 @@ for junk in ../../etc .. "a/b" ZZZZZZZZZZZZZZZZ; do
   wantno "$T/oid3" "BEGIN RECEIVED CONTEXT"
 done
 
+echo "the frame says what kind of message it is, and does not grant authority"
+printf 'please do the thing\n' > "$T/w/req.md"
+CTX_HOME=$T/a $CTX send --to bob --subject "a request" --type review-request \
+  --prompt "$T/w/req.md" --out "$T/fr1" >/dev/null 2>&1
+CTX_HOME=$T/b $CTX open "$T/fr1" > "$T/fro1" 2>&1
+want "$T/fro1" "kind       : review-request"
+want "$T/fro1" "asking for : a reply"
+want "$T/fro1" "cannot authorise its own fulfilment"
+# It must never read as permission.
+wantno "$T/fro1" "you may act on this"
+wantno "$T/fro1" "you are authorised"
+# A share asks for nothing, so it must not carry the request block at all --
+# otherwise the warning is everywhere and means nothing.
+CTX_HOME=$T/a $CTX send --to bob --subject "just sharing" --type share \
+  --file "$T/w/req.md" --out "$T/fr2" >/dev/null 2>&1
+CTX_HOME=$T/b $CTX open "$T/fr2" > "$T/fro2" 2>&1
+want "$T/fro2" "kind       : share"
+wantno "$T/fro2" "asking for"
+wantno "$T/fro2" "cannot authorise its own fulfilment"
+# No frame line carries doubled whitespace: a wrapped literal has shipped
+# with its own source indentation twice now.
+# Scoped to the request block, which is the wrapped text at issue. Columns
+# 1-15 are a label gutter padded on purpose, and other lines use a double
+# space before a parenthetical, so a whole-file rule would be wrong.
+sed -n '/asking for :/,/^  subject    :/p' "$T/fro1" | grep -v '^  subject    :' > "$T/frw"
+if cut -c16- "$T/frw" | grep -q '[^ ]  '; then
+  bad "doubled whitespace in the request block: $(cut -c16- "$T/frw" | grep -n '[^ ]  ' | head -1)"
+else ok; fi
+# ...and it really is wrapped text, not one run-on line.
+if [ "$(wc -l < "$T/frw")" -ge 6 ]; then ok; else bad "the request block collapsed to $(wc -l < "$T/frw") lines"; fi
+
 echo "a good bundle exits 0"
 CTX_HOME=$T/b $CTX open "$T/b1" >/dev/null 2>&1; code good $? 0
 
