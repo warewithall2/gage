@@ -50,6 +50,17 @@ attached. That is a format change and a real design task, not a patch.
 Until then the honest position is the one `open` now states: judge a forwarded
 bundle on its sender, who signed it, and treat the author as a claim.
 
+**Designed 15 Oct** by the grok reviewer, in
+[nested-forward-design.md](nested-forward-design.md): exact prior bytes copied
+to `prior/manifest.json` and `prior/manifest.sig`, hash-linked from the
+signing hop, never re-serialised; verification walks the literal `prior/`
+directory and fails closed at the step that checks the enclosed bytes against
+the key those bytes name; two new labels so the author's unknown-ness does not
+borrow the sender's trust line; bounded at 16 hops. Not built, and it should
+land in the **same v2 cutover as decision 1** rather than as a second format
+break. It also found that `seal` would silently flatten a nested bundle on a
+relay round trip, which needs fixing either way.
+
 ## 4. The audit log and the policy engine
 
 Both reviewers independently said the same thing about these: do not guess the
