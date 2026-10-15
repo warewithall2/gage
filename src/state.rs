@@ -59,12 +59,35 @@ pub struct LocalState {
 /// state and overwrite the other's changes -- silently losing a witness,
 /// which is the one record that must not be lost. Mutations now run under
 /// this lock, against a fresh read, and land by rename.
-struct Lock(PathBuf);
+struct Lock {
+    path: PathBuf,
+    /// Written into the file, so release and stale-breaking can tell OUR lock
+    /// from somebody else's.
+    ///
+    /// Age alone cannot prove abandonment. With a bare unlink, a process
+    /// paused past the staleness window had its live lock broken by a second
+    /// writer, and then its own `Drop` deleted the second writer's lock by
+    /// name, letting a third in. Now a breaker only removes the exact file it
+    /// judged stale, and release only removes a file that still says it is
+    /// ours.
+    nonce: String,
+}
 
 impl Drop for Lock {
     fn drop(&mut self) {
-        let _ = fs::remove_file(&self.0);
+        if fs::read_to_string(&self.path).map(|s| s.trim() == self.nonce).unwrap_or(false) {
+            let _ = fs::remove_file(&self.path);
+        }
     }
+}
+
+fn lock_nonce() -> String {
+    use std::io::Read;
+    let mut b = [0u8; 12];
+    if let Ok(mut f) = fs::File::open("/dev/urandom") {
+        let _ = f.read_exact(&mut b);
+    }
+    b.iter().map(|x| format!("{x:02x}")).collect::<String>() + &format!(".{}", std::process::id())
 }
 
 fn take_lock(target: &Path) -> io::Result<Lock> {
@@ -72,22 +95,38 @@ fn take_lock(target: &Path) -> io::Result<Lock> {
     if let Some(d) = lp.parent() {
         fs::create_dir_all(d)?;
     }
-    let deadline = Instant::now() + Duration::from_secs(3);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let nonce = lock_nonce();
     loop {
         match fs::OpenOptions::new().write(true).create_new(true).open(&lp) {
-            Ok(_) => return Ok(Lock(lp)),
+            Ok(mut f) => {
+                use std::io::Write;
+                f.write_all(nonce.as_bytes())?;
+                f.sync_all()?;
+                return Ok(Lock { path: lp, nonce });
+            }
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
                 // A crash between create and remove would otherwise wedge
-                // every later run, so a lock nobody has touched for a while
-                // is treated as abandoned rather than honoured forever.
+                // every later run, so a lock nobody has touched for a long
+                // while is treated as abandoned. Compare-and-delete: the
+                // holder's own nonce is read first and the file is removed
+                // only if it still carries that same nonce, so a breaker
+                // cannot destroy a lock somebody else has since taken.
+                let held = fs::read_to_string(&lp).unwrap_or_default();
                 let stale = fs::metadata(&lp)
                     .and_then(|m| m.modified())
                     .ok()
                     .and_then(|t| t.elapsed().ok())
-                    .map(|d| d > Duration::from_secs(30))
+                    .map(|d| d > Duration::from_secs(120))
                     .unwrap_or(false);
-                if stale {
-                    let _ = fs::remove_file(&lp);
+                if stale && !held.trim().is_empty() {
+                    if fs::read_to_string(&lp).unwrap_or_default() == held {
+                        let _ = fs::remove_file(&lp);
+                    }
+                    // Jittered, so two breakers do not retry in lockstep.
+                    std::thread::sleep(Duration::from_millis(
+                        17 + (std::process::id() as u64 % 29),
+                    ));
                     continue;
                 }
                 if Instant::now() > deadline {
@@ -129,7 +168,7 @@ impl LocalState {
         let _guard = take_lock(&p)?;
         let mut cur = Self::load();
         if f(&mut cur) {
-            let tmp = p.with_extension("json.tmp");
+            let tmp = p.with_extension(format!("json.tmp.{}", std::process::id()));
             std::fs::write(&tmp, serde_json::to_vec_pretty(&cur)?)?;
             std::fs::rename(&tmp, &p)?;
         }
@@ -175,16 +214,29 @@ impl LocalState {
         })
     }
 
-    /// Bump the counter and return the value that separates "before" from
-    /// "after". Used when a retirement is recorded: everything already
-    /// witnessed is below this, everything observed later is above it.
-    pub fn cut(&mut self) -> std::io::Result<u64> {
-        let st = Self::mutate(|s| {
-            s.seq += 1;
+    /// Observe the inbox and take the retirement cut as ONE locked step.
+    ///
+    /// Doing these separately left a window: the scan finished, a concurrent
+    /// pull delivered an old-key bundle and stamped it with the same batch
+    /// number, and only then was the cut taken -- so an arrival from after
+    /// the decision landed below the line. The scan therefore runs inside the
+    /// lock, and the cut is reserved above the batch it records, so anything
+    /// observed afterwards is necessarily above it.
+    pub fn observe_and_cut<F>(scan: F) -> std::io::Result<u64>
+    where
+        F: FnOnce() -> Vec<String>,
+    {
+        let mut cut = 0;
+        Self::mutate(|s| {
+            let batch = s.seq + 1;
+            cut = s.seq + 2;
+            for w in scan() {
+                s.witness.entry(w).or_insert(batch);
+            }
+            s.seq = cut;
             true
         })?;
-        self.seq = st.seq;
-        Ok(st.seq)
+        Ok(cut)
     }
 
     pub fn close(&mut self, thread: &str) -> std::io::Result<()> {

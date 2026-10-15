@@ -203,6 +203,21 @@ enum Cmd {
     },
 }
 
+/// Observe the inbox, and say so loudly if it could not be done.
+///
+/// Every caller is about to print a trust verdict, and the verdict depends on
+/// this having run. Swallowing the error would silently downgrade a rejected
+/// bundle to "no record either way", which is the milder label.
+fn observe_or_warn() {
+    if let Err(e) = routes::observe_inbox() {
+        eprintln!(
+            "ctx: WARNING -- could not record what is in your inbox ({e}). A retired-key \
+             verdict below may read as ARRIVAL UNRECORDED when it should be a rejection. \
+             Re-run once no other ctx process is writing."
+        );
+    }
+}
+
 /// Both legs of registration: claim a mailbox, then prove it by opening a
 /// nonce the relay sealed to it.
 ///
@@ -362,6 +377,27 @@ fn fetch_mailbox(
             continue;
         }
         let loaded = bundle::load(&tmp)?;
+        // The id becomes a directory name, so its shape is checked before the
+        // join. A signed manifest carrying `id: "../../../../tmp/ctx-pwn"`
+        // would otherwise have written a bundle outside the inbox entirely.
+        if !manifest::id_is_safe(&loaded.manifest.id) {
+            eprintln!(
+                "  refused: a bundle whose id is not an id ({:?}) -- it would have become \
+                 a path",
+                loaded.manifest.id.chars().take(40).collect::<String>()
+            );
+            let _ = std::fs::remove_dir_all(&tmp);
+            continue;
+        }
+        // And a bundle that does not verify never enters the inbox from the
+        // relay. Local delivery is written by the sender and cannot be gated
+        // here, which is what the trust verdict on read is for -- but mail
+        // the relay handed us is ours to refuse.
+        if !loaded.tampered.is_empty() {
+            eprintln!("  refused {}: {}", loaded.manifest.id, loaded.tampered.join(", "));
+            let _ = std::fs::remove_dir_all(&tmp);
+            continue;
+        }
         let dest = pending.join(&loaded.manifest.id);
         if dest.exists() {
             println!("  already have {} -- left in place", loaded.manifest.id);
@@ -558,8 +594,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             // Everything in the inbox is witnessed, and the cut is taken
             // after that, so honest mail already here stays attributable
             // while anything arriving later does not.
-            let _ = routes::observe_inbox();
-            let seq = state::LocalState::load().cut()?;
+            let seq = state::LocalState::observe_and_cut(routes::scan_inbox)?;
             c.retire(&v.old_sign, &now, seq, compromised, Some(v.new_sign.clone()));
             if let Some(r) = c.retired.get_mut(&v.old_sign) {
                 r.claimed_at = Some(v.claim.at.clone());
@@ -612,8 +647,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 .filter(|(_, r)| !r.compromised)
                 .map(|(k, _)| k.clone())
                 .collect();
-            let _ = routes::observe_inbox();
-            let seq = state::LocalState::load().cut()?;
+            let seq = state::LocalState::observe_and_cut(routes::scan_inbox)?;
             c.retire(&key, &bundle::now_rfc3339(), seq, compromised, None);
             if all {
                 c.mark_history_compromised(&name, &earlier);
@@ -812,6 +846,10 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             r?;
         }
         Cmd::Inspect { dir } => {
+            // Without this, inspecting a post-retirement arrival before any
+            // other command had looked reported ARRIVAL UNRECORDED instead of
+            // recording the arrival and rejecting it: a downgrade.
+            observe_or_warn();
             let l = bundle::load(&dir)?;
             let m = &l.manifest;
             println!("id       : {}", m.id);
@@ -832,13 +870,18 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             // A bundle you only ever `ctx open` would otherwise never be
             // witnessed, and would read as ARRIVAL UNRECORDED after a
             // rotation even though it was sitting in your inbox the whole
-            // time.
-            let _ = routes::observe_inbox();
+            // time. A failure here is not ignorable: it changes the verdict
+            // that is about to be printed.
+            observe_or_warn();
             let l = bundle::load(&dir)?;
             print!("{}", open::render(&l, reveal));
             // Read state is set by rendering, not by listing: having seen a
-            // subject line in an inbox is not having read the thing.
-            state::LocalState::load().mark_read(&l.manifest.id)?;
+            // subject line in an inbox is not having read the thing. It is
+            // also bookkeeping, and bookkeeping must not turn a successful
+            // read into a failure after the content has already been printed.
+            if let Err(e) = state::LocalState::load().mark_read(&l.manifest.id) {
+                eprintln!("ctx: could not record this as read: {e}");
+            }
             // Non-zero when the content could not be attributed, so a script
             // or agent harness can branch on it instead of parsing prose.
             // `Revoked` is in here and `Retired` is not. A retired key with

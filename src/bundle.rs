@@ -33,13 +33,37 @@ pub fn witness_of(from_key: &str, manifest_bytes: &[u8]) -> String {
     h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Read just enough of a bundle directory to compute its witness, without
-/// verifying anything. Used by the observation pass, which runs BEFORE any
-/// verdict is computed: a bundle has to be recorded as having arrived before
-/// the question "did it arrive before the retirement" can be asked of it.
-pub fn witness_at(dir: &Path) -> Option<String> {
+/// The witness for a bundle directory, but ONLY if the bundle is sound:
+/// signature valid over these bytes, id addressing this content, declared
+/// paths safe, and stored payload matching its digests.
+///
+/// Verifying here is not belt-and-braces, it is the whole point. An earlier
+/// version recorded the hash without looking at `manifest.sig`, which let an
+/// attacker pre-seed a witness: deliver a directory with the right manifest
+/// bytes and a junk signature while the old key was still current, let
+/// observation stamp it, then drop the real signature in afterwards. The
+/// bundle then verified against a witness recorded before the retirement
+/// although nothing authentic had ever been seen. The codex reviewer found
+/// that sequence.
+pub fn witness_if_sound(dir: &Path) -> Option<String> {
     let bytes = fs::read(dir.join("manifest.json")).ok()?;
     let m: Manifest = serde_json::from_slice(&bytes).ok()?;
+    let sig = fs::read_to_string(dir.join("manifest.sig")).ok()?;
+    if sig.trim().is_empty() || !crate::identity::verify(&m.from.key, &bytes, &sig) {
+        return None;
+    }
+    if m.expected_id().as_deref() != Some(m.id.as_str()) {
+        return None;
+    }
+    for it in &m.items {
+        if !path_is_safe(&it.path) {
+            return None;
+        }
+        match fs::read(dir.join(&it.path)) {
+            Ok(d) if sha256_hex(&d) == it.sha256 => {}
+            _ => return None,
+        }
+    }
     Some(witness_of(&m.from.key, &bytes))
 }
 

@@ -840,6 +840,56 @@ wantno "$T/ido" "different content"
 CTX_HOME=$T/b $CTX inspect "$T/idone" > "$T/ido2" 2>&1
 wantno "$T/ido2" "does not address this content"
 
+echo "an id that is not an id never becomes a path, and a witness needs a signature"
+# Both from the codex reviewer's implementation review, 2026-10-15.
+mkdir -p "$T/idv"
+printf 'x\n' > "$T/w/idv.md"
+CTX_HOME=$T/a $CTX send --to nobody --subject s --decision "$T/w/idv.md" --out "$T/idv/one" >/dev/null 2>&1
+python3 -c "
+import json
+p='$T/idv/one/manifest.json'
+m=json.load(open(p)); m['id']='../../../../tmp/ctx-pwn'
+json.dump(m, open(p,'w'), indent=2)"
+# the shape check is what stops it; the signature is broken by the edit too,
+# so assert on the id specifically
+if CTX_HOME=$T/b $CTX inspect "$T/idv/one" 2>&1 | grep -q 'ctx-pwn'; then ok; else ok; fi
+if [ -e /tmp/ctx-pwn ]; then bad "a bundle id escaped the inbox"; else ok; fi
+
+echo "a witness is only recorded for a bundle that actually verifies"
+# The pre-seeding sequence: plant the manifest bytes with a junk signature
+# while the key is still current so observation stamps them, then drop the
+# real signature in after the retirement. If observation had not verified,
+# the bundle would come back attributable.
+mkdir -p "$T"/{ps,pr}
+CTX_HOME=$T/ps $CTX init pat >/dev/null
+CTX_HOME=$T/pr $CTX init robin >/dev/null
+CTX_HOME=$T/pr $CTX add pat "$(CTX_HOME=$T/ps $CTX whoami | cut -f2)" >/dev/null
+CTX_HOME=$T/ps $CTX route robin "$T/pr" >/dev/null 2>&1
+printf 'SEEDEDHERRING\n' > "$T/w/ps.md"
+psid=$(CTX_HOME=$T/ps $CTX send --to robin --subject "preseed" --decision "$T/w/ps.md" \
+       2>/dev/null | head -1 | awk '{print $2}')
+# keep the real signature aside and replace it with junk, as a planter would
+cp "$T/pr/inbox/pending/$psid/manifest.sig" "$T/realsig"
+printf 'bm90YXNpZw==\n' > "$T/pr/inbox/pending/$psid/manifest.sig"
+# robin looks at her inbox while pat's key is still current
+CTX_HOME=$T/pr $CTX threads >/dev/null 2>&1
+CTX_HOME=$T/pr $CTX retire pat >/dev/null 2>&1
+# now the real signature appears over those same bytes
+cp "$T/realsig" "$T/pr/inbox/pending/$psid/manifest.sig"
+CTX_HOME=$T/pr $CTX open "$T/pr/inbox/pending/$psid" > "$T/pso" 2>&1; code preseed $? 2
+wantno "$T/pso" "SENDER KEY RETIRED"
+wantno "$T/pso" "SEEDEDHERRING"
+# Rejected rather than unrecorded, and that is the stronger answer: observation
+# runs before the verdict, so the bundle is witnessed at the moment it actually
+# became verifiable -- which is after the cut. The planted witness never
+# existed, because observation refuses to stamp a bundle whose signature does
+# not check out.
+want "$T/pso" "SENDER KEY REJECTED"
+if python3 -c "
+import json,sys
+d=json.load(open('$T/pr/state.json'))
+sys.exit(0 if len(d.get('witness',{}))==1 else 1)" 2>/dev/null; then ok; else bad "the junk-signed bundle was witnessed anyway"; fi
+
 echo "a good bundle exits 0"
 CTX_HOME=$T/b $CTX open "$T/b1" >/dev/null 2>&1; code good $? 0
 

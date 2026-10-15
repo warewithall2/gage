@@ -232,6 +232,17 @@ impl Manifest {
     }
 }
 
+/// A bundle id reaches the filesystem as a directory name, so its shape is
+/// checked rather than trusted.
+///
+/// `pull` joins it onto the inbox path, and a signed manifest carrying
+/// `id: "../../../../tmp/ctx-pwn"` would have written a bundle outside the
+/// inbox entirely. The ids this tool mints are 16 lowercase hex characters;
+/// anything else is refused before it becomes a path.
+pub fn id_is_safe(id: &str) -> bool {
+    id.len() == 16 && id.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+}
+
 /// Reject paths that would write outside the bundle. Checked on read, not
 /// only on write: the sender is not the one we are protecting against.
 pub fn path_is_safe(p: &str) -> bool {

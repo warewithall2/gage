@@ -52,19 +52,24 @@ impl Routes {
 /// the end of the listing, so the first time a bundle was displayed it was
 /// judged without its own witness.
 pub fn observe_inbox() -> std::io::Result<crate::state::LocalState> {
+    crate::state::LocalState::observe(&scan_inbox())
+}
+
+/// Witnesses for every sound bundle currently in the inbox.
+pub fn scan_inbox() -> Vec<String> {
     let home = crate::identity::home();
     let mut w = Vec::new();
     for stage in [pending_dir(&home), accepted_dir(&home)] {
         let Ok(rd) = std::fs::read_dir(&stage) else { continue };
         for e in rd.flatten() {
             if e.path().is_dir() {
-                if let Some(x) = crate::bundle::witness_at(&e.path()) {
+                if let Some(x) = crate::bundle::witness_if_sound(&e.path()) {
                     w.push(x);
                 }
             }
         }
     }
-    crate::state::LocalState::observe(&w)
+    w
 }
 
 pub fn pending_dir(ctx_home: &std::path::Path) -> PathBuf {
