@@ -12,6 +12,16 @@
 //!    be a privilege escalation reachable by prompt injection: an agent that
 //!    can be talked into running a command could be talked into granting
 //!    itself the authority to obey the thing that talked it into it.
+//!    The guard is partial and worth being honest about: it stops the obvious
+//!    path, not the general one. Any agent with a shell and write access to
+//!    the ctx home can append a line to this file directly -- as happened
+//!    within the hour, when the grants used to run today's reviews were
+//!    written by an agent rather than typed by the human. There is no local
+//!    fix for that: a file the receiver's process can read, a process
+//!    running as the receiver can write. What the missing subcommand does
+//!    buy is that no *documented, reachable-by-asking* path exists, so an
+//!    injected agent has to be told to write a file by hand, which is a
+//!    conspicuous thing to find in a transcript.
 //! 2. **A grant only ever follows a verified sender.** `lookup` refuses
 //!    outright unless the verdict is `Trust::Known`. A grant on a key whose
 //!    signature did not check out would be worse than no feature at all.
