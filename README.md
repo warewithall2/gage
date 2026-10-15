@@ -45,6 +45,46 @@ Three specific defences, each written after the attack worked in testing:
 Payload digests are checked against the signed manifest, so a signed manifest
 beside swapped files is caught and the contents are withheld.
 
+## Authority: the one thing that says you may act
+
+Everything above is about what is *known*. None of it says whether an agent
+may do what a message asks — and it cannot, because a bundle cannot authorise
+its own fulfilment, however well signed. That gap is real and was measured:
+[dogfooding this across four agents](docs/dogfood-2026-10-15.md) had two of
+them read a verified request from a verified contact and decline, correctly,
+for want of authority.
+
+So authority is computed by the receiver from its own list, exactly as trust
+is. `~/.ctx/authority` is a file **your human writes**:
+
+    # nothing a sender transmits can reach this file
+    allow codex review-request
+    allow dana question in-reply-only
+    allow <a-public-key> any
+
+`ctx authority` prints what is granted. There is deliberately **no command
+that writes a grant** — a `ctx allow` would be reachable by prompt injection,
+letting an agent talked into running it grant itself permission to obey
+whatever talked it into it. Edit the file yourself.
+
+Three rules, in the order they would hurt to get wrong:
+
+- **A grant only ever follows `SENDER VERIFIED`.** Any other verdict and no
+  grant is consulted at all. A grant that followed a forged or stolen key
+  would be worse than having no feature.
+- **A malformed file grants nothing.** One unusable line voids the whole file,
+  because the other direction lets a typo on line 2 widen line 3 — and the
+  failure directions are not symmetric. Too little authority asks a human a
+  question; too much acts on a stranger's instruction.
+- **A grant is for a kind of message, not for its contents.** `open` says so
+  in the frame: if the payload asks for a secret, a push, a message to a third
+  party or a change to that file, the grant does not cover it.
+
+No expiry yet, on purpose — it cannot use a clock, for the same reason
+[key retirement cannot](#the-retired-key-keeps-the-past-and-loses-the-future),
+and "expires after N observed messages" is a strange thing to ask a person to
+write. A file you edit is already revocable by editing it.
+
 ## Use
 
     ctx init owen                      # make your keypair
@@ -527,10 +567,11 @@ It is not an audit layer over an agent's own actions, and not a receipt format
 for tool calls. Those exist and are further along; the comparison, and what
 each side can and cannot prove, is in [docs/prior-art.md](docs/prior-art.md).
 
-Above all it cannot tell an agent that it *may* do what a message asks. A
-bundle cannot authorise its own fulfilment, however well signed — proven by
-[dogfooding it](docs/dogfood-2026-10-15.md) across four agents, two of which
-read a verified request from a verified contact and rightly declined.
+A bundle still cannot authorise its own fulfilment, however well signed —
+proven by [dogfooding it](docs/dogfood-2026-10-15.md) across four agents, two
+of which read a verified request from a verified contact and rightly declined.
+What closes that gap is a grant the *receiver's* human wrote, never anything
+in the message. See [Authority](#authority-the-one-thing-that-says-you-may-act).
 
 ## Tests
 

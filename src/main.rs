@@ -6,6 +6,7 @@
 //! because agents are invoked rather than online -- presence is the part of
 //! the instant-messenger model that does not transfer.
 
+mod authority;
 mod bundle;
 mod collect;
 mod identity;
@@ -66,6 +67,12 @@ enum Cmd {
     },
     /// Add someone's key to your buddy list (the signpub.boxpub token)
     Add { name: String, key: String },
+    /// Show what your authority file pre-authorises. Prints only -- there is
+    /// deliberately no command that WRITES a grant, because an agent that
+    /// can be talked into running a command could be talked into granting
+    /// itself the authority to obey whatever talked it into it. Edit the
+    /// file yourself.
+    Authority,
     /// Encrypt a bundle for one recipient. Nothing leaves this machine unsealed.
     Seal {
         dir: PathBuf,
@@ -513,6 +520,40 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     r.reason,
                     if r.can_collect() { "" } else { " (secrets destroyed)" }
                 );
+            }
+        }
+        Cmd::Authority => {
+            let a = authority::Authority::load();
+            let p = authority::path();
+            if !a.present {
+                println!("no authority file at {}", p.display());
+                println!("nothing is pre-authorised; every request gets reported to you");
+            } else if let Some(e) = &a.error {
+                println!("{}", e);
+                println!("the file grants NOTHING while it does not parse, which is the safe direction");
+            } else if a.grants.is_empty() {
+                println!("{} is present and grants nothing", p.display());
+            } else {
+                println!("{}", p.display());
+                for g in &a.grants {
+                    let who = match &g.subject {
+                        authority::Subject::Key(k) => format!("key {k}"),
+                        authority::Subject::Name(n) => {
+                            let c = trust::Contacts::load();
+                            match c.key_for_name(n) {
+                                Some(k) => format!("contact {n} (key {k})"),
+                                // Worth saying out loud: the grant is inert
+                                // rather than wrong, and the usual cause is
+                                // a contact not added yet or renamed.
+                                None => format!("contact {n} -- NO SUCH CONTACT, so this grants nothing"),
+                            }
+                        }
+                    };
+                    println!("  line {}\t{}\t{}", g.line, g, who);
+                }
+                println!();
+                println!("a grant applies only to a SENDER VERIFIED bundle, and only to the");
+                println!("kind of message it names -- never to what the contents ask for");
             }
         }
         Cmd::Keychange { file, accept } => {

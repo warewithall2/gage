@@ -133,4 +133,19 @@ admission check. Same primitive, opposite direction, and the wording problem
 below is the part that does not transfer: nothing they publish has to be safe
 against a payload arguing with it.
 
-Not built. Needs the owner.
+**Built 15 Oct**, as `src/authority.rs`, `~/.ctx/authority` and the
+`authorised :` line in the frame. The decision was taken the conservative way
+on every point that was open:
+
+- No expiry. It cannot use a clock and the counter version is unwriteable by
+  a human, so a file you edit is the revocation mechanism for now.
+- No `in-thread-only`; `in-reply-only` instead, which is checkable from
+  `in_reply_to` and cannot be used to open an unsolicited conversation.
+- Grants are consulted only for `Trust::Known`, and only for message kinds
+  that expect a reply.
+- No subcommand writes a grant, for the injection reason above.
+- One unparsable line voids the whole file.
+
+The wording is the part still worth another pair of eyes: it is the only text
+in ctx that tells an agent it may act, and over-reading it is precisely the
+failure the tool exists to prevent. Sent for review rather than closed.
