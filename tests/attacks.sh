@@ -806,6 +806,40 @@ CTX_HOME=$T/a $CTX send --to nobody --subject s --dir "$T/lnk/linkroot" --out "$
 code symlinkroot $? 1
 want "$T/lnko3" "is a symlink"
 
+echo "a manifest id must address the content it claims to"
+# The id is a field the sender writes, and ctx computes it honestly -- but the
+# format is public and a hostile client need not. Locally the id is the
+# directory name under pending/, the dedup key for threads, the read-state key
+# and the announce-once key, so a chosen collision suppresses a real message
+# rather than forging one: dedup drops one of the pair, marking one read marks
+# both, and the notifier treats the real arrival as already announced.
+printf 'the real message\n' > "$T/w/idr.md"
+CTX_HOME=$T/a $CTX send --to nobody --subject "id check" --decision "$T/w/idr.md" \
+  --out "$T/idone" >/dev/null 2>&1
+cp -r "$T/idone" "$T/idtwo"
+# re-sign a manifest that keeps the id but addresses different content. Only a
+# custom client can do this, which is exactly the threat: anyone can write one.
+python3 - "$T/idtwo" <<'PY'
+import json, sys, hashlib, os
+d = sys.argv[1]
+p = os.path.join(d, 'manifest.json')
+m = json.load(open(p))
+# different subject, same id -- the signature is re-made below by ctx itself,
+# so this has to be a manifest ctx would sign. It will not: the check is that
+# a RECEIVER refuses it, so the signature is left stale on purpose and the
+# tamper report must name the id, not only the signature.
+m['subject'] = 'id check'
+m['items'][0]['sha256'] = hashlib.sha256(b'different content\n').hexdigest()
+json.dump(m, open(p, 'w'), indent=2)
+PY
+printf 'different content\n' > "$T/idtwo/items/idr.md"
+CTX_HOME=$T/b $CTX open "$T/idtwo" > "$T/ido" 2>&1; code idmismatch $? 2
+want "$T/ido" "does not address this content"
+wantno "$T/ido" "different content"
+# the honest bundle is unaffected
+CTX_HOME=$T/b $CTX inspect "$T/idone" > "$T/ido2" 2>&1
+wantno "$T/ido2" "does not address this content"
+
 echo "a good bundle exits 0"
 CTX_HOME=$T/b $CTX open "$T/b1" >/dev/null 2>&1; code good $? 0
 

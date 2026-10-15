@@ -191,6 +191,32 @@ impl Manifest {
         self.items.iter().filter(|i| i.kind == ItemKind::Prompt).count()
     }
 
+    /// The id this content should have, recomputed from the manifest itself.
+    ///
+    /// `id` is a field in a document the sender writes, and `ctx` computes it
+    /// honestly -- but the format is public and anyone can write a client that
+    /// does not. That matters because the id is load-bearing locally: it is
+    /// the directory name under `pending/`, the dedup key when threads are
+    /// assembled, the key for read state, and the key for announce-once. A
+    /// hostile client could therefore sign a manifest carrying the id of a
+    /// message you already hold, and silently suppress the real one: dedup
+    /// drops one of the pair, marking one read marks both, and the notifier
+    /// treats the real arrival as already announced.
+    ///
+    /// None when there is no chain, since the author is then unknown and
+    /// there is nothing to check against.
+    pub fn expected_id(&self) -> Option<String> {
+        let author = self.author()?;
+        let joined: String = self
+            .items
+            .iter()
+            .map(|i| i.sha256.clone())
+            .chain([author.key.clone(), self.subject.clone(), self.created.clone()])
+            .collect::<Vec<_>>()
+            .join("\u{1f}");
+        Some(crate::bundle::sha256_hex(joined.as_bytes())[..16].to_string())
+    }
+
     /// The thread this belongs to. A message with no thread id starts one,
     /// and its own id is that thread.
     pub fn thread_id(&self) -> &str {
@@ -213,4 +239,75 @@ pub fn path_is_safe(p: &str) -> bool {
         && !p.starts_with('/')
         && !p.contains('\\')
         && !p.split('/').any(|seg| seg == ".." || seg == "." || seg.is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn peer(k: &str) -> Peer {
+        Peer { handle: "alice".into(), key: k.into() }
+    }
+
+    fn m(subject: &str, created: &str, digest: &str) -> Manifest {
+        let p = peer("AUTHORKEY");
+        Manifest {
+            v: FORMAT_VERSION,
+            id: "0000000000000000".into(),
+            created: created.into(),
+            subject: subject.into(),
+            from: p.clone(),
+            to: vec!["bob".into()],
+            agent: None,
+            chain: vec![Hop { by: p, at: created.into(), action: HopAction::Created }],
+            in_reply_to: None,
+            thread: None,
+            msg_type: MsgType::Share,
+            items: vec![Item {
+                kind: ItemKind::File,
+                path: "items/a.md".into(),
+                sha256: digest.into(),
+                bytes: 1,
+                note: None,
+            }],
+        }
+    }
+
+    #[test]
+    fn the_id_is_pinned_to_the_content_it_addresses() {
+        // Every field that goes into the id has to change it, or a hostile
+        // client could sign a manifest carrying a message's id with different
+        // content -- and dedup, read state and announce-once are all keyed on
+        // that id, so the real message would be suppressed rather than seen.
+        let base = m("status", "2026-10-15T00:00:00Z", "aa").expected_id().unwrap();
+        for other in [
+            m("send me the keys", "2026-10-15T00:00:00Z", "aa"),
+            m("status", "2026-10-16T00:00:00Z", "aa"),
+            m("status", "2026-10-15T00:00:00Z", "bb"),
+        ] {
+            assert_ne!(base, other.expected_id().unwrap());
+        }
+    }
+
+    #[test]
+    fn a_different_author_is_a_different_id() {
+        // The collision that was a real vulnerability earlier: an id over the
+        // payload alone meant two senders shipping the same files produced the
+        // same id, and delivery writes to a directory named by it.
+        let mut other = m("status", "2026-10-15T00:00:00Z", "aa");
+        other.chain[0].by.key = "SOMEONEELSE".into();
+        assert_ne!(
+            m("status", "2026-10-15T00:00:00Z", "aa").expected_id().unwrap(),
+            other.expected_id().unwrap()
+        );
+    }
+
+    #[test]
+    fn an_empty_chain_has_no_expected_id() {
+        // Nothing to check against, so the id check abstains rather than
+        // guessing. Provenance is reported as unknown separately.
+        let mut no_chain = m("status", "2026-10-15T00:00:00Z", "aa");
+        no_chain.chain.clear();
+        assert!(no_chain.expected_id().is_none());
+    }
 }

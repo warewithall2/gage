@@ -192,6 +192,17 @@ pub fn load(dir: &Path) -> std::io::Result<Loaded> {
     // the payload against them too: a signed manifest beside swapped files
     // would otherwise pass.
     let mut tampered = Vec::new();
+    // The id must address the content it claims to. Checked here rather than
+    // trusted, because everything local that is keyed on it -- the directory
+    // name, thread dedup, read state, announce-once -- becomes a way to
+    // suppress a real message if a sender can choose a collision.
+    match manifest.expected_id() {
+        Some(want) if want != manifest.id => tampered.push(format!(
+            "manifest id {} does not address this content (expected {want})",
+            manifest.id
+        )),
+        _ => {}
+    }
     for it in &manifest.items {
         if !path_is_safe(&it.path) {
             tampered.push(format!("{} (unsafe path)", it.path));
