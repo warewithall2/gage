@@ -212,3 +212,26 @@ file alone may be guarding the smallest door in an open wall. That argument
 cuts both ways and is exactly why it is the owner's call.
 
 **Not built. Needs the owner.**
+
+## 8. LAN discovery, and whether ctx announces itself
+
+Asked for 15 Oct: make the second machine feel like LocalSend. Designed in
+[lan-discovery-design.md](lan-discovery-design.md).
+
+Most of it is uncontroversial -- the accept gate already is LocalSend's accept
+prompt, and a LAN listener is the same small hand-rolled HTTP as the viewer
+and the relay. Two things are not:
+
+- **Discovery must not become identity.** LocalSend identifies a peer by a
+  self-chosen device name, which anyone on the network can claim. That is
+  fine for one expected file and not fine for instructions an agent may act
+  on later under a grant. So discovery answers *where a key is reachable* and
+  a one-time fingerprint pairing answers *whose key it is*. The pairing step
+  is the difference and cannot be optimised away.
+- **Announcing is presence, which this tool has deliberately never had.** The
+  README says "no server, no presence, no accounts". Broadcasting a handle and
+  a public key on every network the laptop joins is a real change to what
+  leaves the machine, and the owner should decide it rather than find it in a
+  changelog. Default off, explicit flag, and say plainly what is sent.
+
+**Not built. Needs the owner** on the presence question; the rest follows.
