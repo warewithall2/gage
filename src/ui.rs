@@ -34,6 +34,7 @@ use std::net::{TcpListener, TcpStream};
 struct Req {
     method: String,
     target: String,
+    host: Option<String>,
     origin: Option<String>,
     fetch_site: Option<String>,
     guard: bool,
@@ -65,6 +66,7 @@ fn read_req(stream: &TcpStream) -> std::io::Result<Req> {
     let method = parts.next().unwrap_or("").to_string();
     let target = parts.next().unwrap_or("/").to_string();
 
+    let mut host = None;
     let mut origin = None;
     let mut fetch_site = None;
     let mut guard = false;
@@ -89,6 +91,7 @@ fn read_req(stream: &TcpStream) -> std::io::Result<Req> {
         let Some((k, v)) = h.split_once(':') else { continue };
         let (k, v) = (k.trim().to_ascii_lowercase(), v.trim().to_string());
         match k.as_str() {
+            "host" => host = Some(v.to_ascii_lowercase()),
             "origin" => origin = Some(v),
             "sec-fetch-site" => fetch_site = Some(v),
             "x-ctx" => guard = true,
@@ -107,6 +110,7 @@ fn read_req(stream: &TcpStream) -> std::io::Result<Req> {
         reader.read_exact(&mut body)?;
     }
     Ok(Req {
+        host,
         method,
         target,
         origin,
@@ -122,6 +126,31 @@ fn read_req(stream: &TcpStream) -> std::io::Result<Req> {
 /// custom header is what a cross-site form cannot produce, Sec-Fetch-Site is
 /// what a modern browser volunteers, and the Origin check catches a request
 /// that names some other site outright.
+/// Is this request addressed to the loopback name this server answers on?
+///
+/// Checked on EVERY method, which `may_mutate` is not. The read routes had no
+/// guard at all, and that is enough on its own: a page on the open internet
+/// served from a name that resolves to 127.0.0.1 -- DNS rebinding -- is
+/// same-origin as far as the browser is concerned, so it sends no interesting
+/// `Origin`, meets no CORS check, and could simply `fetch('/api/state')` and
+/// read the whole inbox, this home's path and the signing key. Binding to
+/// loopback does not help, because the request really does arrive on
+/// loopback. The one thing such a page cannot change is the `Host` header,
+/// which still carries the name it was served from.
+///
+/// A missing `Host` is refused rather than allowed: HTTP/1.1 requires it, and
+/// the only clients without one are not browsers.
+fn host_is_local(r: &Req, port: u16) -> bool {
+    let Some(h) = &r.host else { return false };
+    [
+        format!("127.0.0.1:{port}"),
+        format!("localhost:{port}"),
+        format!("[::1]:{port}"),
+    ]
+    .iter()
+    .any(|x| x == h)
+}
+
 fn may_mutate(r: &Req, port: u16) -> bool {
     if !r.guard {
         return false;
@@ -198,6 +227,18 @@ fn bundle_id<'a>(target: &'a str, prefix: &str) -> Option<&'a str> {
 fn handle(stream: TcpStream, port: u16) -> std::io::Result<()> {
     let req = read_req(&stream)?;
     let (method, target) = (req.method.as_str(), req.target.as_str());
+
+    // Before the route table, and before the method matters. A rebound page
+    // reads as well as it writes, and reading an inbox is the loss this
+    // viewer exists to prevent.
+    if !host_is_local(&req, port) {
+        return respond(
+            stream,
+            "403 Forbidden",
+            "application/json",
+            "{\"error\":\"request not addressed to this loopback viewer\"}",
+        );
+    }
 
     if method == "POST" && !may_mutate(&req, port) {
         return respond(

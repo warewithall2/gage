@@ -1283,6 +1283,45 @@ if cut -c16- "$T/auw" | grep -q '[^ ]  '; then
 else ok; fi
 rm -f "$AUTH"
 
+echo "the viewer refuses a request addressed to anything but its own loopback name"
+# DNS rebinding: a page served from a name that resolves to 127.0.0.1 is
+# same-origin to the browser, so it meets no CORS check and sends no
+# interesting Origin. The read routes had no guard at all, so it could fetch
+# the whole inbox, this home's path and the signing key. Host is the one
+# header such a page cannot choose.
+UIP=7813
+CTX_HOME=$T/b $CTX ui --port $UIP >/dev/null 2>&1 &
+uipid=$!
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  curl -s -o /dev/null "http://127.0.0.1:$UIP/api/state" && break
+  sleep 0.3
+done
+rb=$(curl -s -o "$T/rbody" -w '%{http_code}' -H "Host: evil.example" "http://127.0.0.1:$UIP/api/state")
+if [ "$rb" = "403" ]; then ok; else bad "foreign Host read the state: HTTP $rb"; fi
+wantno "$T/rbody" "identity"
+# The honest client still works.
+lo=$(curl -s -o "$T/lo" -w '%{http_code}' "http://127.0.0.1:$UIP/api/state")
+if [ "$lo" = "200" ]; then ok; else bad "loopback GET broke: HTTP $lo"; fi
+# And the page itself, which is what a person actually loads.
+pg=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$UIP/")
+if [ "$pg" = "200" ]; then ok; else bad "the viewer page broke: HTTP $pg"; fi
+# A request with no Host at all is refused rather than allowed: HTTP/1.1
+# requires one, so the only clients without it are not browsers.
+nh=$(printf 'GET /api/state HTTP/1.0\r\n\r\n' | timeout 5 python3 -c "
+import socket,sys
+s=socket.create_connection(('127.0.0.1',$UIP),5)
+s.sendall(sys.stdin.buffer.read()); s.settimeout(5)
+d=b''
+try:
+  while True:
+    c=s.recv(4096)
+    if not c: break
+    d+=c
+except Exception: pass
+print(d.split(b'\r\n')[0].decode(errors='replace'))")
+case "$nh" in *403*) ok;; *) bad "no Host was not refused: $nh";; esac
+kill $uipid 2>/dev/null; wait $uipid 2>/dev/null
+
 echo "a good bundle exits 0"
 CTX_HOME=$T/b $CTX open "$T/b1" >/dev/null 2>&1; code good $? 0
 
