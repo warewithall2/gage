@@ -91,6 +91,15 @@ safe direction, and the alternative — one journalled transaction across
 `contacts.json` and `state.json` — is more machinery than the failure
 justifies. Recorded so the choice is visible rather than accidental.
 
+**Corrected 15 Oct.** "Until the command is re-run" was false, and the
+reviewers caught it. After the first save the old key is gone from
+`contacts.keys`, so a re-run found no live contact and exited with "you have
+never accepted the old key" — leaving the contact retired at observation 0
+permanently, with no command that fixed it. `keychange --accept` now detects
+exactly that state, by the retired record's own `replaced_by` matching this
+notice's destination, and resumes: it takes the real cut and installs the new
+key. The choice above stands; the claim about it did not.
+
 ## 6. Receiver-side delegation: who may act on a request
 
 Found by dogfooding the tool with the full ensemble on 15 October, written up

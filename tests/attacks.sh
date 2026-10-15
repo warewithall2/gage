@@ -1330,6 +1330,105 @@ if cut -c16- "$T/auw" | grep -q '[^ ]  '; then
 else ok; fi
 rm -f "$AUTH"
 
+echo "a rotation notice cannot un-retire a key, steal a contact, or get stuck"
+# All three reported by the grok reviewer and confirmed by codex. No notice is
+# tampered with anywhere below: `claim` is the exact signed string, so editing
+# it only produces a bad signature and would prove nothing about these paths.
+# Each case is built by putting the DESTINATION key somewhere it should not be
+# accepted from, then applying a genuine notice.
+mkdir -p "$T"/{p,q,q2,q3}
+CTX_HOME=$T/p $CTX init pat >/dev/null
+PK=$(CTX_HOME=$T/p $CTX whoami | cut -f2)
+CTX_HOME=$T/p $CTX rotate >/dev/null 2>&1
+PK2=$(CTX_HOME=$T/p $CTX whoami | cut -f2)
+cp "$T/p/rotation.json" "$T/notice.json"
+
+# 1. The destination key is already live under ANOTHER contact. `keys.insert`
+# overwrites by key, so that contact simply vanished, and their bundles then
+# opened under the rotating contact's name with a NAME MISMATCH.
+CTX_HOME=$T/q $CTX init quin >/dev/null
+CTX_HOME=$T/q $CTX add pat "$PK"  >/dev/null
+CTX_HOME=$T/q $CTX add sam "$PK2" >/dev/null
+CTX_HOME=$T/q $CTX keychange "$T/notice.json" --accept > "$T/kcA" 2>&1
+code "notice onto another contact's key" $? 1
+want "$T/kcA" "already on your list as sam"
+sam_live=$(python3 -c "
+import json;d=json.load(open('$T/q/contacts.json'));print('yes' if 'sam' in d.get('keys',{}).values() else 'no')")
+if [ "$sam_live" = "yes" ]; then ok; else bad "sam was lost to a refused notice"; fi
+
+# 2. The destination key is one the receiver RETIRED. `keys.insert` put it
+# back while the retired record stood, and `verdict` tests `knows()` before
+# `retired` -- so a bundle that read SENDER KEY REJECTED with contents
+# withheld reopened as SENDER VERIFIED, exit 0, contents shown.
+CTX_HOME=$T/q2 $CTX init quinn >/dev/null
+CTX_HOME=$T/q2 $CTX add pat "$PK"  >/dev/null
+CTX_HOME=$T/q2 $CTX add sam "$PK2" >/dev/null
+CTX_HOME=$T/q2 $CTX retire sam >/dev/null 2>&1
+CTX_HOME=$T/q2 $CTX keychange "$T/notice.json" --accept > "$T/kcB" 2>&1
+code "notice onto a retired key" $? 1
+want "$T/kcB" "rotates onto a key you RETIRED"
+# Refusing is only half of it: the key must still not be trusted.
+back=$(python3 -c "
+import json;d=json.load(open('$T/q2/contacts.json'))
+print('yes' if '${PK2%%.*}' in d.get('keys',{}) else 'no')")
+if [ "$back" = "no" ]; then ok; else bad "a refused notice still put the retired key back"; fi
+# ...and the same refusal applies when it was retired as compromised, which is
+# the case where re-activation matters most.
+CTX_HOME=$T/q3 $CTX init quincy >/dev/null
+CTX_HOME=$T/q3 $CTX add pat "$PK"  >/dev/null
+CTX_HOME=$T/q3 $CTX add sam "$PK2" >/dev/null
+CTX_HOME=$T/q3 $CTX retire sam --compromised >/dev/null 2>&1
+CTX_HOME=$T/q3 $CTX keychange "$T/notice.json" --accept > "$T/kcB2" 2>&1
+code "notice onto a compromised key" $? 1
+want "$T/kcB2" "as COMPROMISED"
+
+# 3. An accept that dies between the retirement and the cut must be
+# resumable. That state is: the retirement saved at sequence 0, the old key
+# gone from `keys`, the new key never inserted. Before the fix a re-run exited
+# "you have never accepted the old key" and the contact stayed retired at 0
+# for good -- every bundle it ever signed rejected, with no command to fix it.
+mkdir -p "$T/q4"
+CTX_HOME=$T/q4 $CTX init quill >/dev/null
+CTX_HOME=$T/q4 $CTX add pat "$PK" >/dev/null
+python3 - "$T/q4/contacts.json" "${PK%%.*}" "${PK2%%.*}" <<'PYEOF'
+import json, sys
+path, old, new = sys.argv[1], sys.argv[2], sys.argv[3]
+c = json.load(open(path))
+c["keys"].pop(old, None)
+c.setdefault("retired", {})[old] = {
+    "name": "pat", "retired_at": "2026-10-15T00:00:00Z",
+    "replaced_by": new, "retired_seq": 0, "compromised": False,
+}
+json.dump(c, open(path, "w"))
+PYEOF
+CTX_HOME=$T/q4 $CTX keychange "$T/notice.json" --accept > "$T/kcC" 2>&1
+code "half-finished rotation resumes" $? 0
+wantno "$T/kcC" "you have never accepted the old key"
+want "$T/kcC" "did not finish"
+pat_live=$(python3 -c "
+import json;d=json.load(open('$T/q4/contacts.json'))
+print('yes' if d.get('keys',{}).get('${PK2%%.*}')=='pat' else 'no')")
+if [ "$pat_live" = "yes" ]; then ok; else bad "the resumed rotation did not install the new key"; fi
+# A resume must only ever finish the rotation its own notice began. A retired
+# record naming a DIFFERENT replacement is not this notice's business.
+mkdir -p "$T/q5"
+CTX_HOME=$T/q5 $CTX init quip >/dev/null
+CTX_HOME=$T/q5 $CTX add pat "$PK" >/dev/null
+python3 - "$T/q5/contacts.json" "${PK%%.*}" <<'PYEOF'
+import json, sys
+path, old = sys.argv[1], sys.argv[2]
+c = json.load(open(path))
+c["keys"].pop(old, None)
+c.setdefault("retired", {})[old] = {
+    "name": "pat", "retired_at": "2026-10-15T00:00:00Z",
+    "replaced_by": "SOMEOTHERKEYENTIRELY", "retired_seq": 0, "compromised": False,
+}
+json.dump(c, open(path, "w"))
+PYEOF
+CTX_HOME=$T/q5 $CTX keychange "$T/notice.json" --accept > "$T/kcD" 2>&1
+code "a resume will not finish a different rotation" $? 1
+want "$T/kcD" "you have never accepted the old key"
+
 echo "the viewer refuses a request addressed to anything but its own loopback name"
 # DNS rebinding: a page served from a name that resolves to 127.0.0.1 is
 # same-origin to the browser, so it meets no CORS check and sends no

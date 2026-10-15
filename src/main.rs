@@ -586,7 +586,37 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 println!("\nalready applied; nothing to do");
                 return Ok(ExitCode::SUCCESS);
             }
-            let Some(name) = known else {
+            // An accept that died between the retirement and the cut. The
+            // retirement is saved, the old key is gone from `keys`, and the
+            // new key was never inserted -- so `known` is None and the bail
+            // below would fire with "you have never accepted the old key",
+            // leaving the contact retired at sequence 0 for good. Every
+            // bundle from the old key then reads rejected or unrecorded,
+            // permanently, with no command that fixes it.
+            //
+            // The comment on the retire-first ordering claimed re-running
+            // would relax it to the real cut. It would not, and both
+            // reviewers said so. This is what makes that claim true.
+            let resuming = match c.retired_record(&v.old_sign) {
+                Some(r)
+                    if !c.knows(&v.new_sign)
+                        && r.retired_seq == 0
+                        // Only resume the rotation this very notice began.
+                        // Without this, any notice naming a retired key as
+                        // its OLD key would be treated as a resumption and
+                        // could finish with a different destination.
+                        && r.replaced_by.as_deref() == Some(v.new_sign.as_str()) =>
+                {
+                    Some(r.name.clone())
+                }
+                _ => None,
+            };
+            if resuming.is_some() {
+                println!("  an earlier accept of this notice did not finish: the key is");
+                println!("  retired at observation 0, which rejects everything it signed.");
+                println!("  re-running takes the real cut.");
+            }
+            let Some(name) = known.or(resuming.clone()) else {
                 return Err("you have never accepted the old key, so this notice \
                             upgrades nothing. If you trust the new key, confirm it \
                             with them directly and run: ctx add <name> <newkey>"
@@ -613,6 +643,52 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 println!("key authorised this -- which is also true if that key was stolen.");
                 println!("Confirm with {name} directly, then re-run with --accept.");
                 return Ok(ExitCode::SUCCESS);
+            }
+            // The destination key is chosen by whoever wrote the notice, so
+            // it gets the checks `ctx add` already applies to a key a person
+            // typed -- and one more, because a person typing a key has
+            // decided something and a notice has not.
+            if let Some(r) = c.retired_record(&v.new_sign) {
+                // Without this, `keys.insert` below puts a retired key back
+                // into service while its retired record stays, and
+                // `Contacts::verdict` tests `knows()` first -- so a bundle
+                // that read SENDER KEY REJECTED with its contents withheld
+                // reopens as SENDER VERIFIED, exit 0, contents shown. That is
+                // revocation undone by a message.
+                //
+                // Refused here rather than fixed in `verdict`, which was the
+                // other candidate: reordering `verdict` would stop this class
+                // of reactivation but change what every verdict means, and
+                // `ctx add` deliberately *removes* a non-compromised retired
+                // record when a person re-adds a key by hand. So the
+                // contradictory state should not exist at all, and this is
+                // the only path that creates it.
+                return Err(format!(
+                    "NOT APPLIED: this notice rotates onto a key you RETIRED on {}{}. \
+                     Applying it would put that key back in service while the \
+                     retirement still stands, and bundles you had rejected would \
+                     read as verified again. If you really mean to trust that key \
+                     again, that is a decision to make by hand and in the open:\n  \
+                     ctx add {name} {}",
+                    r.retired_at,
+                    if r.compromised { " as COMPROMISED" } else { "" },
+                    v.claim.new_key
+                )
+                .into());
+            }
+            if let Some(other) = c.name_for(&v.new_sign) {
+                if other != name {
+                    // `keys.insert` overwrites by key, so the other contact
+                    // simply vanished -- no message, and their bundles then
+                    // opened under this contact's name with a NAME MISMATCH.
+                    return Err(format!(
+                        "NOT APPLIED: that new key is already on your list as {other}. \
+                         Applying this would replace {other} with {name} on the same \
+                         key and lose {other} entirely. Two contacts cannot share a \
+                         signing key: confirm with both which of them holds it."
+                    )
+                    .into());
+                }
             }
             let compromised = v.claim.reason == "compromised";
             // The cutoff is MY clock, at the moment I accept. Whoever wrote
@@ -657,11 +733,13 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             // from the old key reads as rejected or unrecorded, and a crash
             // leaves it over-strict rather than over-trusting. Re-running
             // keychange then relaxes it to the real cut.
-            c.retire(&v.old_sign, &now, 0, compromised, Some(v.new_sign.clone()));
-            if let Some(r) = c.retired.get_mut(&v.old_sign) {
-                r.claimed_at = Some(v.claim.at.clone());
+            if resuming.is_none() {
+                c.retire(&v.old_sign, &now, 0, compromised, Some(v.new_sign.clone()));
+                if let Some(r) = c.retired.get_mut(&v.old_sign) {
+                    r.claimed_at = Some(v.claim.at.clone());
+                }
+                c.save()?;
             }
-            c.save()?;
             let seq = state::LocalState::observe_and_cut(routes::scan_inbox_knowing)?;
             if let Some(r) = c.retired.get_mut(&v.old_sign) {
                 r.retired_seq = seq;
