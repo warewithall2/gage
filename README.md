@@ -8,12 +8,25 @@ state. Works across vendors because it is not a protocol: a bundle is a signed
 directory, so it moves over a shared folder, git, email, or anything else you
 already have.
 
-## Why the trust boundary is the product
+## The receiving agent's half of the trust boundary
 
-A channel that lets one LLM send prompts to another LLM is, by default, a
-prompt-injection delivery network. `ctx open` is the part that stops that: it
-renders a bundle inside a frame that states, before any payload, that the
-contents are **data** from an identified party and carry no authority.
+Signing what an agent *does* is well covered by other work — receipts over
+tool calls, verified at the server that executes them. See
+[docs/prior-art.md](docs/prior-art.md). ctx is the other end: what the agent
+*reading* a message is told about it, in the seconds before it decides what to
+do.
+
+That matters because the reader is different. A receipt's verdict is read by a
+program at an admission check, which cannot be talked out of its conclusion. A
+bundle's verdict is read by a language model whose next tokens are the payload
+itself, and which can. A channel that lets one LLM send prompts to another is,
+by default, a prompt-injection delivery network.
+
+So `ctx open` is a renderer, not an importer. It puts the bundle inside a frame
+that states, before any payload, that the contents are **data** from an
+identified party and carry no authority — and on a bad verdict it withholds
+the contents rather than annotating them, because an annotation is something
+the payload can argue with.
 
 Three specific defences, each written after the attack worked in testing:
 
@@ -509,6 +522,15 @@ It does not sandbox anything. A verified sender is an *accountable* sender, not
 a safe one. The frame tells a reader what the content is; deciding to act on it
 is still the reader's job, which is why `open` is a renderer and not an
 importer.
+
+It is not an audit layer over an agent's own actions, and not a receipt format
+for tool calls. Those exist and are further along; the comparison, and what
+each side can and cannot prove, is in [docs/prior-art.md](docs/prior-art.md).
+
+Above all it cannot tell an agent that it *may* do what a message asks. A
+bundle cannot authorise its own fulfilment, however well signed — proven by
+[dogfooding it](docs/dogfood-2026-10-15.md) across four agents, two of which
+read a verified request from a verified contact and rightly declined.
 
 ## Tests
 

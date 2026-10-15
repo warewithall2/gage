@@ -64,7 +64,10 @@ relay round trip, which needs fixing either way.
 ## 4. The audit log and the policy engine
 
 Both reviewers independently said the same thing about these: do not guess the
-schema. "Show me every instruction that crossed from this agent to that one
+schema. Prismer's Signet has shipped a hash-chained receipt log and an
+evidence-bundle export for handing records to an auditor
+([prior-art.md](prior-art.md)); if this gets built, read that schema first
+rather than inventing a third one. "Show me every instruction that crossed from this agent to that one
 last quarter, with authorship and whether it was accepted" is the question an
 enterprise buyer actually asks, and the right shape for the answer comes from
 one design partner rather than from an implementer at 1am.
@@ -120,5 +123,14 @@ that does not, what it prints today.
   *sending* side. One mechanism or two is an architecture choice.
 - ASI07 names allowlisted delegation paths as a required mitigation, so this
   is also the item that makes the standards argument honest.
+
+**Prior art, found 15 Oct.** Prismer's Signet already ships scoped delegation
+tokens with narrowing-only permissions, TTLs and revocation — see
+[prior-art.md](prior-art.md). Its grants authorise an *outbound tool call*,
+checked by the server that executes it. The grant wanted here authorises
+*acting on a received document*, and is read by the model rather than by an
+admission check. Same primitive, opposite direction, and the wording problem
+below is the part that does not transfer: nothing they publish has to be safe
+against a payload arguing with it.
 
 Not built. Needs the owner.
