@@ -337,6 +337,155 @@ CTX_HOME=$T/b $CTX open "$T/b/inbox/accepted/$rid" >/dev/null 2>&1
 CTX_HOME=$T/b $CTX watch --once --quiet > "$T/w4" 2>&1
 wantno "$T/w4" "read me"
 
+echo "key rotation: the old key keeps the past and loses the future"
+mkdir -p "$T"/{d,e}
+CTX_HOME=$T/d $CTX init dave >/dev/null
+CTX_HOME=$T/e $CTX init erin >/dev/null
+DK=$(CTX_HOME=$T/d $CTX whoami | cut -f2)
+EK=$(CTX_HOME=$T/e $CTX whoami | cut -f2)
+CTX_HOME=$T/e $CTX add dave "$DK" >/dev/null
+printf 'WALRUSMEADOW before the rotation\n' > "$T/w/rot1.md"
+printf 'NARWHALCANYON after the rotation\n' > "$T/w/rot2.md"
+printf 'BADGERTUNNEL signed with a dead key\n' > "$T/w/rot3.md"
+CTX_HOME=$T/d $CTX send --to erin --subject "before rotation" --decision "$T/w/rot1.md" --out "$T/r1" >/dev/null 2>&1
+CTX_HOME=$T/e $CTX open "$T/r1" > "$T/ro1" 2>&1
+want "$T/ro1" "SENDER VERIFIED"
+# a copy of dave's identity as it is RIGHT NOW. This is both the honest
+# stale-client case and the stolen-key case: the bytes are identical, which is
+# the whole reason rotation needs a dated boundary rather than a list of keys.
+cp -r "$T/d" "$T/d_old"
+# Timestamps have one-second resolution and the retirement boundary is a
+# strict one, so a bundle made in the very same second as the rotation counts
+# as newer. That tie is resolved against the old key on purpose -- see the
+# unit test in trust.rs -- and this sleep keeps the test about rotation rather
+# than about which side of one second it landed on.
+sleep 1
+CTX_HOME=$T/d $CTX rotate > "$T/rot" 2>&1; code rotate $? 0
+want "$T/rot" "rotated at"
+want "$T/rot" "the old secrets are kept"
+NK=$(CTX_HOME=$T/d $CTX whoami | cut -f2)
+if [ "$NK" != "$DK" ]; then ok; else bad "rotate did not change the key"; fi
+CTX_HOME=$T/d $CTX keys > "$T/ks" 2>&1
+want "$T/ks" "retired"
+if grep -qF "$DK" "$T/ks"; then ok; else bad "the old key is not in the key history"; fi
+
+echo "a rotation notice is evidence, and applying it is a separate act"
+CTX_HOME=$T/e $CTX keychange "$T/d/rotation.json" > "$T/kc1" 2>&1; code keychange $? 0
+want "$T/kc1" "old key signed: yes"
+want "$T/kc1" "not applied"
+CTX_HOME=$T/d $CTX send --to erin --subject "after rotation" --decision "$T/w/rot2.md" --out "$T/r2" >/dev/null 2>&1
+CTX_HOME=$T/e $CTX open "$T/r2" > "$T/ro2" 2>&1
+# until erin applies it, the new key is a stranger's key. Trusting it on the
+# strength of the notice alone is the attack this gate exists for.
+want "$T/ro2" "SENDER NOT ON YOUR LIST"
+
+echo "re-adding a known name under a different key is refused, not silently done"
+CTX_HOME=$T/e $CTX add dave "$EK" > "$T/clash" 2>&1; code addclash $? 1
+want "$T/clash" "already on your list under a different key"
+if grep -qF "$EK" "$T/e/contacts.json"; then bad "the clashing key was written anyway"; else ok; fi
+
+echo "once applied, the new key is trusted and the old one still explains the past"
+CTX_HOME=$T/e $CTX keychange "$T/d/rotation.json" --accept > "$T/kc2" 2>&1; code accept $? 0
+want "$T/kc2" "moved onto the new key"
+CTX_HOME=$T/e $CTX open "$T/r2" > "$T/ro3" 2>&1; code newkey $? 0
+want "$T/ro3" "SENDER VERIFIED"
+want "$T/ro3" "NARWHALCANYON"
+CTX_HOME=$T/e $CTX open "$T/r1" > "$T/ro4" 2>&1; code oldbundle $? 0
+want "$T/ro4" "SENDER KEY RETIRED"
+want "$T/ro4" "dave"
+# the point of keeping the retired key at all: history stays readable
+want "$T/ro4" "WALRUSMEADOW"
+wantno "$T/ro4" "SENDER UNVERIFIABLE"
+
+echo "a NEW bundle signed with the retired key is rejected, contents withheld"
+CTX_HOME=$T/d_old $CTX send --to erin --subject "stale key" --decision "$T/w/rot3.md" --out "$T/r3" >/dev/null 2>&1
+CTX_HOME=$T/e $CTX open "$T/r3" > "$T/ro5" 2>&1; code revoked $? 2
+want "$T/ro5" "SENDER KEY REJECTED"
+want "$T/ro5" "Contents withheld"
+wantno "$T/ro5" "BADGERTUNNEL"
+wantno "$T/ro5" "SENDER VERIFIED"
+
+echo "applying the same notice twice is a no-op, not a second rotation"
+CTX_HOME=$T/e $CTX keychange "$T/d/rotation.json" --accept > "$T/kc3" 2>&1; code twice $? 0
+want "$T/kc3" "already applied"
+
+echo "a compromise rotation is not countersigned, so it cannot be auto-applied"
+CTX_HOME=$T/d $CTX rotate --compromised > "$T/rotc" 2>&1; code rotatec $? 0
+want "$T/rotc" "the old secrets are destroyed"
+want "$T/rotc" "NOT countersigned"
+CTX_HOME=$T/d $CTX keys > "$T/ks2" 2>&1
+want "$T/ks2" "secrets destroyed"
+CTX_HOME=$T/e $CTX keychange "$T/d/rotation.json" --accept > "$T/kc4" 2>&1; code compromised $? 1
+want "$T/kc4" "NOT APPLIED"
+want "$T/kc4" "not countersigned"
+# and it must not have quietly half-applied
+CTX_HOME=$T/e $CTX open "$T/r2" > "$T/ro6" 2>&1
+want "$T/ro6" "SENDER VERIFIED"
+
+echo "retiring a contact as compromised rejects even what predates it"
+# --all without --compromised condemns nothing, so it is refused rather than
+# accepted as a no-op that looks like it did something
+CTX_HOME=$T/e $CTX retire dave --all > "$T/reta" 2>&1; code retireall $? 1
+want "$T/reta" "only makes sense with --compromised"
+# the narrow form touches ONE key and says so, because believing it covered
+# the whole person when it covered one key is a false sense of safety
+CTX_HOME=$T/e $CTX retire dave --compromised > "$T/retn" 2>&1; code retirenarrow $? 0
+want "$T/retn" "marked COMPROMISED"
+want "$T/retn" "earlier key(s) you held for dave are untouched"
+CTX_HOME=$T/e $CTX open "$T/r1" > "$T/ro7a" 2>&1; code narrowold $? 0
+want "$T/ro7a" "SENDER KEY RETIRED"
+CTX_HOME=$T/e $CTX retire dave --compromised --all > "$T/ret" 2>&1; code retire $? 0
+want "$T/ret" "condemned"
+CTX_HOME=$T/e $CTX open "$T/r2" > "$T/ro7" 2>&1; code compromisedopen $? 2
+want "$T/ro7" "SENDER KEY REJECTED"
+want "$T/ro7" "Contents withheld"
+wantno "$T/ro7" "NARWHALCANYON"
+# the dates in a stolen key's bundles are the thief's to choose, so the old
+# ones go too
+CTX_HOME=$T/e $CTX open "$T/r1" > "$T/ro8" 2>&1; code compromisedold $? 2
+want "$T/ro8" "SENDER KEY REJECTED"
+wantno "$T/ro8" "WALRUSMEADOW"
+
+echo "sealing to a retired key is refused with the real reason"
+CTX_HOME=$T/e $CTX seal "$T/r1" --to dave --out "$T/dead.ctxb" > "$T/sealret" 2>&1
+code sealretired $? 1
+want "$T/sealret" "was retired"
+if [ -f "$T/dead.ctxb" ]; then bad "sealed to a retired key anyway"; else ok; fi
+CTX_HOME=$T/e $CTX add dave "$NK" > "$T/readd" 2>&1; code readd $? 1
+want "$T/readd" "COMPROMISED"
+
+echo "rotation does not lose mail already sealed to the old key"
+RPORT2=7893
+CTX_HOME=$T/e $CTX relay --bind 127.0.0.1:$RPORT2 --store "$T/rstore2" >/dev/null 2>&1 &
+rpid2=$!
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  ss -ltn 2>/dev/null | grep -q "127.0.0.1:$RPORT2" && break
+  sleep 0.2
+done
+mkdir -p "$T"/{f,g}
+CTX_HOME=$T/f $CTX init frank >/dev/null
+CTX_HOME=$T/g $CTX init gail  >/dev/null
+CTX_HOME=$T/f $CTX join 127.0.0.1:$RPORT2 >/dev/null 2>&1
+CTX_HOME=$T/g $CTX join 127.0.0.1:$RPORT2 >/dev/null 2>&1
+CTX_HOME=$T/g $CTX add frank "$(CTX_HOME=$T/f $CTX whoami | cut -f2)" >/dev/null 2>&1
+CTX_HOME=$T/f $CTX add gail  "$(CTX_HOME=$T/g $CTX whoami | cut -f2)" >/dev/null 2>&1
+printf 'PENGUINPARADE sealed before the rotation\n' > "$T/w/inflight.md"
+CTX_HOME=$T/f $CTX send --to gail --subject "in flight" --decision "$T/w/inflight.md" --out "$T/if1" >/dev/null 2>&1
+CTX_HOME=$T/f $CTX push "$T/if1" --to gail --yes >/dev/null 2>&1; code inflightpush $? 0
+# gail rotates AFTER the envelope was sealed to her old key and pushed. An
+# implementation that only drained the new mailbox would lose this silently,
+# which is how you teach people never to rotate.
+CTX_HOME=$T/g $CTX rotate >/dev/null 2>&1; code gailrotate $? 0
+CTX_HOME=$T/g $CTX pull > "$T/gp" 2>&1; code gailpull $? 0
+want "$T/gp" "retired key"
+gid=$(CTX_HOME=$T/g $CTX inbox --json | sed -n 's/.*"id": "\([a-f0-9]*\)".*/\1/p' | head -1)
+if [ -n "$gid" ]; then ok; else bad "the in-flight bundle never arrived"; fi
+CTX_HOME=$T/g $CTX accept "$gid" >/dev/null 2>&1
+CTX_HOME=$T/g $CTX open "$T/g/inbox/accepted/$gid" > "$T/go" 2>&1
+want "$T/go" "PENGUINPARADE"
+want "$T/go" "SENDER VERIFIED"
+kill $rpid2 2>/dev/null; wait $rpid2 2>/dev/null
+
 echo "a good bundle exits 0"
 CTX_HOME=$T/b $CTX open "$T/b1" >/dev/null 2>&1; code good $? 0
 

@@ -141,8 +141,18 @@ const ago=iso=>{const d=(Date.now()-Date.parse(iso))/1000;
   if(!isFinite(d))return'';
   if(d<60)return'now'; if(d<3600)return Math.floor(d/60)+'m';
   if(d<86400)return Math.floor(d/3600)+'h'; return Math.floor(d/86400)+'d';};
-const vClass=t=>t.startsWith('SENDER VERIFIED')?'v-ok':t.startsWith('SENDER NOT')?'v-warn':'v-bad';
-const vShort=t=>t.startsWith('SENDER VERIFIED')?'VERIFIED':t.startsWith('SENDER NOT')?'NOT ON YOUR LIST':'UNVERIFIABLE';
+// Every verdict the tool can produce is listed. The fallback shows the raw
+// label rather than the nearest friendly word: an unrecognised trust verdict
+// rendered as a recognised one is how a new, worse verdict gets displayed as
+// an old, milder one.
+const V=[['SENDER VERIFIED','VERIFIED','v-ok'],
+         ['SENDER NOT','NOT ON YOUR LIST','v-warn'],
+         ['SENDER KEY RETIRED','RETIRED KEY','v-warn'],
+         ['SENDER KEY REJECTED','KEY REJECTED','v-bad'],
+         ['SENDER UNVERIFIABLE','UNVERIFIABLE','v-bad']];
+const vRow=t=>V.find(r=>(t||'').startsWith(r[0]));
+const vClass=t=>{const r=vRow(t);return r?r[2]:'v-bad';};
+const vShort=t=>{const r=vRow(t);return r?r[1]:(t||'NO VERDICT');};
 const sClass=s=>s.includes('YOU')?'s-you':s.includes('them')?'s-them':s==='closed'?'s-closed':'s-settled';
 
 let DATA={threads:[],contacts:[]}, SEL=null, FILTER='all';

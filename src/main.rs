@@ -14,6 +14,7 @@ mod notify;
 mod open;
 mod relay;
 mod remote;
+mod rotate;
 mod routes;
 mod scrub;
 mod state;
@@ -39,6 +40,29 @@ enum Cmd {
     Init { handle: String },
     /// Print your public handle and key, to give to someone else
     Whoami,
+    /// Replace your keypair, keeping the old one on record
+    Rotate {
+        /// The old key was STOLEN. Drops your copy of its secrets and makes
+        /// the notice unsigned by it, because a thief can sign too.
+        #[arg(long)] compromised: bool,
+    },
+    /// Your key history: what is current, what is retired
+    Keys,
+    /// Check a contact's rotation notice, and apply it only if told to
+    Keychange {
+        file: PathBuf,
+        /// Actually move the contact onto the new key
+        #[arg(long)] accept: bool,
+    },
+    /// Take a contact's key out of service without a replacement
+    Retire {
+        name: String,
+        /// Their key was stolen, so even their old bundles stop counting
+        #[arg(long)] compromised: bool,
+        /// Also condemn every earlier key you held for them. For when you
+        /// learn they were compromised long before you found out.
+        #[arg(long)] all: bool,
+    },
     /// Add someone's key to your buddy list (the signpub.boxpub token)
     Add { name: String, key: String },
     /// Encrypt a bundle for one recipient. Nothing leaves this machine unsealed.
@@ -217,75 +241,124 @@ fn pull_once(keep: bool) -> Result<(), Box<dyn std::error::Error>> {
 /// and a line per poll turns its journal into noise that hides the one entry
 /// that mattered.
 fn pull_inner(keep: bool, quiet: bool) -> Result<(), Box<dyn std::error::Error>> {
-        let addr = remote::relay_addr().ok_or("no relay set; ctx join <addr> first")?;
-        let id = identity::Identity::load()?;
-        // Prove possession of the signing key registered for this mailbox.
-        // Naming a key is not proof: anyone who has seen a `ctx whoami`
-        // line knows it.
-        let ch = remote::post(
-            &addr,
-            "/challenge",
-            &serde_json::json!({ "box_key": id.box_public_b64() }).to_string(),
-        )?;
-        let nonce = serde_json::from_str::<serde_json::Value>(&ch)
-            .ok()
-            .and_then(|v| v.get("nonce").and_then(|n| n.as_str()).map(String::from))
-            .ok_or("relay did not issue a challenge")?;
-        let body = serde_json::json!({
-            "box_key": id.box_public_b64(),
-            "nonce": nonce,
-            "sig": id.sign_b64(nonce.as_bytes()),
-            "delete": !keep,
-        })
-        .to_string();
-        let resp = remote::post(&addr, "/fetch", &body)?;
-        let v: serde_json::Value = serde_json::from_str(&resp)?;
-        let items = v.get("items").and_then(|i| i.as_array()).cloned().unwrap_or_default();
-        if items.is_empty() && !quiet {
-            println!("nothing waiting on {addr}");
+    let addr = remote::relay_addr().ok_or("no relay set; ctx join <addr> first")?;
+    let id = identity::Identity::load()?;
+    let mut total = 0;
+    let mut saw_any = false;
+
+    // The current mailbox, then any retired one whose secrets were kept.
+    //
+    // A rotation does not reach the people who already sealed something to
+    // your old key and pushed it. Draining only the new mailbox would lose
+    // that mail silently, which is the kind of cost that teaches people never
+    // to rotate -- so the old mailbox keeps being collected until its
+    // envelopes are gone.
+    let mut boxes = vec![(id.box_public_b64(), String::new())];
+    for r in id.retired() {
+        if r.can_collect() {
+            boxes.push((r.box_pub.clone(), format!(" (retired key, {})", r.retired_at)));
         }
-        let pending = routes::pending_dir(&identity::home());
-        std::fs::create_dir_all(&pending)?;
-        let mut n = 0;
-        for it in &items {
-            let Some(raw) = it.get("envelope").and_then(|e| e.as_str()) else { continue };
-            let env: seal::Envelope = match serde_json::from_str(raw) {
-                Ok(e) => e,
-                Err(e) => {
-                    eprintln!("  skipped an unreadable envelope: {e}");
-                    continue;
+    }
+
+    for (box_pub, label) in &boxes {
+        match fetch_mailbox(&addr, &id, box_pub, keep, label) {
+            Ok((n, had)) => {
+                total += n;
+                saw_any |= had;
+            }
+            Err(e) if label.is_empty() => return Err(e),
+            // A retired mailbox may simply not exist on this relay -- it was
+            // registered before the relay was rebuilt, or never registered at
+            // all. That is not a failed pull.
+            Err(e) => {
+                if !quiet {
+                    eprintln!("  retired mailbox{label}: {e}");
                 }
-            };
-            // Unseal into a temp dir first, read the id from the manifest,
-            // then move it into place: the relay does not get to choose
-            // the directory name an envelope lands in.
-            let tmp = identity::home().join(format!("tmp-pull-{}-{n}", std::process::id()));
-            let _ = std::fs::remove_dir_all(&tmp);
-            if let Err(e) = seal::unseal_to_dir(&env, &id, &tmp) {
-                eprintln!("  skipped: {e}");
-                let _ = std::fs::remove_dir_all(&tmp);
+            }
+        }
+    }
+    if !saw_any && !quiet {
+        println!("nothing waiting on {addr}");
+    }
+    if total > 0 {
+        println!("\n{total} bundle(s) in inbox/pending -- ctx inbox, then accept or reject");
+    }
+    Ok(())
+}
+
+/// Drain one mailbox. Returns (bundles delivered, anything was waiting).
+fn fetch_mailbox(
+    addr: &str,
+    id: &identity::Identity,
+    box_pub: &str,
+    keep: bool,
+    label: &str,
+) -> Result<(usize, bool), Box<dyn std::error::Error>> {
+    // Prove possession of the signing key registered for this mailbox.
+    // Naming a key is not proof: anyone who has seen a `ctx whoami`
+    // line knows it.
+    let ch = remote::post(
+        addr,
+        "/challenge",
+        &serde_json::json!({ "box_key": box_pub }).to_string(),
+    )?;
+    let nonce = serde_json::from_str::<serde_json::Value>(&ch)
+        .ok()
+        .and_then(|v| v.get("nonce").and_then(|n| n.as_str()).map(String::from))
+        .ok_or("relay did not issue a challenge")?;
+    let sig = id
+        .sign_for_box(box_pub, nonce.as_bytes())
+        .ok_or("no signing key for that mailbox any more")?;
+    let body = serde_json::json!({
+        "box_key": box_pub,
+        "nonce": nonce,
+        "sig": sig,
+        "delete": !keep,
+    })
+    .to_string();
+    let resp = remote::post(addr, "/fetch", &body)?;
+    let v: serde_json::Value = serde_json::from_str(&resp)?;
+    let items = v.get("items").and_then(|i| i.as_array()).cloned().unwrap_or_default();
+    let pending = routes::pending_dir(&identity::home());
+    std::fs::create_dir_all(&pending)?;
+    let mut n = 0;
+    for it in &items {
+        let Some(raw) = it.get("envelope").and_then(|e| e.as_str()) else { continue };
+        let env: seal::Envelope = match serde_json::from_str(raw) {
+            Ok(e) => e,
+            Err(e) => {
+                eprintln!("  skipped an unreadable envelope: {e}");
                 continue;
             }
-            let loaded = bundle::load(&tmp)?;
-            let dest = pending.join(&loaded.manifest.id);
-            if dest.exists() {
-                println!("  already have {} -- left in place", loaded.manifest.id);
-            } else {
-                routes::deliver(&tmp, &dest)?;
-                println!(
-                    "  {}  {}  ({})",
-                    loaded.manifest.id,
-                    loaded.manifest.subject,
-                    loaded.trust.label()
-                );
-                n += 1;
-            }
+        };
+        // Unseal into a temp dir first, read the id from the manifest,
+        // then move it into place: the relay does not get to choose
+        // the directory name an envelope lands in.
+        let tmp = identity::home().join(format!("tmp-pull-{}-{n}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        if let Err(e) = seal::unseal_to_dir(&env, id, &tmp) {
+            eprintln!("  skipped: {e}");
             let _ = std::fs::remove_dir_all(&tmp);
+            continue;
         }
-        if n > 0 {
-            println!("\n{n} bundle(s) in inbox/pending -- ctx inbox, then accept or reject");
+        let loaded = bundle::load(&tmp)?;
+        let dest = pending.join(&loaded.manifest.id);
+        if dest.exists() {
+            println!("  already have {} -- left in place", loaded.manifest.id);
+        } else {
+            routes::deliver(&tmp, &dest)?;
+            println!(
+                "  {}  {}  ({}){}",
+                loaded.manifest.id,
+                loaded.manifest.subject,
+                loaded.trust.label(),
+                label
+            );
+            n += 1;
         }
-    Ok(())
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+    Ok((n, !items.is_empty()))
 }
 
 fn main() -> ExitCode {
@@ -320,6 +393,183 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             let id = identity::Identity::load()?;
             println!("{}\t{}", id.handle, id.full_key());
         }
+        Cmd::Rotate { compromised } => {
+            let at = bundle::now_rfc3339();
+            let (id, notice) = identity::Identity::rotate(compromised, &at)?;
+            let np = identity::home().join("rotation.json");
+            std::fs::write(&np, &notice.json)?;
+            println!("rotated at {at}");
+            println!("  old key : {}", notice.old_key);
+            println!("  new key : {}", notice.new_key);
+            if compromised {
+                // Said first and said plainly. The secrets are gone, which
+                // means anything already sealed to the old key and still
+                // sitting on a relay is now unreadable BY YOU -- the thief
+                // could read it either way, so this is the right trade, but
+                // it is a loss and should not be discovered later.
+                println!("\n  the old secrets are destroyed. Envelopes already sealed to");
+                println!("  that key can no longer be opened here, by you or anyone");
+                println!("  using this machine.");
+                println!("  the notice is NOT countersigned by the old key: a thief holds");
+                println!("  it, so a countersignature from it would prove nothing. Your");
+                println!("  contacts must confirm this change with you directly.");
+            } else {
+                println!("\n  the old secrets are kept so mail already sealed to them can");
+                println!("  still be collected. ctx pull drains both mailboxes.");
+            }
+            println!("\nnotice written to {}", np.display());
+            println!("  send it to each contact; they run: ctx keychange <file>");
+            if remote::relay_addr().is_some() {
+                let addr = remote::relay_addr().unwrap();
+                let body = serde_json::json!({
+                    "sign_key": id.public_b64(), "box_key": id.box_public_b64() })
+                    .to_string();
+                match remote::post(&addr, "/register", &body) {
+                    Ok(_) => println!("\nregistered the new mailbox with {addr}"),
+                    Err(e) => println!("\ncould not register with {addr}: {e}\n  run ctx join {addr} once it is reachable"),
+                }
+            }
+        }
+        Cmd::Keys => {
+            let id = identity::Identity::load()?;
+            println!("current\t{}\t{}", id.handle, id.full_key());
+            for r in id.retired() {
+                println!(
+                    "retired\t{}\t{}.{}\t{}{}",
+                    r.retired_at,
+                    r.sign_pub,
+                    r.box_pub,
+                    r.reason,
+                    if r.can_collect() { "" } else { " (secrets destroyed)" }
+                );
+            }
+        }
+        Cmd::Keychange { file, accept } => {
+            let n: rotate::Notice = serde_json::from_slice(&std::fs::read(&file)?)?;
+            let v = rotate::verify_notice(&n).map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+            let mut c = trust::Contacts::load();
+            let known = c.name_for(&v.old_sign).map(|s| s.to_string());
+            println!("rotation notice");
+            println!("  claims handle : {} (their own text, not identity)", v.claim.handle);
+            println!("  old key       : {}…", v.old_sign.chars().take(16).collect::<String>());
+            println!("  new key       : {}…", v.new_sign.chars().take(16).collect::<String>());
+            println!("  dated         : {}", v.claim.at);
+            println!("  reason        : {}", v.claim.reason);
+            println!("  new key signed: yes");
+            println!(
+                "  old key signed: {}",
+                if v.old_signed { "yes" } else { "NO" }
+            );
+            match &known {
+                Some(name) => println!("  the old key is on your list as: {name}"),
+                None => println!("  the old key is NOT on your list"),
+            }
+            if c.retired_record(&v.old_sign).is_some() && c.knows(&v.new_sign) {
+                println!("\nalready applied; nothing to do");
+                return Ok(ExitCode::SUCCESS);
+            }
+            let Some(name) = known else {
+                return Err("you have never accepted the old key, so this notice \
+                            upgrades nothing. If you trust the new key, confirm it \
+                            with them directly and run: ctx add <name> <newkey>"
+                    .into());
+            };
+            if !v.old_signed {
+                // The whole point of the countersignature. Without it the
+                // notice is a stranger's assertion about your contact, and
+                // accepting it on sight is how you get handed an attacker's
+                // key. Refusing here costs a confirmed-by-voice step; not
+                // refusing costs the contact.
+                return Err(format!(
+                    "NOT APPLIED: this notice is not countersigned by {name}'s current \
+                     key, so nothing here shows that {name} authorised it. Confirm the \
+                     new key with them over a channel that is not this one, then:\n  \
+                     ctx retire {name} {}\n  ctx add {name} {}",
+                    if v.claim.reason == "compromised" { "--compromised" } else { "" },
+                    v.claim.new_key
+                )
+                .into());
+            }
+            if !accept {
+                println!("\nnot applied. The countersignature shows the holder of the old");
+                println!("key authorised this -- which is also true if that key was stolen.");
+                println!("Confirm with {name} directly, then re-run with --accept.");
+                return Ok(ExitCode::SUCCESS);
+            }
+            let compromised = v.claim.reason == "compromised";
+            c.retire(&v.old_sign, &v.claim.at, compromised, Some(v.new_sign.clone()));
+            c.keys.insert(v.new_sign.clone(), name.clone());
+            match &v.new_box {
+                Some(b) => {
+                    c.box_keys.insert(v.new_sign.clone(), b.clone());
+                }
+                None => println!("note: the new key has no encryption half; you cannot seal to it"),
+            }
+            c.save()?;
+            println!("\n{name} moved onto the new key.");
+            println!("  their old bundles stay verifiable, marked as signed with a retired key");
+            println!("  anything NEW signed with the old key is now rejected");
+        }
+        Cmd::Retire { name, compromised, all } => {
+            let mut c = trust::Contacts::load();
+            if all && !compromised {
+                return Err("--all only makes sense with --compromised: it condemns \
+                            keys, and an ordinary retirement condemns nothing"
+                    .into());
+            }
+            // A name with nothing live is still worth condemning: you learn
+            // the machine was owned a week after you already retired the key,
+            // and there has to be a way to act on that without editing JSON.
+            if c.key_for_name(&name).is_none() && all && !c.retired_keys_for(&name).is_empty() {
+                let keys: Vec<String> =
+                    c.retired_keys_for(&name).iter().map(|(k, _)| k.clone()).collect();
+                c.mark_history_compromised(&name, &keys);
+                c.save()?;
+                println!("{name} has no key in service; condemned {} retired key(s)", keys.len());
+                println!("  everything they ever signed now reads as rejected");
+                return Ok(ExitCode::SUCCESS);
+            }
+            let Some(key) = c.key_for_name(&name) else {
+                return Err(format!("no contact named {name}").into());
+            };
+            let earlier: Vec<String> = c
+                .retired_keys_for(&name)
+                .iter()
+                .filter(|(_, r)| !r.compromised)
+                .map(|(k, _)| k.clone())
+                .collect();
+            c.retire(&key, &bundle::now_rfc3339(), compromised, None);
+            if all {
+                c.mark_history_compromised(&name, &earlier);
+            }
+            c.save()?;
+            println!("retired {name}'s key");
+            if compromised {
+                println!("  marked COMPROMISED: every bundle it signed is now rejected,");
+                println!("  old ones included, because a thief chooses the date too");
+            } else {
+                println!("  bundles it signed BEFORE now stay attributable; newer ones are rejected");
+            }
+            // Said out loud rather than left to be discovered. Someone who
+            // runs this believing it covers everything from that person, when
+            // it covers one key, has a false sense of what they just did.
+            if !earlier.is_empty() {
+                if all {
+                    println!(
+                        "  and {} earlier key(s) you held for {name} are condemned too",
+                        earlier.len()
+                    );
+                } else {
+                    println!(
+                        "\n  NOTE: {} earlier key(s) you held for {name} are untouched, so",
+                        earlier.len()
+                    );
+                    println!("  bundles signed with those still read as attributable. A stolen key");
+                    println!("  is not evidence its predecessor was stolen -- but if you think it");
+                    println!("  was, re-run with --compromised --all.");
+                }
+            }
+        }
         Cmd::Add { name, key } => {
             let (sign, boxpub) = identity::split_key(&key);
             if !bundle::b64_decode_ok(&sign) {
@@ -331,6 +581,42 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 }
             }
             let mut c = trust::Contacts::load();
+            // Adding an existing name under a DIFFERENT key used to just
+            // overwrite it, which is key rotation performed by accident and
+            // with no record: every bundle the old key signed turned into
+            // SENDER UNVERIFIABLE, and a stranger's key could take over a
+            // trusted name in one command. `keychange` is the operation that
+            // does this with evidence; `retire` is the one that does it
+            // deliberately without.
+            if let Some(existing) = c.key_for_name(&name) {
+                if existing != sign {
+                    return Err(format!(
+                        "{name} is already on your list under a different key. This would \
+                         replace it and orphan everything that key signed.\n  \
+                         If they rotated: ctx keychange <their notice file> --accept\n  \
+                         If you are doing it by hand: ctx retire {name}, then add them \
+                         again under a name you choose"
+                    )
+                    .into());
+                }
+            }
+            if let Some(r) = c.retired_record(&sign) {
+                if r.compromised {
+                    return Err(format!(
+                        "that key is recorded as COMPROMISED (retired {}). Re-adding it \
+                         undoes that decision; if it really is safe again, edit \
+                         contacts.json deliberately.",
+                        r.retired_at
+                    )
+                    .into());
+                }
+                println!(
+                    "note: you retired this key on {} -- re-adding it puts it back in service",
+                    r.retired_at
+                );
+                let k = sign.clone();
+                c.retired.remove(&k);
+            }
             c.keys.insert(sign.clone(), name.clone());
             match &boxpub {
                 Some(b) => {
@@ -346,7 +632,17 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         Cmd::Seal { dir, to, out } => {
             let c = trust::Contacts::load();
             let Some(sign) = c.key_for_name(&to) else {
-                return Err(format!("no contact named {to}; ctx add {to} <key>").into());
+                return Err(match c.retired_by_name(&to) {
+                    Some((_, r)) => format!(
+                        "{to}'s key was retired on {}{}. Sealing to a retired key would \
+                         send mail only its old holder can open; get their current \
+                         `ctx whoami` token and add it first.",
+                        r.retired_at,
+                        if r.compromised { " as compromised" } else { "" }
+                    ),
+                    None => format!("no contact named {to}; ctx add {to} <key>"),
+                }
+                .into());
             };
             let Some(boxpub) = c.box_keys.get(&sign) else {
                 return Err(format!(
@@ -536,7 +832,13 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             state::LocalState::load().mark_read(&l.manifest.id)?;
             // Non-zero when the content could not be attributed, so a script
             // or agent harness can branch on it instead of parsing prose.
-            if !l.tampered.is_empty() || matches!(l.trust, trust::Trust::Unverified) {
+            // `Revoked` is in here and `Retired` is not. A retired key with
+            // a bundle that predates its retirement is attributable, so a
+            // harness should carry on; a revoked one is not, so it should
+            // stop, exactly as it does for a bad signature.
+            if !l.tampered.is_empty()
+                || matches!(l.trust, trust::Trust::Unverified | trust::Trust::Revoked)
+            {
                 return Ok(ExitCode::from(2));
             }
         }
@@ -692,7 +994,20 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 return Err("not sent. Re-run with --yes once you have read the list above.".into());
             }
             let c = trust::Contacts::load();
-            let sign = c.key_for_name(&to).ok_or(format!("no contact named {to}"))?;
+            let sign = match c.key_for_name(&to) {
+                Some(k) => k,
+                None => {
+                    return Err(match c.retired_by_name(&to) {
+                        Some((_, r)) => format!(
+                            "{to}'s key was retired on {}; add their current key before \
+                             pushing to them",
+                            r.retired_at
+                        ),
+                        None => format!("no contact named {to}"),
+                    }
+                    .into())
+                }
+            };
             let boxpub = c
                 .box_keys
                 .get(&sign)

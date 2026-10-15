@@ -147,7 +147,7 @@ fn state_json() -> String {
                     // Both names, labelled. The page must never show a claimed
                     // handle as though it were an identity.
                     "claimed_name": m.from.handle,
-                    "known_as": contacts.name_for(&m.from.key),
+                    "known_as": contacts.name_any(&m.from.key),
                     "key": m.from.key,
                     "trust": l.trust.label(),
                     "forwarded": m.is_forwarded(),
@@ -244,7 +244,7 @@ fn threads_json() -> String {
                         "forwarded": m.is_forwarded(),
                         "hops": m.chain.len(),
                         "claimed_name": m.from.handle,
-                        "known_as": contacts.name_for(&m.from.key),
+                        "known_as": contacts.name_any(&m.from.key),
                         "prompts": m.prompt_count(),
                         "memories": m.memory_count(),
                         "bytes": m.total_bytes(),

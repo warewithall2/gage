@@ -23,7 +23,7 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
     h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 
-fn now_rfc3339() -> String {
+pub fn now_rfc3339() -> String {
     // Seconds since epoch rendered as a UTC timestamp, without pulling in a
     // date crate for one format string.
     let secs = std::time::SystemTime::now()
@@ -150,10 +150,8 @@ pub fn load(dir: &Path) -> std::io::Result<Loaded> {
     let contacts = Contacts::load();
     let trust = if !sig_ok {
         Trust::Unverified
-    } else if contacts.knows(&manifest.from.key) {
-        Trust::Known
     } else {
-        Trust::Unknown
+        contacts.verdict(&manifest.from.key, &manifest.created)
     };
 
     // A good signature covers the manifest, which covers the digests. Check

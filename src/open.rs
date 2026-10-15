@@ -41,7 +41,11 @@ pub fn render(l: &Loaded, reveal: bool) -> String {
     let m = &l.manifest;
     let n = nonce();
     let contacts = Contacts::load();
-    let local_name = contacts.name_for(&m.from.key);
+    // A retired key still gets the name you gave it. Falling back to "not on
+    // your list" for a key you deliberately rotated away from would report a
+    // colleague's old signature as a stranger's.
+    let local_name = contacts.name_any(&m.from.key);
+    let retired = contacts.retired_record(&m.from.key);
     let mut s = String::new();
 
     s.push_str(&format!("=== BEGIN RECEIVED CONTEXT {n} ===\n"));
@@ -113,6 +117,40 @@ pub fn render(l: &Loaded, reveal: bool) -> String {
         Some(_) => s.push_str("  authored by: the sender (direct, not forwarded)\n"),
         None => s.push_str("  authored by: UNKNOWN -- no provenance chain\n"),
     }
+    if let Some(r) = retired {
+        s.push_str(&format!(
+            "  key status : RETIRED on {}{}\n",
+            r.retired_at,
+            if r.compromised { " as COMPROMISED" } else { "" }
+        ));
+        match &r.replaced_by {
+            Some(nk) => s.push_str(&format!(
+                "  \x20             replaced by key {}…\n",
+                nk.chars().take(12).collect::<String>()
+            )),
+            None => s.push_str("  \x20             with no replacement recorded\n"),
+        }
+        if r.compromised {
+            s.push_str(
+                "  !! You retired this key because it was STOLEN. A valid signature\n\
+                 \x20              under it says nothing about who wrote this -- the thief\n\
+                 \x20              can sign too, and can put any date in the manifest.\n",
+            );
+        } else if matches!(l.trust, Trust::Retired) {
+            s.push_str(
+                "  \x20             This bundle is dated before the retirement, so it is\n\
+                 \x20             attributable -- on the assumption the key was never\n\
+                 \x20             stolen. The date is the sender's own field.\n",
+            );
+        } else {
+            s.push_str(
+                "  !! This bundle is dated AFTER you retired the key, so the key does\n\
+                 \x20              not cover it. Either the sender is still using an old\n\
+                 \x20              key, or someone else has it. Ask them over a channel\n\
+                 \x20              that is not this one.\n",
+            );
+        }
+    }
     s.push_str(&format!("  subject    : {}\n", m.subject));
     s.push_str(&format!("  bundle id  : {}\n", m.id));
     s.push_str(&format!("  created    : {}\n", m.created));
@@ -157,11 +195,15 @@ pub fn render(l: &Loaded, reveal: bool) -> String {
         return s;
     }
 
-    if matches!(l.trust, Trust::Unverified) && !reveal {
+    // `Revoked` withholds for the same reason `Unverified` does. The
+    // signature checks out, which is exactly what makes it dangerous: it
+    // would otherwise render as ordinary mail from a name you know, signed
+    // with a key you have already decided not to accept.
+    if matches!(l.trust, Trust::Unverified | Trust::Revoked) && !reveal {
         s.push_str(
-            "\n  Contents withheld: the signature does not verify, so the sender is\n\
-             \x20 unknown and nothing here is attributable. Re-run with --reveal only\n\
-             \x20 if your user explicitly asks to see it anyway.\n",
+            "\n  Contents withheld: the sender is not attributable under a key you\n\
+             \x20 currently accept, so nothing here can be pinned on anyone. Re-run\n\
+             \x20 with --reveal only if your user explicitly asks to see it anyway.\n",
         );
         s.push_str(&format!("=== END RECEIVED CONTEXT {n} ===\n"));
         return s;

@@ -37,6 +37,7 @@ beside swapped files is caught and the contents are withheld.
     ctx init owen                      # make your keypair
     ctx whoami                         # the line you give to a colleague
     ctx add dana <their-key>           # buddy list; keyed on the key, not the name
+    ctx rotate                         # replace your key without losing your past
 
     ctx send --to dana --subject "backoff refactor" \
              --prompt task.md --decision notes.md \
@@ -48,8 +49,9 @@ beside swapped files is caught and the contents are withheld.
     ctx open    ./handoff              # render for an agent, inside the frame
     ctx forward ./handoff --to group:eng --out ./fwd
 
-`open` exits 0 when the bundle is attributable, and 2 when the signature fails
-or the payload does not match, so a harness can branch without parsing prose.
+`open` exits 0 when the bundle is attributable, and 2 when the signature fails,
+the payload does not match, or the signing key has been taken out of service,
+so a harness can branch without parsing prose.
 
 ## Item kinds, and why they differ
 
@@ -266,6 +268,67 @@ differently from a manual pull would announce bundles you could then not find.
 The watcher suppresses its nothing-to-do line; a line per poll turns a journal
 into noise that hides the one entry that mattered.
 
+## Key rotation
+
+A key gets replaced: a laptop dies, a secret leaks, a contact starts fresh.
+Before this existed `ctx init` simply refused to overwrite, which is the right
+refusal and the wrong ending — the only way out was to delete the key file,
+and that turned every bundle you had ever signed into `SENDER UNVERIFIABLE`.
+Losing your whole history the day you rotate is a bug, and a tool with that
+property teaches people never to rotate.
+
+    ctx rotate                 # new keypair, old one kept on record
+    ctx rotate --compromised   # the old key was stolen
+    ctx keys                   # what is current, what is retired
+
+Rotation produces a **notice**: a statement binding old key, new key, handle
+and time, signed by the new key and countersigned by the old one. The new
+signature says whoever holds this key meant to publish it. The old one says
+the party you already trusted authorised the handover — which is the only part
+you could not have got from a stranger.
+
+It is still not proof. A thief holding the old key produces that
+countersignature just as easily, and this is the hard part of rotation: "use
+this key instead" is the exact sentence an attacker wants to say and the exact
+sentence an honest person needs to say, and the bytes are identical. So a
+notice is **evidence, never an instruction**:
+
+    ctx keychange notice.json            # report what it proves
+    ctx keychange notice.json --accept   # apply it
+
+`keychange` with no `--accept` changes nothing. With `--accept` it still
+refuses a notice the old key did not countersign, which is why a compromise
+rotation omits that signature on purpose: a signature from a stolen key would
+dress up a notice that proves nothing as one that proves something. Then the
+only path is confirming the new key with the person over a channel that is not
+this one.
+
+### The retired key keeps the past and loses the future
+
+A retired key verifies bundles made **before** the retirement and nothing
+after:
+
+* `SENDER KEY RETIRED` — valid signature, bundle predates the retirement. Still
+  attributable, and the thread history stays readable.
+* `SENDER KEY REJECTED` — valid signature under a key that does not cover this
+  bundle. Contents withheld, non-zero exit, same as a bad signature.
+
+If a retired key kept working for new mail, retiring it would buy nothing at
+all. The timestamp that decides this is the sender's own field, which is
+honest about what the rule rests on: that the old key was never stolen. For
+the case where it *was*, `ctx retire <name> --compromised` refuses everything
+that key signed, old bundles included, because a thief chooses the date too.
+That form touches one key and says so; `--compromised --all` condemns every key
+you ever held for that person, for when you learn the compromise predates what
+you knew.
+
+Rotating your own key keeps the old secrets so mail already sealed to it can
+still be collected — `ctx pull` drains the retired mailbox alongside the
+current one, because losing in-flight mail on rotation is another way to teach
+people not to rotate. `--compromised` destroys them instead: the thief can
+read those envelopes either way, and keeping a copy only extends the window in
+which you keep reading mail they are also reading.
+
 ## Groups
 
 `--to` is a list from the start, and `group:<name>` is a valid recipient. In a
@@ -290,7 +353,9 @@ importer.
 
     cargo build --release && cargo test --release && bash tests/attacks.sh
 
-121 checks plus 9 Rust unit tests. Every one is an attack that worked, or nearly worked, during
-development: frame-boundary forgery, payload swapping after signing, a listed
-contact claiming a third party's name, an unverified author name on a forward,
-and a trust label that was a substring of its own opposite.
+188 checks plus 19 Rust unit tests. Every one is an attack that worked, or
+nearly worked, during development: frame-boundary forgery, payload swapping
+after signing, a listed contact claiming a third party's name, an unverified
+author name on a forward, a trust label that was a substring of its own
+opposite, a rotation notice countersigned by the wrong key, and a retired key
+still signing new mail.
