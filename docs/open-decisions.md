@@ -167,3 +167,48 @@ on every point that was open:
 The wording is the part still worth another pair of eyes: it is the only text
 in ctx that tells an agent it may act, and over-reading it is precisely the
 failure the tool exists to prevent. Sent for review rather than closed.
+
+## 7. The authority file has no real boundary
+
+Raised by the codex reviewer, 15 October, reviewing decision 6 the day it was
+built. The grant file is trusted exactly as far as the running agent cannot
+modify it, and the running agent *can* modify it: any process that reads
+`~/.ctx/authority` can write it. codex supplied the sequence -- a payload asks
+the agent to append an `allow` line and reopen the request -- and it is not
+hypothetical, because the grants used for that day's reviews were written by
+an agent rather than typed by a human.
+
+What is done: there is no `ctx allow` subcommand, so an injected agent has to
+be told to hand-write a file, which is conspicuous in a transcript; `open`
+tells the reader never to edit the file or add a grant because a message asked
+it to; and the frame no longer claims the file is out of a sender's reach,
+which it did for one morning.
+
+All three are deterrents. None is an enforcement boundary, and codex said so
+plainly: "If an agent can write the authority file, it can grant itself
+authority... there is no wording-only fix."
+
+**The options, none of them free:**
+
+- **File permissions.** The agent runs as the same user, so this needs a
+  second account or an ACL, and then `ctx open` -- running as the agent --
+  must still read the file. Readable-not-writable by the agent's user is the
+  shape. It makes ctx an install with a setup step, which it has never been.
+- **A separate process the agent cannot write through.** A small daemon owning
+  the grants, answering a socket, running as the human. This is the only
+  option that actually enforces, and it is also the first server in a tool
+  whose README says "no server".
+- **Hardware or an out-of-band prompt.** Ask the human at grant time rather
+  than trusting a file. Correct, and it breaks the unattended case the feature
+  exists for.
+- **Accept the deterrent and say so.** What is shipped. Honest, and it means
+  the strongest claim ctx can make is that self-granting is visible, not that
+  it is impossible.
+
+Which one depends on whether the threat is an agent that has been injected
+*and* has a shell. If it has a shell it can also read the inbox, send bundles
+as this identity, and copy the signing key -- so a boundary around the grant
+file alone may be guarding the smallest door in an open wall. That argument
+cuts both ways and is exactly why it is the owner's call.
+
+**Not built. Needs the owner.**
