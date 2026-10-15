@@ -45,6 +45,30 @@ Three specific defences, each written after the attack worked in testing:
 Payload digests are checked against the signed manifest, so a signed manifest
 beside swapped files is caught and the contents are withheld.
 
+## Keys, said out loud
+
+    $ ctx whoami
+    owen	yomSmC3TalJ5IM+H0yvkhhWVab4ujiAVIQFR4WvdXiM=.KlXt+/5rj4y3FMC7eqau4zF5eZV+x7PjYZUdyUXHDEM=
+
+      this key says : humble pillar · ruddy lobster · marine armour · eastern dovecote
+      shown as      : humble pillar
+
+LocalSend labels a device with a word pair and it is the nicest thing about
+using it — but there the words are a *name* the device picked, so anyone can
+be Yellow Iguana. Here they are derived from the signing key, so nobody
+chooses their own and two machines showing the same words are holding the same
+key. `ctx fingerprint <name>` says a contact's, and `ctx add` prints the words
+for the key it just took, which is the moment you confirm it with them over
+some other channel.
+
+Two lengths, because one cannot do both jobs. A single pair is 16 bits:
+lovely, and useless as a check, since an attacker generates keypairs until
+theirs also renders "humble pillar" — about 65,000 tries. So the pair is a
+**label**, for telling devices apart in a list, and nothing is ever confirmed
+against it. The **fingerprint** is four pairs, 64 bits, and is what a person
+compares. Both come from the same hash in the same order, so the label is
+always a real prefix of the fingerprint rather than a separate lookalike.
+
 ## Authority: the one thing that says you may act
 
 Everything above is about what is *known*. None of it says whether an agent
@@ -597,7 +621,7 @@ in the message. See [Authority](#authority-the-one-thing-that-says-you-may-act).
 
     cargo build --release && cargo test --release && bash tests/attacks.sh
 
-412 checks plus 58 Rust unit tests. Every one is an attack that worked, or
+423 checks plus 63 Rust unit tests. Every one is an attack that worked, or
 nearly worked, during development: frame-boundary forgery, payload swapping
 after signing, a listed contact claiming a third party's name, an unverified
 author name on a forward, a trust label that was a substring of its own

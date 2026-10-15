@@ -7,6 +7,7 @@
 //! the instant-messenger model that does not transfer.
 
 mod authority;
+mod words;
 mod bundle;
 mod collect;
 mod identity;
@@ -67,6 +68,11 @@ enum Cmd {
     },
     /// Add someone's key to your buddy list (the signpub.boxpub token)
     Add { name: String, key: String },
+    /// Say a key out loud: the four word-pairs to confirm when pairing
+    Fingerprint {
+        /// A contact's name, or nothing for your own key
+        name: Option<String>,
+    },
     /// Show what your authority file pre-authorises. Prints only -- there is
     /// deliberately no command that WRITES a grant, because an agent that
     /// can be talked into running a command could be talked into granting
@@ -468,7 +474,23 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         }
         Cmd::Whoami => {
             let id = identity::Identity::load()?;
+            // Line one is unchanged on purpose: it is what scripts cut a key
+            // out of, here and in the test suite.
             println!("{}\t{}", id.handle, id.full_key());
+            // The words go to STDERR, so `whoami | cut -f2` still yields a
+            // key and nothing else. Learned immediately: cut passes a line
+            // with no delimiter through unchanged, so three extra stdout
+            // lines turned every script that reads this command into one that
+            // read a paragraph. Same reason the id note in `open` is on
+            // stderr.
+            eprintln!();
+            eprintln!("  this key says : {}", words::fingerprint(&id.public_b64()));
+            eprintln!("  shown as      : {}", words::label(&id.public_b64()));
+            eprintln!();
+            eprintln!("  Those words come from the key, so nobody picks their own.");
+            eprintln!("  When you pair with another machine, both screens must show");
+            eprintln!("  the same four pairs. The short label is only for telling");
+            eprintln!("  devices apart in a list -- never confirm against it alone.");
         }
         Cmd::Rotate { compromised } => {
             let at = bundle::now_rfc3339();
@@ -521,6 +543,29 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     if r.can_collect() { "" } else { " (secrets destroyed)" }
                 );
             }
+        }
+        Cmd::Fingerprint { name } => {
+            let (who, key) = match &name {
+                None => {
+                    let id = identity::Identity::load()?;
+                    (id.handle.clone(), id.public_b64())
+                }
+                Some(n) => {
+                    let c = trust::Contacts::load();
+                    match c.key_for_name(n) {
+                        Some(k) => (n.clone(), k),
+                        None => match c.retired_by_name(n) {
+                            Some((k, r)) => {
+                                println!("note: {n} is a key you retired on {}", r.retired_at);
+                                (n.clone(), k.to_string())
+                            }
+                            None => return Err(format!("no contact named {n}").into()),
+                        },
+                    }
+                }
+            };
+            println!("{who}\t{}", words::fingerprint(&key));
+            println!("{who}\t{}\t(label only)", words::label(&key));
         }
         Cmd::Authority => {
             let a = authority::Authority::load();
@@ -895,6 +940,18 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 ),
             }
             c.save()?;
+            // Printed AFTER the add, not before, because this is the step
+            // where a person checks they added the key they meant to. An
+            // out-of-band confirmation is the only thing that makes a key
+            // belong to a person, and it is a great deal easier to do when
+            // the thing being compared can be read aloud.
+            let sign_for_words = c
+                .key_for_name(&name)
+                .unwrap_or_else(|| name.clone());
+            println!();
+            println!("  this key says : {}", words::fingerprint(&sign_for_words));
+            println!("  Check that with {name} over a channel that is not this one.");
+            println!("  If their machine says anything else, you have the wrong key.");
         }
         Cmd::Seal { dir, to, out } => {
             let c = trust::Contacts::load();

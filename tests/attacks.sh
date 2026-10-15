@@ -1503,6 +1503,45 @@ wantno "$T/pagehtml" "catch{return;}"
 want "$T/pagehtml" "Could not load your inbox from this server"
 kill $uipid2 2>/dev/null; wait $uipid2 2>/dev/null
 
+echo "a key can be said out loud, and the same key says the same thing everywhere"
+# The pairing step is only worth anything if two machines holding one key
+# render identical words, and if a script reading this command still gets a
+# key. The second half is a regression I caused writing the first: cut passes
+# a line with no delimiter through unchanged, so printing the words on stdout
+# turned `whoami | cut -f2` into a command that returned a paragraph.
+CTX_HOME=$T/a $CTX whoami 2>/dev/null > "$T/who"
+if [ "$(wc -l < "$T/who")" -eq 1 ]; then ok; else bad "whoami stdout is $(wc -l < "$T/who") lines"; fi
+k=$(cut -f2 "$T/who")
+case "$k" in *$'\n'*) bad "whoami | cut -f2 returned more than a key";; *) ok;; esac
+if [ "$k" = "$AK" ]; then ok; else bad "whoami no longer yields alice's key"; fi
+# The words themselves are on stderr, where a human still sees them.
+CTX_HOME=$T/a $CTX whoami 2>"$T/whoerr" >/dev/null
+want "$T/whoerr" "this key says"
+want "$T/whoerr" "never confirm against it alone"
+
+# alice's own fingerprint, and the one bob is shown when he adds her, must be
+# the same string. If they are not, the only out-of-band check in the tool is
+# comparing two different things.
+afp=$(CTX_HOME=$T/a $CTX fingerprint 2>/dev/null | head -1 | cut -f2)
+mkdir -p "$T/fp"
+CTX_HOME=$T/fp $CTX init fred >/dev/null
+CTX_HOME=$T/fp $CTX add alice "$AK" > "$T/fpadd" 2>&1
+if [ -n "$afp" ] && grep -qF -e "$afp" "$T/fpadd"; then ok
+else bad "add showed different words than alice's own fingerprint"; fi
+# Four pairs, and the short label is a real prefix of them rather than a
+# separate lookalike value.
+pairs=$(printf '%s' "$afp" | awk -F' · ' '{print NF}')
+if [ "$pairs" -eq 4 ]; then ok; else bad "a fingerprint is $pairs pairs, wanted 4"; fi
+alab=$(CTX_HOME=$T/a $CTX fingerprint 2>/dev/null | sed -n '2p' | cut -f2)
+case "$afp" in "$alab"*) ok;; *) bad "the label '$alab' is not a prefix of '$afp'";; esac
+# A different key says something different, or the check is decoration.
+bfp=$(CTX_HOME=$T/b $CTX fingerprint 2>/dev/null | head -1 | cut -f2)
+if [ "$afp" != "$bfp" ]; then ok; else bad "two different keys render the same words"; fi
+# And naming someone you have never added is an error, not empty output that
+# a reader could mistake for a match.
+CTX_HOME=$T/a $CTX fingerprint nobody > "$T/fpno" 2>&1; code "fingerprint of a stranger" $? 1
+want "$T/fpno" "no contact named nobody"
+
 echo "a good bundle exits 0"
 CTX_HOME=$T/b $CTX open "$T/b1" >/dev/null 2>&1; code good $? 0
 
