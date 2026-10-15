@@ -17,6 +17,32 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// The witness for a bundle: the signer's key and the exact bytes their
+/// signature covers.
+///
+/// Deliberately not the bundle id. `load` never recomputes the id, so the
+/// signer chooses it, and a witness keyed on it was transferable: take an id
+/// this machine stamped before a retirement, attach a different payload, sign
+/// with the retired key, and inherit the witness. These bytes are the ones the
+/// signature is over, so a different document is a different witness.
+pub fn witness_of(from_key: &str, manifest_bytes: &[u8]) -> String {
+    let mut h = Sha256::new();
+    h.update(from_key.as_bytes());
+    h.update([0x1f]);
+    h.update(manifest_bytes);
+    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Read just enough of a bundle directory to compute its witness, without
+/// verifying anything. Used by the observation pass, which runs BEFORE any
+/// verdict is computed: a bundle has to be recorded as having arrived before
+/// the question "did it arrive before the retirement" can be asked of it.
+pub fn witness_at(dir: &Path) -> Option<String> {
+    let bytes = fs::read(dir.join("manifest.json")).ok()?;
+    let m: Manifest = serde_json::from_slice(&bytes).ok()?;
+    Some(witness_of(&m.from.key, &bytes))
+}
+
 pub fn sha256_hex(bytes: &[u8]) -> String {
     let mut h = Sha256::new();
     h.update(bytes);
@@ -53,11 +79,10 @@ pub struct Loaded {
     pub dir: PathBuf,
     /// Items whose stored bytes do not match their recorded digest.
     pub tampered: Vec<String>,
-    /// Which timestamp decided a retired-key verdict: this machine's record of
-    /// when the bundle turned up, or, for a bundle that has never been in this
-    /// inbox, the sender's own `created` field. Worth saying out loud, because
-    /// only one of the two is trustworthy.
-    pub dated_by_sender: bool,
+    /// True when this machine has no record of the bundle ever arriving. Only
+    /// meaningful for a retired key, where it is the difference between "it
+    /// got here after you retired that key" and "I cannot tell".
+    pub unwitnessed: bool,
 }
 
 /// Build a bundle. `specs` are (kind, source path) pairs.
@@ -153,17 +178,14 @@ pub fn load(dir: &Path) -> std::io::Result<Loaded> {
     let sig_ok = !sig.trim().is_empty()
         && crate::identity::verify(&manifest.from.key, &bytes, &sig);
     let contacts = Contacts::load();
-    // Prefer this machine's own record of when the bundle arrived. `created`
-    // is the signer's field, and for a retired key it was the whole basis of
-    // "this predates the retirement".
+    // This machine's own record of having seen these exact signed bytes.
+    // Nothing the sender wrote enters the verdict.
     let st = crate::state::LocalState::load();
-    let seen = st.first_seen(&manifest.id).map(|s| s.to_string());
-    let dated_by_sender = seen.is_none();
-    let when = seen.unwrap_or_else(|| manifest.created.clone());
+    let witness = st.witnessed(&witness_of(&manifest.from.key, &bytes));
     let trust = if !sig_ok {
         Trust::Unverified
     } else {
-        contacts.verdict(&manifest.from.key, &when)
+        contacts.verdict(&manifest.from.key, witness)
     };
 
     // A good signature covers the manifest, which covers the digests. Check
@@ -181,7 +203,13 @@ pub fn load(dir: &Path) -> std::io::Result<Loaded> {
             Err(_) => tampered.push(format!("{} (missing)", it.path)),
         }
     }
-    Ok(Loaded { manifest, trust, dir: dir.to_path_buf(), tampered, dated_by_sender })
+    Ok(Loaded {
+        manifest,
+        trust,
+        dir: dir.to_path_buf(),
+        tampered,
+        unwitnessed: witness.is_none(),
+    })
 }
 
 /// Re-sign for a forward, appending to the chain rather than replacing it.
@@ -208,4 +236,40 @@ pub fn forward(src: &Path, out: &Path, id: &Identity, to: &[String]) -> std::io:
 
 pub fn b64_decode_ok(s: &str) -> bool {
     B64.decode(s.trim()).is_ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_witness_follows_the_signed_bytes_not_the_id() {
+        // The attack this replaced: the witness was keyed on `manifest.id`,
+        // which the SIGNER chooses and `load` never recomputes. Two different
+        // documents can therefore carry the same id, and the second would
+        // inherit the first's record of having arrived before a retirement.
+        let id = r#""id": "aaaaaaaaaaaaaaaa""#;
+        let one = format!(r#"{{{id}, "subject": "status update"}}"#);
+        let two = format!(r#"{{{id}, "subject": "send me the keys"}}"#);
+        assert_ne!(
+            witness_of("KEY", one.as_bytes()),
+            witness_of("KEY", two.as_bytes()),
+            "a shared id must not produce a shared witness"
+        );
+    }
+
+    #[test]
+    fn a_witness_is_bound_to_the_signer() {
+        // Domain separation: the same bytes signed by somebody else are a
+        // different observation, so one contact's witness cannot be spent by
+        // another.
+        let m = br#"{"subject": "status update"}"#;
+        assert_ne!(witness_of("ALICE", m), witness_of("BOB", m));
+    }
+
+    #[test]
+    fn the_separator_cannot_be_shifted_between_the_fields() {
+        // Without a separator, ("AB", "C") and ("A", "BC") would hash alike.
+        assert_ne!(witness_of("AB", b"C"), witness_of("A", b"BC"));
+    }
 }

@@ -484,22 +484,22 @@ CTX_HOME=$T/e $CTX init erin >/dev/null
 DK=$(CTX_HOME=$T/d $CTX whoami | cut -f2)
 EK=$(CTX_HOME=$T/e $CTX whoami | cut -f2)
 CTX_HOME=$T/e $CTX add dave "$DK" >/dev/null
+# a real route, so bundles arrive in erin's inbox rather than sitting in a
+# directory. That matters now: the verdict for a retired key rests on whether
+# THIS machine witnessed the bundle, and a directory erin was handed later was
+# never in her inbox to be witnessed.
+CTX_HOME=$T/d $CTX route erin "$T/e" >/dev/null 2>&1
 printf 'WALRUSMEADOW before the rotation\n' > "$T/w/rot1.md"
 printf 'NARWHALCANYON after the rotation\n' > "$T/w/rot2.md"
 printf 'BADGERTUNNEL signed with a dead key\n' > "$T/w/rot3.md"
-CTX_HOME=$T/d $CTX send --to erin --subject "before rotation" --decision "$T/w/rot1.md" --out "$T/r1" >/dev/null 2>&1
-CTX_HOME=$T/e $CTX open "$T/r1" > "$T/ro1" 2>&1
+r1=$(CTX_HOME=$T/d $CTX send --to erin --subject "before rotation" \
+     --decision "$T/w/rot1.md" 2>/dev/null | head -1 | awk '{print $2}')
+CTX_HOME=$T/e $CTX open "$T/e/inbox/pending/$r1" > "$T/ro1" 2>&1
 want "$T/ro1" "SENDER VERIFIED"
 # a copy of dave's identity as it is RIGHT NOW. This is both the honest
 # stale-client case and the stolen-key case: the bytes are identical, which is
 # the whole reason rotation needs a dated boundary rather than a list of keys.
 cp -r "$T/d" "$T/d_old"
-# Timestamps have one-second resolution and the retirement boundary is a
-# strict one, so a bundle made in the very same second as the rotation counts
-# as newer. That tie is resolved against the old key on purpose -- see the
-# unit test in trust.rs -- and this sleep keeps the test about rotation rather
-# than about which side of one second it landed on.
-sleep 1
 CTX_HOME=$T/d $CTX rotate > "$T/rot" 2>&1; code rotate $? 0
 want "$T/rot" "rotated at"
 want "$T/rot" "the old secrets are kept"
@@ -513,8 +513,9 @@ echo "a rotation notice is evidence, and applying it is a separate act"
 CTX_HOME=$T/e $CTX keychange "$T/d/rotation.json" > "$T/kc1" 2>&1; code keychange $? 0
 want "$T/kc1" "old key signed: yes"
 want "$T/kc1" "not applied"
-CTX_HOME=$T/d $CTX send --to erin --subject "after rotation" --decision "$T/w/rot2.md" --out "$T/r2" >/dev/null 2>&1
-CTX_HOME=$T/e $CTX open "$T/r2" > "$T/ro2" 2>&1
+r2=$(CTX_HOME=$T/d $CTX send --to erin --subject "after rotation" \
+     --decision "$T/w/rot2.md" 2>/dev/null | head -1 | awk '{print $2}')
+CTX_HOME=$T/e $CTX open "$T/e/inbox/pending/$r2" > "$T/ro2" 2>&1
 # until erin applies it, the new key is a stranger's key. Trusting it on the
 # strength of the notice alone is the attack this gate exists for.
 want "$T/ro2" "SENDER NOT ON YOUR LIST"
@@ -527,19 +528,22 @@ if grep -qF "$EK" "$T/e/contacts.json"; then bad "the clashing key was written a
 echo "once applied, the new key is trusted and the old one still explains the past"
 CTX_HOME=$T/e $CTX keychange "$T/d/rotation.json" --accept > "$T/kc2" 2>&1; code accept $? 0
 want "$T/kc2" "moved onto the new key"
-CTX_HOME=$T/e $CTX open "$T/r2" > "$T/ro3" 2>&1; code newkey $? 0
+CTX_HOME=$T/e $CTX open "$T/e/inbox/pending/$r2" > "$T/ro3" 2>&1; code newkey $? 0
 want "$T/ro3" "SENDER VERIFIED"
 want "$T/ro3" "NARWHALCANYON"
-CTX_HOME=$T/e $CTX open "$T/r1" > "$T/ro4" 2>&1; code oldbundle $? 0
+CTX_HOME=$T/e $CTX open "$T/e/inbox/pending/$r1" > "$T/ro4" 2>&1; code oldbundle $? 0
 want "$T/ro4" "SENDER KEY RETIRED"
+want "$T/ro4" "by this"
 want "$T/ro4" "dave"
 # the point of keeping the retired key at all: history stays readable
 want "$T/ro4" "WALRUSMEADOW"
 wantno "$T/ro4" "SENDER UNVERIFIABLE"
 
 echo "a NEW bundle signed with the retired key is rejected, contents withheld"
-CTX_HOME=$T/d_old $CTX send --to erin --subject "stale key" --decision "$T/w/rot3.md" --out "$T/r3" >/dev/null 2>&1
-CTX_HOME=$T/e $CTX open "$T/r3" > "$T/ro5" 2>&1; code revoked $? 2
+CTX_HOME=$T/d_old $CTX route erin "$T/e" >/dev/null 2>&1
+r3=$(CTX_HOME=$T/d_old $CTX send --to erin --subject "stale key" \
+     --decision "$T/w/rot3.md" 2>/dev/null | head -1 | awk '{print $2}')
+CTX_HOME=$T/e $CTX open "$T/e/inbox/pending/$r3" > "$T/ro5" 2>&1; code revoked $? 2
 want "$T/ro5" "SENDER KEY REJECTED"
 want "$T/ro5" "Contents withheld"
 wantno "$T/ro5" "BADGERTUNNEL"
@@ -576,7 +580,7 @@ CTX_HOME=$T/j $CTX retire ida >/dev/null 2>&1; code retireida $? 0
 # what was already here stays attributable, on jack's record and not ida's word
 CTX_HOME=$T/j $CTX open "$T/j/inbox/pending/$early" > "$T/t1o" 2>&1; code earlyopen $? 0
 want "$T/t1o" "SENDER KEY RETIRED"
-want "$T/t1o" "already in your inbox before you retired"
+want "$T/t1o" "You saw this bundle before you retired the key"
 want "$T/t1o" "HONESTDAISY"
 # and the one that turns up afterwards is rejected, though it is dated earlier
 cp -r "$T/held" "$T/j/inbox/pending/$late"
@@ -602,45 +606,52 @@ want "$T/kc5" "your clock"
 want "$T/kc5" "that is their claim"
 if grep -q '"claimed_at"' "$T/l/contacts.json"; then ok; else bad "the claimed date was not kept as a claim"; fi
 
-echo "a compromise rotation is not countersigned, so it cannot be auto-applied"
+echo "a compromise rotation is countersigned, and says what that does not prove"
+# This reverses an earlier design, after the grok and codex reviewers both
+# argued the signal was inverted. Omitting the countersignature on compromise
+# looked prudent -- a thief could produce it, so it proves nothing about who
+# sent it. But possession is the one bit a stranger cannot fake, and omitting
+# it meant the thief's ordinary `reason: "rotated"` notice was countersigned
+# and therefore the one a receiver would apply, while the honest victim's
+# compromise notice was the one it refused.
 CTX_HOME=$T/d $CTX rotate --compromised > "$T/rotc" 2>&1; code rotatec $? 0
 want "$T/rotc" "the old secrets are destroyed"
-want "$T/rotc" "NOT countersigned"
+want "$T/rotc" "IS countersigned"
+want "$T/rotc" "proves possession, not authorship"
+if grep -q '"sig_old"' "$T/d/rotation.json"; then ok; else bad "the compromise notice has no countersignature"; fi
 CTX_HOME=$T/d $CTX keys > "$T/ks2" 2>&1
 want "$T/ks2" "secrets destroyed"
-CTX_HOME=$T/e $CTX keychange "$T/d/rotation.json" --accept > "$T/kc4" 2>&1; code compromised $? 1
-want "$T/kc4" "NOT APPLIED"
-want "$T/kc4" "not countersigned"
-# and it must not have quietly half-applied
-CTX_HOME=$T/e $CTX open "$T/r2" > "$T/ro6" 2>&1
-want "$T/ro6" "SENDER VERIFIED"
+# the receiver is told exactly what the signature is worth
+CTX_HOME=$T/e $CTX keychange "$T/d/rotation.json" > "$T/kc4" 2>&1; code compromisedreport $? 0
+want "$T/kc4" "reason        : compromised"
+want "$T/kc4" "proves control of the old key"
+want "$T/kc4" "nothing about WHO holds it"
+want "$T/kc4" "not applied"
+# and applying it is still a separate, explicit act that preserves the
+# compromised classification rather than quietly downgrading it
+CTX_HOME=$T/e $CTX keychange "$T/d/rotation.json" --accept > "$T/kc4b" 2>&1
+code compromisedapply $? 0
+want "$T/kc4b" "moved onto the new key"
+if grep -q '"compromised": true' "$T/e/contacts.json"; then ok; else bad "the compromise was not recorded"; fi
+# everything the compromised key signed is now rejected, whenever it arrived
+CTX_HOME=$T/e $CTX open "$T/e/inbox/pending/$r2" > "$T/ro6" 2>&1; code compromisedr2 $? 2
+want "$T/ro6" "SENDER KEY REJECTED"
+wantno "$T/ro6" "NARWHALCANYON"
 
-echo "retiring a contact as compromised rejects even what predates it"
-# --all without --compromised condemns nothing, so it is refused rather than
-# accepted as a no-op that looks like it did something
+echo "condemning a name with no key left in service still works"
+# dave's live key was just retired by the keychange above, so there is nothing
+# in service to retire. Learning later that the whole history was compromised
+# still has to be actionable without editing JSON.
 CTX_HOME=$T/e $CTX retire dave --all > "$T/reta" 2>&1; code retireall $? 1
 want "$T/reta" "only makes sense with --compromised"
-# the narrow form touches ONE key and says so, because believing it covered
-# the whole person when it covered one key is a false sense of safety
-CTX_HOME=$T/e $CTX retire dave --compromised > "$T/retn" 2>&1; code retirenarrow $? 0
-want "$T/retn" "marked COMPROMISED"
-want "$T/retn" "earlier key(s) you held for dave are untouched"
-CTX_HOME=$T/e $CTX open "$T/r1" > "$T/ro7a" 2>&1; code narrowold $? 0
-want "$T/ro7a" "SENDER KEY RETIRED"
 CTX_HOME=$T/e $CTX retire dave --compromised --all > "$T/ret" 2>&1; code retire $? 0
 want "$T/ret" "condemned"
-CTX_HOME=$T/e $CTX open "$T/r2" > "$T/ro7" 2>&1; code compromisedopen $? 2
-want "$T/ro7" "SENDER KEY REJECTED"
-want "$T/ro7" "Contents withheld"
-wantno "$T/ro7" "NARWHALCANYON"
-# the dates in a stolen key's bundles are the thief's to choose, so the old
-# ones go too
-CTX_HOME=$T/e $CTX open "$T/r1" > "$T/ro8" 2>&1; code compromisedold $? 2
+CTX_HOME=$T/e $CTX open "$T/e/inbox/pending/$r1" > "$T/ro8" 2>&1; code compromisedold $? 2
 want "$T/ro8" "SENDER KEY REJECTED"
 wantno "$T/ro8" "WALRUSMEADOW"
 
 echo "sealing to a retired key is refused with the real reason"
-CTX_HOME=$T/e $CTX seal "$T/r1" --to dave --out "$T/dead.ctxb" > "$T/sealret" 2>&1
+CTX_HOME=$T/e $CTX seal "$T/e/inbox/pending/$r1" --to dave --out "$T/dead.ctxb" > "$T/sealret" 2>&1
 code sealretired $? 1
 want "$T/sealret" "was retired"
 if [ -f "$T/dead.ctxb" ]; then bad "sealed to a retired key anyway"; else ok; fi
@@ -678,6 +689,53 @@ CTX_HOME=$T/g $CTX open "$T/g/inbox/accepted/$gid" > "$T/go" 2>&1
 want "$T/go" "PENGUINPARADE"
 want "$T/go" "SENDER VERIFIED"
 kill $rpid2 2>/dev/null; wait $rpid2 2>/dev/null
+
+echo "a bundle this machine never saw arrive is not placed either side"
+# The honest cause is ordinary: mail sealed before a rotation and collected
+# from a relay afterwards cannot have been witnessed in time, and neither can
+# a directory someone hands you on a stick. Calling that a rejection would
+# tell a person their colleague is attacking them, so it is its own verdict.
+mkdir -p "$T"/{m,n}
+CTX_HOME=$T/m $CTX init mia  >/dev/null
+CTX_HOME=$T/n $CTX init nick >/dev/null
+CTX_HOME=$T/n $CTX add mia "$(CTX_HOME=$T/m $CTX whoami | cut -f2)" >/dev/null
+printf 'OTTERBRIDGE handed over on a stick\n' > "$T/w/u1.md"
+CTX_HOME=$T/m $CTX send --to nick --subject "by hand" --decision "$T/w/u1.md" \
+  --out "$T/byhand" >/dev/null 2>&1
+# while the key is live, a directory opens normally -- the witness only
+# matters once the key is retired
+CTX_HOME=$T/n $CTX open "$T/byhand" > "$T/u1o" 2>&1; code livedir $? 0
+want "$T/u1o" "SENDER VERIFIED"
+want "$T/u1o" "OTTERBRIDGE"
+CTX_HOME=$T/n $CTX retire mia >/dev/null 2>&1
+CTX_HOME=$T/n $CTX open "$T/byhand" > "$T/u2o" 2>&1; code unwitnessed $? 2
+want "$T/u2o" "ARRIVAL UNRECORDED"
+want "$T/u2o" "Contents withheld"
+wantno "$T/u2o" "OTTERBRIDGE"
+# it must not be reported as a rejection, which means something else
+wantno "$T/u2o" "SENDER KEY REJECTED"
+want "$T/u2o" "Confirm the content with them"
+# and the escape hatch works, keeping the verdict
+CTX_HOME=$T/n $CTX open "$T/byhand" --reveal > "$T/u3o" 2>&1
+want "$T/u3o" "OTTERBRIDGE"
+want "$T/u3o" "ARRIVAL UNRECORDED"
+
+echo "concurrent writers do not lose a witness"
+# Found by the codex reviewer: every writer loaded the whole state file and
+# wrote it back whole, and the viewer polls every 2.5s while the CLI writes.
+# Two processes could each load the old state and overwrite the other.
+CTX_HOME=$T/b $CTX threads >/dev/null 2>&1
+before=$(python3 -c "
+import json;print(len(json.load(open('$T/b/state.json')).get('witness',{})))" 2>/dev/null || echo 0)
+for i in 1 2 3 4 5 6 7 8; do CTX_HOME=$T/b $CTX threads >/dev/null 2>&1 & done
+for i in 1 2 3 4; do CTX_HOME=$T/b $CTX inbox --all >/dev/null 2>&1 & done
+wait
+after=$(python3 -c "
+import json;print(len(json.load(open('$T/b/state.json')).get('witness',{})))" 2>/dev/null || echo 0)
+if [ "$after" -ge "$before" ] && [ "$after" -gt 0 ]; then ok; else bad "witnesses went backwards under concurrency: $before -> $after"; fi
+# the file must still be valid JSON after all that, not a half-written mess
+if python3 -c "import json;json.load(open('$T/b/state.json'))" 2>/dev/null; then ok; else bad "state.json was corrupted by concurrent writers"; fi
+if ls "$T/b"/state.json.lock >/dev/null 2>&1; then bad "a lock file was left behind"; else ok; fi
 
 echo "a good bundle exits 0"
 CTX_HOME=$T/b $CTX open "$T/b1" >/dev/null 2>&1; code good $? 0

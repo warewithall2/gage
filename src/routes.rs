@@ -41,6 +41,32 @@ impl Routes {
     }
 }
 
+/// Record that everything currently in the inbox has been seen here.
+///
+/// Called at the top of every path that is about to show a verdict, and never
+/// from `bundle::load`: load is also used for temporary pull directories, for
+/// bundles you sent, and for arbitrary paths a person passes on the command
+/// line, none of which is evidence that something arrived in this inbox.
+///
+/// It must run BEFORE the verdict, not after. An earlier version stamped at
+/// the end of the listing, so the first time a bundle was displayed it was
+/// judged without its own witness.
+pub fn observe_inbox() -> std::io::Result<crate::state::LocalState> {
+    let home = crate::identity::home();
+    let mut w = Vec::new();
+    for stage in [pending_dir(&home), accepted_dir(&home)] {
+        let Ok(rd) = std::fs::read_dir(&stage) else { continue };
+        for e in rd.flatten() {
+            if e.path().is_dir() {
+                if let Some(x) = crate::bundle::witness_at(&e.path()) {
+                    w.push(x);
+                }
+            }
+        }
+    }
+    crate::state::LocalState::observe(&w)
+}
+
 pub fn pending_dir(ctx_home: &std::path::Path) -> PathBuf {
     ctx_home.join("inbox/pending")
 }

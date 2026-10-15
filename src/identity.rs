@@ -195,13 +195,24 @@ impl Identity {
             "reason": reason,
         });
         let claim_bytes = serde_json::to_vec(&claim)?;
-        let mut notice = serde_json::json!({
+        // Countersigned ALWAYS, compromise included, and signed here before
+        // the old secrets are dropped below.
+        //
+        // The first version omitted it on compromise, reasoning that a thief
+        // could produce it so it proved nothing. That inverted the signal.
+        // Possession is the one bit a stranger cannot fake: anyone can send a
+        // notice with no countersignature, only the key holder can send one
+        // with it. Worse, the thief's best move was an ordinary
+        // `reason: "rotated"` notice -- countersigned, and therefore the one
+        // the receiver would apply -- while the honest victim's unsigned
+        // compromise notice was the one it refused. The receiver now gets the
+        // signature in both cases, and is told what it does and does not
+        // prove.
+        let notice = serde_json::json!({
             "claim": String::from_utf8_lossy(&claim_bytes),
             "sig_new": B64.encode(new_signing.sign(&claim_bytes).to_bytes()),
+            "sig_old": old.sign_b64(&claim_bytes),
         });
-        if !compromised {
-            notice["sig_old"] = serde_json::Value::String(old.sign_b64(&claim_bytes));
-        }
 
         let mut retired = vec![StoredRetired {
             retired_at: at.to_string(),

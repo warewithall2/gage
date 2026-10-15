@@ -26,28 +26,18 @@ pub fn find_manifest(id: &str) -> Option<manifest::Manifest> {
 /// Every manifest held locally, for thread grouping.
 pub fn all_manifests() -> Vec<manifest::Manifest> {
     let home = identity::home();
+    // Observation first, verdicts second.
+    let _ = routes::observe_inbox();
     let mut out = Vec::new();
-    let mut arrived = Vec::new();
     for stage in [
         routes::accepted_dir(&home),
         routes::pending_dir(&home),
         routes::sent_dir(&home),
     ] {
-        let mine = stage == routes::sent_dir(&home);
         for (_, l) in routes::list(&stage) {
-            if !mine {
-                arrived.push(l.manifest.id.clone());
-            }
             out.push(l.manifest);
         }
     }
-    // Stamp arrivals with this machine's clock. Done on listing rather than on
-    // delivery because local delivery writes into the RECIPIENT's home, where
-    // the sender has no business touching state -- so "first seen" means the
-    // first time this inbox looked, which is a local observation either way
-    // and always after the bundle was really there.
-    let mut st = state::LocalState::load();
-    let _ = st.note_seen(&arrived, &bundle::now_rfc3339());
     // The same bundle can sit in more than one stage; a thread must not count
     // it twice.
     out.sort_by(|a, b| a.id.cmp(&b.id));

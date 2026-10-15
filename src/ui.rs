@@ -310,6 +310,7 @@ fn reply_from_ui(body: &str) -> Result<String, (&'static str, String)> {
 }
 
 fn state_json() -> String {
+    let _ = crate::routes::observe_inbox();
     let me = crate::identity::home();
     let contacts = crate::trust::Contacts::load();
     let routes = crate::routes::Routes::load();
@@ -370,6 +371,7 @@ fn state_json() -> String {
 /// bundle list answered "what arrived"; this answers "what is going on and
 /// does any of it need me".
 fn threads_json() -> String {
+    let _ = crate::routes::observe_inbox();
     let me_id = crate::identity::Identity::load().ok();
     let mine = me_id.as_ref().map(|i| i.public_b64()).unwrap_or_default();
     let st = crate::state::LocalState::load();

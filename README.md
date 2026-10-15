@@ -371,18 +371,38 @@ nothing after:
   bundle. Contents withheld, non-zero exit, same as a bad signature.
 
 If a retired key kept working for new mail, retiring it would buy nothing at
-all. So the question is which clock decides, and the first version got it
-wrong: it read the manifest's `created`, which is a field the **signer**
-writes. A key stolen before an ordinary rotation could sign something new,
-date it before the cutoff, and be read as attributable. The codex reviewer
-found that sequence.
+all. So the question is what decides, and it took three attempts to stop
+answering it with a timestamp.
 
-The verdict now uses **this machine's own record of when the bundle turned
-up**, written on the first listing that sees it and never moved forward
-afterwards. That is the one timestamp in the system a sender does not control.
-A bundle that has never been in this inbox has only the sender's date to be
-judged by, and `ctx open` says so in those words rather than presenting the
-two cases as one.
+The first version read the manifest's `created`, which is a field the
+**signer** writes: a key stolen before an ordinary rotation could sign
+something new, date it before the cutoff, and be read as attributable. The
+second recorded a local arrival time instead, which was right in spirit and
+wrong twice over — the record was keyed on the bundle id, which the signer
+also chooses, so a thief could reuse an id this machine had already stamped
+and inherit its record; and the comparison was lexical over RFC3339, which
+accepted `""`, `"…12:00:00.9Z"` and `"…T01:00:00-14:00"` (really 15:00Z,
+three hours *after* a noon cutoff) as earlier than noon.
+
+What decides now is a **local observation counter**. Every path that is about
+to show a verdict first records what it can see in the inbox, keyed on
+`sha256(sender key ‖ the exact bytes the signature covers)`, against a
+counter that only increases. A retirement takes a cut of that counter.
+A bundle witnessed below the cut was here first; one witnessed above it was
+not. No timestamp enters the decision, so there is nothing in it for a sender
+to aim at, and the boundary case is a real tie rather than an attacker's
+choice.
+
+Three verdicts come out of it, and the third exists because conflating it
+with the second would be a lie:
+
+* `SENDER KEY RETIRED` — you saw this before you retired the key.
+* `SENDER KEY REJECTED` — it reached you afterwards.
+* `ARRIVAL UNRECORDED` — there is no record either way. Contents withheld,
+  like a rejection, but it is not one: the ordinary cause is mail sealed
+  before the rotation and collected from a relay after it, or a directory
+  handed over on a stick. Telling someone that is a rejection would tell them
+  a colleague is attacking them.
 
 For a key that was actually stolen, `ctx retire <name> --compromised` refuses
 everything it signed, old bundles included, consulting no date at all. That
@@ -390,11 +410,29 @@ form touches one key and says so; `--compromised --all` condemns every key you
 ever held for that person, for when you learn the compromise predates what you
 knew.
 
-The same rule applies to the cutoff itself. `keychange --accept` stamps the
-retirement from **your** clock at the moment you accept, and keeps the
-notice's own date as `claimed_at`: a record, never a verdict. Whoever wrote
-the notice chose that date, and adopting it let them put the retirement
-anywhere they liked.
+The same rule applies to the cutoff itself. `keychange --accept` takes the cut
+from **your** counter at the moment you accept, and keeps the notice's own
+date as `claimed_at`: a record, never a verdict. Whoever wrote the notice
+chose that date, and adopting it let them put the retirement anywhere they
+liked.
+
+### The countersignature says less than it looks like
+
+An earlier version omitted the old key's countersignature from a
+`--compromised` notice, reasoning that a thief could produce it so it proved
+nothing. Both reviewers argued that inverted the signal, and they were right.
+Possession is the one bit a stranger cannot fake — anyone can send a notice
+with no countersignature; only the key holder can send one with it. Worse, the
+thief's best move was an ordinary `reason: "rotated"` notice, countersigned
+and therefore the one a receiver would apply, while the honest victim's
+unsigned compromise notice was the one it refused.
+
+Notices are now always countersigned, signed before `--compromised` destroys
+the secrets, and the receiver is told exactly what that buys:
+
+    old key signed: yes -- this proves control of the old key, and
+                    nothing about WHO holds it. If that key was
+                    stolen, the thief can produce this signature too.
 
 Rotating your own key keeps the old secrets so mail already sealed to it can
 still be collected — `ctx pull` drains the retired mailbox alongside the
@@ -427,11 +465,12 @@ importer.
 
     cargo build --release && cargo test --release && bash tests/attacks.sh
 
-246 checks plus 20 Rust unit tests. Every one is an attack that worked, or
+261 checks plus 24 Rust unit tests. Every one is an attack that worked, or
 nearly worked, during development: frame-boundary forgery, payload swapping
 after signing, a listed contact claiming a third party's name, an unverified
 author name on a forward, a trust label that was a substring of its own
 opposite, a rotation notice countersigned by the wrong key, a retired key
 still signing new mail, a cross-site POST to the viewer, a bundle grafted onto
-someone else's thread to collect the reply, and a retired key backdating its
-way past its own retirement.
+someone else's thread to collect the reply, a retired key backdating its way
+past its own retirement, a reused bundle id inheriting another document's
+arrival record, and two processes overwriting each other's state.

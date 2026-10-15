@@ -13,6 +13,10 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
+use std::io;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct LocalState {
@@ -23,16 +27,80 @@ pub struct LocalState {
     /// hand. Absent means "work it out from the messages".
     #[serde(default)]
     pub closed: BTreeMap<String, String>,
-    /// bundle id -> when THIS machine first listed it.
+    /// A monotonic counter, bumped once per observation batch.
     ///
-    /// The one timestamp in this system that a sender does not write. A
-    /// manifest's `created` is the signer's own field, and the retired-key
-    /// rule was deciding "is this bundle older than the retirement" from it:
-    /// a thief holding a key that was retired as an ordinary rotation could
-    /// date a new bundle before the cutoff and be read as attributable. What
-    /// cannot be forged is when the bundle turned up here.
+    /// Ordering by COUNT rather than by clock, because every timestamp-based
+    /// version of this was wrong in a different way. `created` is the signer's
+    /// field. A local wall clock has one-second resolution here, so a witness
+    /// written in the same second as a retirement fails a strict `<`. And a
+    /// string compare over RFC3339 accepted `""`, `"...00.9Z"` and
+    /// `"...T01:00:00-14:00"` as earlier than noon. A counter has none of
+    /// those properties: it only ever increases, and "before the retirement"
+    /// is a total order with no parsing in it.
     #[serde(default)]
-    pub seen: BTreeMap<String, String>,
+    pub seq: u64,
+    /// witness -> the `seq` at which this machine first observed it.
+    ///
+    /// The witness is `sha256(from.key || manifest bytes)`, NOT the bundle id.
+    /// `bundle::load` never recomputes the id, so the signer picks it: keying
+    /// on the id let a holder of a retired key reuse an id this machine had
+    /// already stamped, attach a different payload, and inherit the witness.
+    /// The manifest bytes are what the signature covers, and the key is in
+    /// there for domain separation.
+    #[serde(default)]
+    pub witness: BTreeMap<String, u64>,
+}
+
+/// An advisory lock around `state.json`.
+///
+/// Both halves of read-modify-write used to happen on a value loaded earlier,
+/// and the whole file was written back whole. The viewer polls every 2.5
+/// seconds while the CLI writes, so two processes could each load the old
+/// state and overwrite the other's changes -- silently losing a witness,
+/// which is the one record that must not be lost. Mutations now run under
+/// this lock, against a fresh read, and land by rename.
+struct Lock(PathBuf);
+
+impl Drop for Lock {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
+}
+
+fn take_lock(target: &Path) -> io::Result<Lock> {
+    let lp = target.with_extension("json.lock");
+    if let Some(d) = lp.parent() {
+        fs::create_dir_all(d)?;
+    }
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        match fs::OpenOptions::new().write(true).create_new(true).open(&lp) {
+            Ok(_) => return Ok(Lock(lp)),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+                // A crash between create and remove would otherwise wedge
+                // every later run, so a lock nobody has touched for a while
+                // is treated as abandoned rather than honoured forever.
+                let stale = fs::metadata(&lp)
+                    .and_then(|m| m.modified())
+                    .ok()
+                    .and_then(|t| t.elapsed().ok())
+                    .map(|d| d > Duration::from_secs(30))
+                    .unwrap_or(false);
+                if stale {
+                    let _ = fs::remove_file(&lp);
+                    continue;
+                }
+                if Instant::now() > deadline {
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        format!("{} stayed locked; another ctx process may be stuck", lp.display()),
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            Err(e) => return Err(e),
+        }
+    }
 }
 
 impl LocalState {
@@ -47,12 +115,25 @@ impl LocalState {
             .unwrap_or_default()
     }
 
-    pub fn save(&self) -> std::io::Result<()> {
+    /// Apply a change under the lock, against what is on disk right now.
+    ///
+    /// The closure returns whether anything changed, so a no-op does not
+    /// rewrite the file. Callers hold a `LocalState` for reading and come
+    /// through here to write, which is why there is no public `save`: a
+    /// whole-file save from a stale value is exactly the lost-update bug.
+    pub fn mutate<F>(f: F) -> std::io::Result<Self>
+    where
+        F: FnOnce(&mut Self) -> bool,
+    {
         let p = Self::path();
-        if let Some(d) = p.parent() {
-            std::fs::create_dir_all(d)?;
+        let _guard = take_lock(&p)?;
+        let mut cur = Self::load();
+        if f(&mut cur) {
+            let tmp = p.with_extension("json.tmp");
+            std::fs::write(&tmp, serde_json::to_vec_pretty(&cur)?)?;
+            std::fs::rename(&tmp, &p)?;
         }
-        std::fs::write(p, serde_json::to_vec_pretty(self)?)
+        Ok(cur)
     }
 
     pub fn is_read(&self, id: &str) -> bool {
@@ -60,36 +141,57 @@ impl LocalState {
     }
 
     pub fn mark_read(&mut self, id: &str) -> std::io::Result<()> {
-        if self.read.insert(id.to_string()) {
-            self.save()?;
-        }
+        let owned = id.to_string();
+        Self::mutate(move |s| s.read.insert(owned))?;
+        self.read.insert(id.to_string());
         Ok(())
     }
 
-    pub fn first_seen(&self, id: &str) -> Option<&str> {
-        self.seen.get(id).map(|s| s.as_str())
+    /// The sequence at which a bundle was first observed here, if ever.
+    pub fn witnessed(&self, witness: &str) -> Option<u64> {
+        self.witness.get(witness).copied()
     }
 
-    /// Record arrival times for ids not already known. First sight wins: a
-    /// later re-list must not move the date forward, or the record would
-    /// track the last time you looked rather than when the thing arrived.
-    pub fn note_seen(&mut self, ids: &[String], now: &str) -> std::io::Result<()> {
-        let mut added = false;
-        for id in ids {
-            if !self.seen.contains_key(id) {
-                self.seen.insert(id.clone(), now.to_string());
-                added = true;
+    /// Record observations and return the state as it now stands on disk.
+    ///
+    /// One batch, one `seq`. Bundles observed in the same batch are not
+    /// ordered against each other, which is correct: nothing distinguishes
+    /// them, and inventing an order would be a claim this machine cannot
+    /// support.
+    pub fn observe(witnesses: &[String]) -> std::io::Result<Self> {
+        Self::mutate(|s| {
+            let next = s.seq + 1;
+            let mut added = false;
+            for w in witnesses {
+                if !s.witness.contains_key(w) {
+                    s.witness.insert(w.clone(), next);
+                    added = true;
+                }
             }
-        }
-        if added {
-            self.save()?;
-        }
-        Ok(())
+            if added {
+                s.seq = next;
+            }
+            added
+        })
+    }
+
+    /// Bump the counter and return the value that separates "before" from
+    /// "after". Used when a retirement is recorded: everything already
+    /// witnessed is below this, everything observed later is above it.
+    pub fn cut(&mut self) -> std::io::Result<u64> {
+        let st = Self::mutate(|s| {
+            s.seq += 1;
+            true
+        })?;
+        self.seq = st.seq;
+        Ok(st.seq)
     }
 
     pub fn close(&mut self, thread: &str) -> std::io::Result<()> {
+        let owned = thread.to_string();
+        Self::mutate(move |s| s.closed.insert(owned, "closed".into()).is_none())?;
         self.closed.insert(thread.to_string(), "closed".into());
-        self.save()
+        Ok(())
     }
 }
 

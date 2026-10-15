@@ -234,6 +234,7 @@ const V=[['SENDER VERIFIED','Verified','v-ok'],
          ['SENDER NOT','Not on your list','v-warn'],
          ['SENDER KEY RETIRED','Retired key','v-warn'],
          ['SENDER KEY REJECTED','Key rejected','v-bad'],
+         ['ARRIVAL UNRECORDED','Arrival unrecorded','v-bad'],
          ['SENDER UNVERIFIABLE','Unverifiable','v-bad']];
 const vRow=t=>V.find(r=>(t||'').startsWith(r[0]));
 const vClass=t=>{const r=vRow(t);return r?r[2]:'v-bad';};

@@ -345,6 +345,13 @@ fn fetch_mailbox(
         }
         let _ = std::fs::remove_dir_all(&tmp);
     }
+    // Witness the arrivals now, in the same run that collected them. Waiting
+    // for the next listing would leave a window in which a retirement could
+    // be recorded first, turning mail that really did arrive earlier into
+    // ARRIVAL UNRECORDED.
+    if n > 0 {
+        let _ = routes::observe_inbox();
+    }
     Ok((n, !items.is_empty()))
 }
 
@@ -397,9 +404,10 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 println!("\n  the old secrets are destroyed. Envelopes already sealed to");
                 println!("  that key can no longer be opened here, by you or anyone");
                 println!("  using this machine.");
-                println!("  the notice is NOT countersigned by the old key: a thief holds");
-                println!("  it, so a countersignature from it would prove nothing. Your");
-                println!("  contacts must confirm this change with you directly.");
+                println!("  the notice IS countersigned by the old key, signed before those");
+                println!("  secrets were destroyed. That proves possession, not authorship, so");
+                println!("  your contacts still have to confirm this change with you directly --");
+                println!("  but a notice with no countersignature at all proves even less.");
             } else {
                 println!("\n  the old secrets are kept so mail already sealed to them can");
                 println!("  still be collected. ctx pull drains both mailboxes.");
@@ -443,10 +451,16 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             println!("  dated         : {}", v.claim.at);
             println!("  reason        : {}", v.claim.reason);
             println!("  new key signed: yes");
-            println!(
-                "  old key signed: {}",
-                if v.old_signed { "yes" } else { "NO" }
-            );
+            // Never presented as reassurance. A valid countersignature proves
+            // control of the old key and nothing about who is holding it.
+            if v.old_signed {
+                println!("  old key signed: yes -- this proves control of the old key, and");
+                println!("                  nothing about WHO holds it. If that key was");
+                println!("                  stolen, the thief can produce this signature too.");
+            } else {
+                println!("  old key signed: NO -- nothing here connects this notice to the");
+                println!("                  party you already trusted.");
+            }
             match &known {
                 Some(name) => println!("  the old key is on your list as: {name}"),
                 None => println!("  the old key is NOT on your list"),
@@ -491,7 +505,12 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             // history stops being attributable. Their date is kept as what it
             // is -- a claim.
             let now = bundle::now_rfc3339();
-            c.retire(&v.old_sign, &now, compromised, Some(v.new_sign.clone()));
+            // Everything already in the inbox is witnessed, and the cut is
+            // taken after that, so honest mail already here stays
+            // attributable while anything arriving later does not.
+            let _ = routes::observe_inbox();
+            let seq = state::LocalState::load().cut()?;
+            c.retire(&v.old_sign, &now, seq, compromised, Some(v.new_sign.clone()));
             if let Some(r) = c.retired.get_mut(&v.old_sign) {
                 r.claimed_at = Some(v.claim.at.clone());
             }
@@ -537,7 +556,9 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 .filter(|(_, r)| !r.compromised)
                 .map(|(k, _)| k.clone())
                 .collect();
-            c.retire(&key, &bundle::now_rfc3339(), compromised, None);
+            let _ = routes::observe_inbox();
+            let seq = state::LocalState::load().cut()?;
+            c.retire(&key, &bundle::now_rfc3339(), seq, compromised, None);
             if all {
                 c.mark_history_compromised(&name, &earlier);
             }
@@ -748,6 +769,11 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             }
         }
         Cmd::Open { dir, reveal } => {
+            // A bundle you only ever `ctx open` would otherwise never be
+            // witnessed, and would read as ARRIVAL UNRECORDED after a
+            // rotation even though it was sitting in your inbox the whole
+            // time.
+            let _ = routes::observe_inbox();
             let l = bundle::load(&dir)?;
             print!("{}", open::render(&l, reveal));
             // Read state is set by rendering, not by listing: having seen a
@@ -760,7 +786,10 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             // harness should carry on; a revoked one is not, so it should
             // stop, exactly as it does for a bad signature.
             if !l.tampered.is_empty()
-                || matches!(l.trust, trust::Trust::Unverified | trust::Trust::Revoked)
+                || matches!(
+                    l.trust,
+                    trust::Trust::Unverified | trust::Trust::Revoked | trust::Trust::Unwitnessed
+                )
             {
                 return Ok(ExitCode::from(2));
             }
@@ -772,6 +801,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             println!("{handle} -> {}", home.display());
         }
         Cmd::Inbox { json, all, unread } => {
+            let _ = routes::observe_inbox();
             let me = identity::home();
             let pending = routes::list(&routes::pending_dir(&me));
             let accepted = if all { routes::list(&routes::accepted_dir(&me)) } else { vec![] };

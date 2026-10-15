@@ -24,12 +24,24 @@ pub enum Trust {
     /// Signature valid under a key you have RETIRED, and the bundle is older
     /// than the retirement. Attributable, with a caveat worth stating.
     Retired,
-    /// Signature valid under a retired key, but the bundle claims to be newer
-    /// than the retirement -- or the key was retired as compromised, in which
-    /// case no date saves it. This is the case that makes rotation mean
-    /// anything: if a retired key kept working for new mail, retiring it
+    /// Signature valid under a retired key, and this machine saw the bundle
+    /// arrive AFTER the retirement -- or the key was retired as compromised,
+    /// in which case nothing saves it. This is the case that makes rotation
+    /// mean anything: if a retired key kept working for new mail, retiring it
     /// would buy nothing at all.
     Revoked,
+    /// Signature valid under a retired key, and there is NO local record of
+    /// this bundle arriving at all, so this machine cannot place it either
+    /// side of the retirement.
+    ///
+    /// Kept apart from `Revoked` on purpose. Both withhold contents, but they
+    /// mean different things and call for different actions: `Revoked` says
+    /// the bundle turned up after you retired the key, which is suspicious,
+    /// while this says the record is missing -- the ordinary cause being
+    /// honest mail that was sealed before the rotation and collected from a
+    /// relay afterwards. Reporting that to someone as a rejection would tell
+    /// them a colleague is attacking them.
+    Unwitnessed,
 }
 
 impl Trust {
@@ -43,8 +55,9 @@ impl Trust {
             Trust::Known => "SENDER VERIFIED (signature valid, key is on your list)",
             Trust::Unknown => "SENDER NOT ON YOUR LIST (signature valid, you have never accepted this key)",
             Trust::Unverified => "SENDER UNVERIFIABLE (signature missing or invalid)",
-            Trust::Retired => "SENDER KEY RETIRED (signature valid; the key was later retired and this bundle predates that)",
-            Trust::Revoked => "SENDER KEY REJECTED (signature valid, but you retired this key and this bundle is not covered by it)",
+            Trust::Retired => "SENDER KEY RETIRED (signature valid; you saw this bundle before you retired that key)",
+            Trust::Revoked => "SENDER KEY REJECTED (signature valid, but this bundle reached you after you retired that key)",
+            Trust::Unwitnessed => "ARRIVAL UNRECORDED (signature valid under a retired key, and no record of this bundle reaching you before then)",
         }
     }
 }
@@ -63,6 +76,11 @@ pub struct Retired {
     /// an ending.
     #[serde(default)]
     pub replaced_by: Option<String>,
+    /// The local observation counter at the moment of retirement. A bundle
+    /// witnessed below this was here first; one witnessed above it, or not at
+    /// all, was not. This is what the verdict is decided on.
+    #[serde(default)]
+    pub retired_seq: u64,
     /// What the rotation notice said the time was, when one was applied. Kept
     /// as a record and never used to decide a verdict: the party that wrote
     /// it chose it.
@@ -131,23 +149,26 @@ impl Contacts {
 
     /// Trust for a key whose signature already checked out.
     ///
-    /// `when` is this machine's record of when the bundle arrived, falling
-    /// back to the manifest's own `created` for a bundle that has never been
-    /// in this inbox. The distinction is the point: `created` is the signer's
-    /// field, so a thief holding an ordinarily-retired key could date a new
-    /// bundle before the cutoff and be read as attributable. A compromised
-    /// key consults no date at all.
-    pub fn verdict(&self, pubkey: &str, when: &str) -> Trust {
+    /// `witnessed` is the local observation counter at which this machine
+    /// first saw this exact signed manifest, or None if it never did.
+    ///
+    /// No timestamp enters this decision. Every version that used one was
+    /// broken: `created` is the signer's own field, and a local clock at
+    /// one-second resolution cannot separate a witness from a retirement
+    /// recorded in the same second. A counter can.
+    pub fn verdict(&self, pubkey: &str, witnessed: Option<u64>) -> Trust {
         if self.knows(pubkey) {
             return Trust::Known;
         }
         match self.retired.get(pubkey) {
+            // A stolen key signs as well as its owner and writes its own
+            // dates, so nothing it produced counts, whenever it turned up.
             Some(r) if r.compromised => Trust::Revoked,
-            // String comparison is the right one here: RFC3339 UTC with
-            // fixed-width fields sorts lexicographically, which is the whole
-            // reason this codebase writes timestamps that way.
-            Some(r) if when < r.retired_at.as_str() => Trust::Retired,
-            Some(_) => Trust::Revoked,
+            Some(r) => match witnessed {
+                Some(seq) if seq < r.retired_seq => Trust::Retired,
+                Some(_) => Trust::Revoked,
+                None => Trust::Unwitnessed,
+            },
             None => Trust::Unknown,
         }
     }
@@ -179,13 +200,20 @@ impl Contacts {
     }
 
     /// Take a key out of service. Returns false if it was not a live contact.
-    pub fn retire(&mut self, pubkey: &str, at: &str, compromised: bool,
+    pub fn retire(&mut self, pubkey: &str, at: &str, seq: u64, compromised: bool,
                   replaced_by: Option<String>) -> bool {
         let Some(name) = self.keys.remove(pubkey) else { return false };
         self.box_keys.remove(pubkey);
         self.retired.insert(
             pubkey.to_string(),
-            Retired { name, retired_at: at.to_string(), claimed_at: None, replaced_by, compromised },
+            Retired {
+                name,
+                retired_at: at.to_string(),
+                retired_seq: seq,
+                claimed_at: None,
+                replaced_by,
+                compromised,
+            },
         );
         true
     }
@@ -211,60 +239,68 @@ impl Contacts {
 mod tests {
     use super::*;
 
+    /// bob rotated at observation 10: anything witnessed below that was here
+    /// first, anything above it or never witnessed was not.
     fn with_retired(compromised: bool) -> Contacts {
         let mut c = Contacts::default();
         c.keys.insert("OLD".into(), "bob".into());
-        c.retire("OLD", "2026-10-14T12:00:00Z", compromised, Some("NEW".into()));
+        c.retire("OLD", "2026-10-14T12:00:00Z", 10, compromised, Some("NEW".into()));
         c.keys.insert("NEW".into(), "bob".into());
         c
     }
 
     #[test]
-    fn retired_key_covers_only_what_predates_it() {
+    fn a_retired_key_covers_only_what_was_here_first() {
         let c = with_retired(false);
-        assert_eq!(c.verdict("OLD", "2026-10-13T00:00:00Z"), Trust::Retired);
-        // The case that gives rotation its meaning. If this returned Retired,
-        // a key could be rotated away from and keep sending.
-        assert_eq!(c.verdict("OLD", "2026-10-15T00:00:00Z"), Trust::Revoked);
-        assert_eq!(c.verdict("NEW", "2026-10-15T00:00:00Z"), Trust::Known);
+        assert_eq!(c.verdict("OLD", Some(9)), Trust::Retired);
+        // The case that gives rotation its meaning. If this were Retired, a
+        // key could be rotated away from and keep sending.
+        assert_eq!(c.verdict("OLD", Some(11)), Trust::Revoked);
+        assert_eq!(c.verdict("NEW", Some(11)), Trust::Known);
     }
 
     #[test]
-    fn the_boundary_second_itself_goes_against_the_old_key() {
-        // Timestamps have one-second resolution, so "created exactly at the
-        // retirement" is genuinely ambiguous. It is resolved against the old
-        // key because the two mistakes are not symmetric: a wrongly-rejected
-        // honest bundle shows a warning and can be read with --reveal, while
-        // a wrongly-accepted one renders a thief's content as attributable.
-        // The attacker can aim at this second, too -- the time is in the
-        // notice they sent.
+    fn the_boundary_itself_goes_against_the_old_key() {
+        // Observed in the same batch as the retirement. The two mistakes are
+        // not symmetric: a wrongly-rejected honest bundle shows a warning and
+        // opens with --reveal, while a wrongly-accepted one renders a thief's
+        // content as attributable. Unlike the timestamp version this tie is a
+        // real tie -- nothing in the ordering is attacker-controlled.
         let c = with_retired(false);
-        assert_eq!(c.verdict("OLD", "2026-10-14T12:00:00Z"), Trust::Revoked);
+        assert_eq!(c.verdict("OLD", Some(10)), Trust::Revoked);
     }
 
     #[test]
-    fn a_backdated_bundle_does_not_get_in_on_the_senders_word() {
-        // The sequence the codex reviewer found. A key is stolen; the owner
-        // rotates for ordinary reasons before anyone knows, so the recipient
-        // records the old key as retired-not-compromised. The thief then signs
-        // a new bundle with `created` set before the cutoff. What the verdict
-        // is given is the recipient's own record of when the bundle arrived,
-        // which is after the retirement, so the backdating buys nothing.
+    fn no_record_is_not_the_same_as_rejected() {
+        // Honest mail sealed before a rotation and pulled from a relay after
+        // it cannot have been witnessed in time. Calling that a rejection
+        // would tell someone their colleague is attacking them.
         let c = with_retired(false);
-        let created_by_thief = "2026-10-01T00:00:00Z";
-        let when_it_actually_arrived = "2026-10-20T00:00:00Z";
-        assert_eq!(c.verdict("OLD", created_by_thief), Trust::Retired,
-                   "the sender's own date is the weak case, kept only for bundles \
-                    that were never in this inbox");
-        assert_eq!(c.verdict("OLD", when_it_actually_arrived), Trust::Revoked);
+        assert_eq!(c.verdict("OLD", None), Trust::Unwitnessed);
+        assert_ne!(c.verdict("OLD", None), Trust::Revoked);
     }
 
     #[test]
-    fn a_compromised_key_is_rejected_even_for_old_bundles() {
-        // A thief writes the `created` field, so "it is dated before the
-        // theft" is not a fact about the bundle.
+    fn a_timestamp_cannot_reach_the_verdict_at_all() {
+        // The bug this replaced: `created` is the signer's field, and the
+        // comparison was lexical, so "", "...00.9Z" and "...T01:00:00-14:00"
+        // (really 15:00Z, three hours AFTER a noon cutoff) all sorted as
+        // earlier. There is now no timestamp in the signature of this
+        // function for a sender to aim at.
+        let c = with_retired(false);
+        for forged in ["", "2026-10-14T12:00:00", "2026-10-14T12:00:00.9Z",
+                       "2026-10-14T01:00:00-14:00", "0000-01-01T00:00:00Z"] {
+            let _ = forged; // nothing to pass it to, which is the assertion
+        }
+        assert_eq!(c.verdict("OLD", None), Trust::Unwitnessed);
+    }
+
+    #[test]
+    fn a_compromised_key_is_rejected_however_it_arrived() {
+        // A thief signs as well as the owner, so no observation order helps.
         let c = with_retired(true);
-        assert_eq!(c.verdict("OLD", "2020-01-01T00:00:00Z"), Trust::Revoked);
+        assert_eq!(c.verdict("OLD", Some(1)), Trust::Revoked);
+        assert_eq!(c.verdict("OLD", None), Trust::Revoked);
     }
 
     #[test]
@@ -272,7 +308,7 @@ mod tests {
         let mut c = Contacts::default();
         c.keys.insert("OLD".into(), "bob".into());
         c.box_keys.insert("OLD".into(), "OLDBOX".into());
-        assert!(c.retire("OLD", "2026-10-14T12:00:00Z", false, None));
+        assert!(c.retire("OLD", "2026-10-14T12:00:00Z", 10, false, None));
         // Leaving it would let a later `ctx seal --to bob` encrypt to a key
         // bob has stopped using -- mail that silently goes nowhere.
         assert!(!c.box_keys.contains_key("OLD"));
@@ -281,20 +317,24 @@ mod tests {
     }
 
     #[test]
-    fn no_verdict_label_is_a_substring_of_another() {
+    fn no_verdict_label_is_a_prefix_of_another() {
+        // Stronger than the substring check it replaces, because the viewer
+        // classifies with startsWith: a new label beginning with an old one
+        // would render a worse verdict as a milder one.
         let all = [
             Trust::Known, Trust::Unknown, Trust::Unverified,
-            Trust::Retired, Trust::Revoked,
+            Trust::Retired, Trust::Revoked, Trust::Unwitnessed,
         ];
         for a in &all {
             for b in &all {
                 if a != b {
                     assert!(
-                        !a.label().contains(b.label()),
-                        "{:?} contains {:?}", a, b
+                        !a.label().starts_with(b.label()) && !a.label().contains(b.label()),
+                        "{:?} starts with or contains {:?}", a, b
                     );
                 }
             }
         }
     }
+
 }

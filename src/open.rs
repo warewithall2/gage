@@ -137,24 +137,25 @@ pub fn render(l: &Loaded, reveal: bool) -> String {
                  \x20              can sign too, and can put any date in the manifest.\n",
             );
         } else if matches!(l.trust, Trust::Retired) {
-            if l.dated_by_sender {
-                // The weaker of the two cases, and it says so. A bundle that
-                // has never been in this inbox has only the signer's own
-                // timestamp to be judged by.
-                s.push_str(
-                    "  \x20             It predates the retirement according to the SENDER'S\n\
-                     \x20             OWN timestamp -- this bundle has never been in your\n\
-                     \x20             inbox, so there is no independent record of when it\n\
-                     \x20             arrived. Anyone holding that key could have written\n\
-                     \x20             that date.\n",
-                );
-            } else {
-                s.push_str(
-                    "  \x20             It was already in your inbox before you retired the\n\
-                     \x20             key, by your own record rather than the sender's\n\
-                     \x20             timestamp, so it is attributable.\n",
-                );
-            }
+            s.push_str(
+                "  \x20             You saw this bundle before you retired the key, by this\n\
+                 \x20             machine's own record and not by any date the sender\n\
+                 \x20             wrote, so it is attributable.\n",
+            );
+        } else if matches!(l.trust, Trust::Unwitnessed) {
+            // The honest cause is ordinary: mail sealed before the rotation
+            // and collected from a relay afterwards cannot have been
+            // witnessed here in time. Saying "rejected" to that would accuse
+            // a colleague.
+            s.push_str(
+                "  !! There is no record of this bundle reaching you before you retired\n\
+                 \x20              the key, so it cannot be placed either side of the\n\
+                 \x20              retirement. Contents withheld. The ordinary cause is mail\n\
+                 \x20              that was sealed before the rotation and collected after\n\
+                 \x20              it; the other cause is someone using the old key now.\n\
+                 \x20              Confirm the content with them over a channel that is not\n\
+                 \x20              this one, then --reveal if you want to read it anyway.\n",
+            );
         } else {
             s.push_str(
                 "  !! This bundle turned up AFTER you retired the key, so the key does\n\
@@ -213,7 +214,7 @@ pub fn render(l: &Loaded, reveal: bool) -> String {
     // signature checks out, which is exactly what makes it dangerous: it
     // would otherwise render as ordinary mail from a name you know, signed
     // with a key you have already decided not to accept.
-    if matches!(l.trust, Trust::Unverified | Trust::Revoked) && !reveal {
+    if matches!(l.trust, Trust::Unverified | Trust::Revoked | Trust::Unwitnessed) && !reveal {
         s.push_str(
             "\n  Contents withheld: the sender is not attributable under a key you\n\
              \x20 currently accept, so nothing here can be pinned on anyone. Re-run\n\
