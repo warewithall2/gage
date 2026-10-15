@@ -120,6 +120,27 @@ impl MsgType {
         }
     }
 
+    /// The ONE thing a grant for this kind permits, written as acts.
+    ///
+    /// Exists because the first version of the `authorised :` block said
+    /// "you may act on what this message asks, within what it asks", which
+    /// hands the scope to the payload: both reviewers independently said so,
+    /// and "edit the tree", "commit" and "run this" were all available
+    /// readings. A grant is only as safe as the boundary printed beside it,
+    /// so the boundary lives here, in the type, and not in the message.
+    pub fn granted_scope(&self) -> Option<&'static str> {
+        match self {
+            MsgType::Question => Some("answer it, in a reply"),
+            MsgType::ReviewRequest => {
+                Some("read what this bundle encloses and report findings on it")
+            }
+            // Nothing else is a request, so nothing else has a scope. Kept
+            // exhaustive rather than a wildcard: a new request kind must come
+            // here and say what it permits, instead of inheriting a grant.
+            MsgType::Share | MsgType::Answer | MsgType::Ack => None,
+        }
+    }
+
     /// Does receiving this leave a ball in your court?
     pub fn expects_reply(&self) -> bool {
         matches!(self, MsgType::Question | MsgType::ReviewRequest)

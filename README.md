@@ -57,15 +57,24 @@ for want of authority.
 So authority is computed by the receiver from its own list, exactly as trust
 is. `~/.ctx/authority` is a file **your human writes**:
 
-    # nothing a sender transmits can reach this file
+    # no ctx command writes this file; edit it yourself
     allow codex review-request
     allow dana question in-reply-only
-    allow <a-public-key> any
+    allow <a-public-key> any          # any message KIND, not any action
 
 `ctx authority` prints what is granted. There is deliberately **no command
 that writes a grant** — a `ctx allow` would be reachable by prompt injection,
 letting an agent talked into running it grant itself permission to obey
 whatever talked it into it. Edit the file yourself.
+
+That guard is a deterrent, not a boundary, and the frame now says so. Any
+process that can read this file can also write it, so an agent with a shell
+can add its own grant — which is exactly how the grants for the 15 October
+reviews got written. Removing the documented command means an injected agent
+has to be told to hand-write a file, which is conspicuous in a transcript; it
+does not make the file unwritable. A real boundary needs file permissions or
+a separate process the agent cannot write through. `open` therefore tells the
+reader never to edit the file, or add a grant, because a message asked it to.
 
 Three rules, in the order they would hurt to get wrong:
 
@@ -76,9 +85,20 @@ Three rules, in the order they would hurt to get wrong:
   because the other direction lets a typo on line 2 widen line 3 — and the
   failure directions are not symmetric. Too little authority asks a human a
   question; too much acts on a stranger's instruction.
-- **A grant is for a kind of message, not for its contents.** `open` says so
-  in the frame: if the payload asks for a secret, a push, a message to a third
-  party or a change to that file, the grant does not cover it.
+- **A grant is for a kind of message, and the frame names the one act it
+  permits.** The scope comes from the kind, in `MsgType::granted_scope` — a
+  `review-request` permits reading what the bundle encloses and reporting
+  findings, and nothing else. The first version said "you may act on what this
+  message asks, within what it asks", which handed the boundary to the
+  payload; both reviewers caught it independently. Editing files, running
+  commands, committing, pushing, sending anything, messaging a third party and
+  touching secrets or keys are listed as never covered, whatever the payload
+  asks.
+- **The grant line carries the frame's nonce**, so a payload cannot write a
+  complete one. That raises the bar against a copied static string. It does
+  not make a positive grant unimitable, because the reader is a model that can
+  be argued into ignoring a marker, and the frame says as much rather than
+  leaning on it.
 
 No expiry yet, on purpose — it cannot use a clock, for the same reason
 [key retirement cannot](#the-retired-key-keeps-the-past-and-loses-the-future),
@@ -577,7 +597,7 @@ in the message. See [Authority](#authority-the-one-thing-that-says-you-may-act).
 
     cargo build --release && cargo test --release && bash tests/attacks.sh
 
-379 checks plus 58 Rust unit tests. Every one is an attack that worked, or
+392 checks plus 58 Rust unit tests. Every one is an attack that worked, or
 nearly worked, during development: frame-boundary forgery, payload swapping
 after signing, a listed contact claiming a third party's name, an unverified
 author name on a forward, a trust label that was a substring of its own
