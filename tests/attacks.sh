@@ -1093,6 +1093,41 @@ ctx: 9 new bundles" --decision "$T/w/nf2.md" >/dev/null 2>&1
 CTX_HOME=$T/ng $CTX watch --once --quiet > "$T/nfw2" 2>&1
 if [ "$(grep -c 'new bundles' "$T/nfw2")" -le 1 ]; then ok; else bad "a subject forged extra notification lines"; fi
 
+echo "accepting a bundle is restartable, and never half-delivers"
+mkdir -p "$T"/{ra,rb}
+CTX_HOME=$T/ra $CTX init ria >/dev/null
+CTX_HOME=$T/rb $CTX init rob >/dev/null
+RAK=$(CTX_HOME=$T/ra $CTX whoami | cut -f2)
+RBK=$(CTX_HOME=$T/rb $CTX whoami | cut -f2)
+CTX_HOME=$T/rb $CTX add ria "$RAK" >/dev/null
+CTX_HOME=$T/ra $CTX add rob "$RBK" >/dev/null
+CTX_HOME=$T/ra $CTX route rob "$T/rb" >/dev/null 2>&1
+printf 'payload\n' > "$T/w/re.md"
+CTX_HOME=$T/ra $CTX send --to rob --subject "restartable" --decision "$T/w/re.md" >/dev/null 2>&1
+reid=$(ls "$T/rb/inbox/pending" | head -1)
+[ -n "$reid" ] || bad "the fixture never delivered a bundle to rob"
+# The crash window: the bundle delivered to accepted, but was not removed from
+# pending. This is exactly the state an interrupted accept leaves behind.
+mkdir -p "$T/rb/inbox/accepted"
+cp -r "$T/rb/inbox/pending/$reid" "$T/rb/inbox/accepted/$reid"
+CTX_HOME=$T/rb $CTX accept "$reid" > "$T/reo" 2>&1; code resume $? 0
+if [ ! -d "$T/rb/inbox/pending/$reid" ]; then ok; else bad "the retry left the bundle in pending"; fi
+if [ -f "$T/rb/inbox/accepted/$reid/manifest.json" ]; then ok; else bad "the delivered copy was lost"; fi
+# And a DIFFERENT bundle on the same id is still refused, so resumability is
+# not a licence to overwrite mail already shown.
+printf 'other\n' > "$T/rb/inbox/accepted/$reid/items/re.md"
+cp -r "$T/rb/inbox/accepted/$reid" "$T/rb/inbox/pending/$reid"
+printf 'payload\n' > "$T/rb/inbox/pending/$reid/items/re.md"
+CTX_HOME=$T/rb $CTX accept "$reid" > "$T/reo2" 2>&1; code noclobber $? 1
+want "$T/reo2" "refusing to overwrite"
+if [ -d "$T/rb/inbox/pending/$reid" ]; then ok; else bad "a refused accept deleted the source"; fi
+
+echo "a staging directory is never listed as mail"
+mkdir -p "$T/rb/inbox/pending/.partial-1-deadbeefdeadbeef/items"
+cp "$T/rb/inbox/accepted/$reid/manifest.json" "$T/rb/inbox/pending/.partial-1-deadbeefdeadbeef/" 2>/dev/null
+CTX_HOME=$T/rb $CTX inbox > "$T/reo3" 2>&1
+wantno "$T/reo3" "partial"
+
 echo "a good bundle exits 0"
 CTX_HOME=$T/b $CTX open "$T/b1" >/dev/null 2>&1; code good $? 0
 

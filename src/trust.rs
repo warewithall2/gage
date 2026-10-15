@@ -62,6 +62,17 @@ impl Trust {
     }
 }
 
+/// Shown in place of a verdict when the local observation step failed.
+///
+/// Not a `Trust` variant, because it is not a judgement about a sender -- it
+/// is the absence of one. `ctx open` refuses to print at all in this case
+/// (see main.rs); the viewer polls and cannot refuse, so it must say this
+/// instead of showing a verdict computed from state that could not be
+/// refreshed. Either way the rule is the same: never show a verdict that
+/// could read milder than the truth.
+pub const VERDICT_UNAVAILABLE: &str =
+    "VERDICT UNAVAILABLE (your inbox could not be recorded, so a verdict here could read      milder than the truth)";
+
 /// A contact key you have taken out of service.
 ///
 /// Kept rather than deleted, because deleting it is what turns every bundle
@@ -334,6 +345,17 @@ mod tests {
                     );
                 }
             }
+        }
+        // VERDICT UNAVAILABLE travels the same path through the viewer's
+        // startsWith table, so it is held to the same rule.
+        for a in &all {
+            assert!(
+                !a.label().starts_with(VERDICT_UNAVAILABLE)
+                    && !VERDICT_UNAVAILABLE.starts_with(a.label())
+                    && !a.label().contains(VERDICT_UNAVAILABLE)
+                    && !VERDICT_UNAVAILABLE.contains(a.label()),
+                "VERDICT UNAVAILABLE collides with {:?}", a
+            );
         }
     }
 

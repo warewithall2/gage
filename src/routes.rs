@@ -100,6 +100,14 @@ pub fn sent_dir(ctx_home: &std::path::Path) -> PathBuf {
 /// Copy a bundle directory. Only the files the manifest names are copied, so a
 /// sender cannot smuggle extra paths into the recipient's inbox alongside the
 /// declared items.
+///
+/// Validate-then-write, staged through a temp directory and finished with one
+/// rename. It used to create the destination and write the manifest before
+/// checking the item paths, so a bundle whose fifth item was unsafe or missing
+/// left a half-built directory behind -- and because delivery refuses to
+/// overwrite, that leftover permanently blocked any retry of the same id. The
+/// rename is what makes the destination either absent or complete, never
+/// partial, which is also what lets `accept` be restartable.
 pub fn deliver(src: &std::path::Path, dest: &std::path::Path) -> std::io::Result<()> {
     // Never clobber. Defence in depth behind the id fix: if two bundles ever
     // land on one id again -- a hash collision, a replayed bundle, a future
@@ -116,24 +124,134 @@ pub fn deliver(src: &std::path::Path, dest: &std::path::Path) -> std::io::Result
     }
     let bytes = fs::read(src.join("manifest.json"))?;
     let m: crate::manifest::Manifest = serde_json::from_slice(&bytes)?;
-    fs::create_dir_all(dest.join("items"))?;
-    fs::write(dest.join("manifest.json"), &bytes)?;
-    if let Ok(sig) = fs::read(src.join("manifest.sig")) {
-        fs::write(dest.join("manifest.sig"), sig)?;
-    }
+
+    let bad = |msg: String| std::io::Error::new(std::io::ErrorKind::InvalidInput, msg);
+
+    // --- validate: nothing is written until every item has passed ---
+    let mut seen = std::collections::BTreeSet::new();
     for it in &m.items {
         if !crate::manifest::path_is_safe(&it.path) {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                format!("refusing to deliver unsafe path: {}", it.path),
-            ));
+            return Err(bad(format!("refusing to deliver unsafe path: {}", it.path)));
         }
-        if let Some(parent) = std::path::Path::new(&it.path).parent() {
-            fs::create_dir_all(dest.join(parent))?;
+        // Items live under items/ and nowhere else. Without this, an item
+        // declared as `manifest.json` was copied straight over the manifest
+        // written moments earlier -- harmless while the bytes matched, and a
+        // corrupt bundle the moment they did not.
+        if !it.path.starts_with("items/") {
+            return Err(bad(format!(
+                "refusing to deliver an item outside items/: {}",
+                it.path
+            )));
         }
-        fs::copy(src.join(&it.path), dest.join(&it.path))?;
+        // A path declared twice was copied twice and reported success, leaving
+        // a bundle whose payload digests no longer line up with its manifest.
+        if !seen.insert(it.path.as_str()) {
+            return Err(bad(format!("manifest declares {} twice", it.path)));
+        }
+        // Checked here so a missing file fails before anything is created,
+        // rather than halfway through the copy loop.
+        if !src.join(&it.path).is_file() {
+            return Err(bad(format!(
+                "manifest declares {} but the file is missing",
+                it.path
+            )));
+        }
+    }
+
+    // --- write: into a temp directory beside the destination, then rename ---
+    let parent = dest.parent().ok_or_else(|| bad("destination has no parent".into()))?;
+    let leaf = dest
+        .file_name()
+        .ok_or_else(|| bad("destination has no name".into()))?
+        .to_string_lossy()
+        .to_string();
+    fs::create_dir_all(parent)?;
+    // Per-process, so two concurrent deliveries of different bundles cannot
+    // land on one another's staging directory.
+    let tmp = parent.join(format!(".partial-{}-{}", std::process::id(), leaf));
+    let _ = fs::remove_dir_all(&tmp);
+
+    let staged = (|| -> std::io::Result<()> {
+        fs::create_dir_all(tmp.join("items"))?;
+        fs::write(tmp.join("manifest.json"), &bytes)?;
+        if let Ok(sig) = fs::read(src.join("manifest.sig")) {
+            fs::write(tmp.join("manifest.sig"), sig)?;
+        }
+        for it in &m.items {
+            if let Some(p) = std::path::Path::new(&it.path).parent() {
+                fs::create_dir_all(tmp.join(p))?;
+            }
+            fs::copy(src.join(&it.path), tmp.join(&it.path))?;
+        }
+        Ok(())
+    })();
+    if let Err(e) = staged {
+        let _ = fs::remove_dir_all(&tmp);
+        return Err(e);
+    }
+
+    // Rename onto a non-empty directory fails rather than merging, so the
+    // never-clobber promise holds even against a racing delivery that won.
+    if let Err(e) = fs::rename(&tmp, dest) {
+        let _ = fs::remove_dir_all(&tmp);
+        return Err(e);
     }
     Ok(())
+}
+
+/// Move a bundle from one stage to another, restartably.
+///
+/// The move is a delivery followed by a removal, and it used to be written out
+/// at each call site. A crash between the two left the bundle in both stages,
+/// and the retry then failed on delivery's refusal to overwrite -- so the
+/// bundle was stuck in pending forever while a complete copy sat in accepted.
+///
+/// `deliver` finishes with a rename, so a destination that exists is a
+/// destination that is complete. That makes the already-delivered case the
+/// resumable one: finish the removal instead of failing. The never-clobber
+/// promise is kept, because the only thing treated as resumable is a
+/// destination holding the same bundle id, which is what this move would have
+/// put there.
+pub fn restage(from: &std::path::Path, dest: &std::path::Path) -> std::io::Result<()> {
+    match deliver(from, dest) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && resumable(from, dest) => {
+            // Second half of an interrupted move. Fall through to the removal.
+        }
+        Err(e) => return Err(e),
+    }
+    fs::remove_dir_all(from)
+}
+
+/// Whether the destination is this same move's completed first half, and
+/// therefore safe to finish by removing the source.
+///
+/// Identical manifests are necessary but not sufficient. The id is computed
+/// over the item digests, so two bundles sharing a manifest should share a
+/// payload -- and if the destination's payload does *not* match its own
+/// manifest, something has rewritten it since delivery. Removing the source
+/// then would delete the sound copy and keep the altered one. So the
+/// destination has to verify before it counts as resumable; when it does not,
+/// the AlreadyExists refusal stands and the source stays put.
+///
+/// Payload digests only, deliberately -- not `bundle::load`, which also checks
+/// the signature and the id. A bundle whose signature does not verify is still
+/// legitimately delivered (it arrives and reads SENDER UNVERIFIABLE), so
+/// gating on that would leave exactly those bundles stuck in both stages
+/// forever, which is the state this function exists to clear.
+fn resumable(from: &std::path::Path, dest: &std::path::Path) -> bool {
+    let bytes = match (fs::read(from.join("manifest.json")), fs::read(dest.join("manifest.json"))) {
+        (Ok(x), Ok(y)) if x == y => x,
+        _ => return false,
+    };
+    let Ok(m) = serde_json::from_slice::<crate::manifest::Manifest>(&bytes) else {
+        return false;
+    };
+    m.items.iter().all(|it| {
+        crate::manifest::path_is_safe(&it.path)
+            && matches!(fs::read(dest.join(&it.path)),
+                        Ok(b) if crate::bundle::sha256_hex(&b) == it.sha256)
+    })
 }
 
 /// Bundles waiting in a stage, newest first.
@@ -144,6 +262,11 @@ pub fn list(stage: &std::path::Path) -> Vec<(String, crate::bundle::Loaded)> {
             if !e.path().is_dir() {
                 continue;
             }
+            // Delivery stages into `.partial-*` beside the destination. A
+            // half-written staging directory must never be listed as mail.
+            if e.file_name().to_string_lossy().starts_with('.') {
+                continue;
+            }
             if let Ok(l) = crate::bundle::load(&e.path()) {
                 let name = e.file_name().to_string_lossy().to_string();
                 out.push((name, l));
@@ -152,4 +275,166 @@ pub fn list(stage: &std::path::Path) -> Vec<(String, crate::bundle::Loaded)> {
     }
     out.sort_by(|a, b| b.1.manifest.created.cmp(&a.1.manifest.created));
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `paths` is (bundle path, contents), so the fixture's digests are real.
+    fn manifest_json(paths: &[(&str, &[u8])]) -> Vec<u8> {
+        let items: Vec<String> = paths
+            .iter()
+            .map(|(p, body)| {
+                format!(
+                    r#"{{"kind":"file","path":"{p}","sha256":"{}","bytes":{}}}"#,
+                    crate::bundle::sha256_hex(body),
+                    body.len()
+                )
+            })
+            .collect();
+        format!(
+            r#"{{"v":1,"id":"x","created":"2026-01-01T00:00:00Z","subject":"s",
+                 "from":{{"handle":"a","key":"k"}},"to":["b"],"chain":[],
+                 "items":[{}]}}"#,
+            items.join(",")
+        )
+        .into_bytes()
+    }
+
+    /// A source bundle whose manifest declares `decl` and whose files are
+    /// `on_disk`. They differ in the tests that need a declaration with no
+    /// file behind it.
+    fn src_bundle(
+        tmp: &std::path::Path,
+        decl: &[(&str, &[u8])],
+        on_disk: &[(&str, &[u8])],
+    ) -> PathBuf {
+        let d = tmp.join("src");
+        fs::create_dir_all(d.join("items")).unwrap();
+        fs::write(d.join("manifest.json"), manifest_json(decl)).unwrap();
+        fs::write(d.join("manifest.sig"), b"sig").unwrap();
+        for (p, body) in on_disk {
+            let f = d.join(p);
+            fs::create_dir_all(f.parent().unwrap()).unwrap();
+            fs::write(f, body).unwrap();
+        }
+        d
+    }
+
+    fn scratch(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("ctx-routes-{}-{}", name, std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn a_duplicate_item_path_is_refused_rather_than_copied_twice() {
+        let t = scratch("dup");
+        let src = src_bundle(&t, &[("items/a", b"one"), ("items/a", b"one")], &[("items/a", b"one")]);
+        let dest = t.join("dest");
+        let e = deliver(&src, &dest).unwrap_err();
+        assert!(e.to_string().contains("twice"), "{e}");
+        // The point of validate-then-write: a refusal leaves nothing behind to
+        // block the retry.
+        assert!(!dest.exists());
+    }
+
+    #[test]
+    fn an_item_outside_items_cannot_overwrite_the_delivered_manifest() {
+        let t = scratch("outside");
+        // This is the shape that mattered: an item declared as the manifest
+        // itself, copied over the manifest written moments earlier.
+        // Declared only: the outside-items/ refusal fires before the file
+        // check, and writing this one to disk would clobber the fixture's own
+        // manifest instead of testing anything.
+        let src = src_bundle(&t, &[("manifest.json", b"{}")], &[]);
+        let dest = t.join("dest");
+        let e = deliver(&src, &dest).unwrap_err();
+        assert!(e.to_string().contains("outside items/"), "{e}");
+        assert!(!dest.exists());
+    }
+
+    #[test]
+    fn a_declared_item_with_no_file_leaves_no_partial_destination() {
+        let t = scratch("missing");
+        // Second item has no file, so the old code failed after creating the
+        // destination and writing the manifest -- and the leftover then made
+        // every retry fail on "already exists".
+        let src = src_bundle(
+            &t,
+            &[("items/a", b"one"), ("items/b", b"two")],
+            &[("items/a", b"one")],
+        );
+        let dest = t.join("dest");
+        let e = deliver(&src, &dest).unwrap_err();
+        assert!(e.to_string().contains("missing"), "{e}");
+        assert!(!dest.exists(), "a refused delivery must not block the retry");
+    }
+
+    #[test]
+    fn delivery_stages_out_of_sight_and_is_not_listed_as_mail() {
+        let t = scratch("staging");
+        let stage = t.join("pending");
+        fs::create_dir_all(&stage).unwrap();
+        // A leftover staging directory from an interrupted delivery. It is a
+        // directory in a stage, so the lister would have tried to read it.
+        fs::create_dir_all(stage.join(".partial-1-abc/items")).unwrap();
+        fs::write(stage.join(".partial-1-abc/manifest.json"), manifest_json(&[])).unwrap();
+        assert!(list(&stage).is_empty());
+    }
+
+    #[test]
+    fn an_interrupted_accept_can_be_finished_rather_than_stuck() {
+        let t = scratch("restage");
+        let src = src_bundle(&t, &[("items/a", b"one")], &[("items/a", b"one")]);
+        let dest = t.join("accepted").join("x");
+
+        // Simulate the crash window: delivery completed, removal did not.
+        deliver(&src, &dest).unwrap();
+        assert!(dest.is_dir() && src.is_dir());
+
+        // The retry used to fail here on "refusing to overwrite", leaving the
+        // bundle in both stages forever. It now finishes the move.
+        restage(&src, &dest).unwrap();
+        assert!(!src.exists(), "the source stage should be clear");
+        assert!(dest.join("items/a").is_file(), "the delivered copy stays");
+    }
+
+    #[test]
+    fn a_destination_whose_payload_was_rewritten_is_not_treated_as_resumable() {
+        let t = scratch("swapped");
+        let src = src_bundle(&t, &[("items/a", b"one")], &[("items/a", b"one")]);
+        let dest = t.join("accepted").join("x");
+        deliver(&src, &dest).unwrap();
+
+        // Same manifest, payload altered after delivery. Finishing the move
+        // here would delete the sound copy and keep the altered one.
+        fs::write(dest.join("items/a"), b"ONE").unwrap();
+
+        let e = restage(&src, &dest).unwrap_err();
+        assert_eq!(e.kind(), std::io::ErrorKind::AlreadyExists);
+        assert!(src.is_dir(), "the sound source must survive");
+    }
+
+    #[test]
+    fn a_different_bundle_on_the_same_id_is_still_refused() {
+        let t = scratch("clobber");
+        let dest = t.join("accepted").join("x");
+        let first = src_bundle(&t, &[("items/a", b"one")], &[("items/a", b"one")]);
+        deliver(&first, &dest).unwrap();
+
+        // Same id, different contents. Resumability must not become a licence
+        // to overwrite mail the recipient may already have been shown.
+        let other = t.join("other");
+        fs::create_dir_all(other.join("items")).unwrap();
+        fs::write(other.join("manifest.json"), manifest_json(&[("items/a", b"TWO")])).unwrap();
+        fs::write(other.join("items/a"), b"TWO").unwrap();
+
+        let e = restage(&other, &dest).unwrap_err();
+        assert_eq!(e.kind(), std::io::ErrorKind::AlreadyExists);
+        assert!(other.is_dir(), "a refused move must not delete the source");
+        assert_eq!(fs::read(dest.join("items/a")).unwrap(), b"one");
+    }
 }

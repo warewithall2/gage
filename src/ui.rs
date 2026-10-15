@@ -175,6 +175,26 @@ fn respond(mut s: TcpStream, status: &str, ctype: &str, body: &str) -> std::io::
     s.flush()
 }
 
+/// The bundle id in `<prefix><id>`, or None if the target is not exactly that.
+///
+/// `starts_with` plus `rsplit('/')` used to accept `/api/accept/extra/<id>`
+/// and `/api/read//<id>`, acting on the trailing segment and ignoring the
+/// rest. Nothing escaped -- the id was still validated before it reached the
+/// filesystem -- but a route that matches more shapes than it means to is how
+/// the next bug gets in. One segment, hex, bounded.
+fn bundle_id<'a>(target: &'a str, prefix: &str) -> Option<&'a str> {
+    let id = target.strip_prefix(prefix)?;
+    if id.is_empty() || id.len() > 64 || id.contains('/') {
+        return None;
+    }
+    // An id reaches the filesystem, so it must be an id and nothing else:
+    // the bundle ids this tool mints are lowercase hex.
+    if !id.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(id)
+}
+
 fn handle(stream: TcpStream, port: u16) -> std::io::Result<()> {
     let req = read_req(&stream)?;
     let (method, target) = (req.method.as_str(), req.target.as_str());
@@ -199,10 +219,9 @@ fn handle(stream: TcpStream, port: u16) -> std::io::Result<()> {
             respond(stream, "200 OK", "application/json", &threads_json())
         }
         ("POST", t) if t.starts_with("/api/read/") => {
-            let id = t.rsplit('/').next().unwrap_or("");
-            if id.is_empty() || id.len() > 64 || !id.chars().all(|c| c.is_ascii_hexdigit()) {
+            let Some(id) = bundle_id(t, "/api/read/") else {
                 return respond(stream, "400 Bad Request", "application/json", "{\"error\":\"bad id\"}");
-            }
+            };
             let mut st = crate::state::LocalState::load();
             match st.mark_read(id) {
                 Ok(()) => respond(stream, "200 OK", "application/json", "{\"ok\":true}"),
@@ -211,10 +230,9 @@ fn handle(stream: TcpStream, port: u16) -> std::io::Result<()> {
             }
         }
         ("POST", t) if t.starts_with("/api/close/") => {
-            let id = t.rsplit('/').next().unwrap_or("");
-            if id.is_empty() || id.len() > 64 || !id.chars().all(|c| c.is_ascii_hexdigit()) {
+            let Some(id) = bundle_id(t, "/api/close/") else {
                 return respond(stream, "400 Bad Request", "application/json", "{\"error\":\"bad id\"}");
-            }
+            };
             let mut st = crate::state::LocalState::load();
             match st.close(id) {
                 Ok(()) => respond(stream, "200 OK", "application/json", "{\"ok\":true}"),
@@ -224,15 +242,10 @@ fn handle(stream: TcpStream, port: u16) -> std::io::Result<()> {
         }
         ("POST", t) if t.starts_with("/api/accept/") || t.starts_with("/api/reject/") => {
             let accept = t.starts_with("/api/accept/");
-            let id = t.rsplit('/').next().unwrap_or("");
-            // An id reaches the filesystem, so it must be an id and nothing
-            // else: the bundle ids this tool mints are lowercase hex.
-            if id.is_empty()
-                || id.len() > 64
-                || !id.chars().all(|c| c.is_ascii_hexdigit())
-            {
+            let Some(id) = bundle_id(t, if accept { "/api/accept/" } else { "/api/reject/" })
+            else {
                 return respond(stream, "400 Bad Request", "application/json", "{\"error\":\"bad id\"}");
-            }
+            };
             let me = crate::identity::home();
             let from = crate::routes::pending_dir(&me).join(id);
             if !from.is_dir() {
@@ -240,9 +253,10 @@ fn handle(stream: TcpStream, port: u16) -> std::io::Result<()> {
             }
             let res = if accept {
                 let dest_dir = crate::routes::accepted_dir(&me);
+                // Same restartable move the CLI uses, rather than a second
+                // hand-written copy-then-delete with its own crash window.
                 std::fs::create_dir_all(&dest_dir)
-                    .and_then(|_| crate::routes::deliver(&from, &dest_dir.join(id)))
-                    .and_then(|_| std::fs::remove_dir_all(&from))
+                    .and_then(|_| crate::routes::restage(&from, &dest_dir.join(id)))
             } else {
                 std::fs::remove_dir_all(&from)
             };
@@ -336,16 +350,41 @@ fn reply_from_ui(body: &str) -> Result<String, (&'static str, String)> {
     }
 }
 
-/// The viewer polls, so it cannot fail a request over this -- but it must not
-/// hide it either. The terminal running `ctx ui` gets the warning.
-fn observe_or_log() {
-    if let Err(e) = crate::routes::observe_inbox() {
-        eprintln!("ctx ui: WARNING -- inbox not recorded ({e}); verdicts shown may read milder than the truth");
+/// Record the inbox, and say whether it worked.
+///
+/// The viewer polls, so it cannot fail a request over this. For a while it
+/// only warned on stderr and served the verdicts anyway -- which was the same
+/// bug `ctx open` refuses to have, hidden better: the person reading verdicts
+/// is looking at the browser, not at the terminal the warning went to. A
+/// verdict computed from state that could not be refreshed can read milder
+/// than the truth (a retired key's bundle showing as "no record either way"
+/// rather than a rejection), so when this returns false every verdict in the
+/// response is replaced by `VERDICT_UNAVAILABLE` and the page says so.
+#[must_use]
+fn observed() -> bool {
+    match crate::routes::observe_inbox() {
+        Ok(_) => true,
+        Err(e) => {
+            eprintln!("ctx ui: WARNING -- inbox not recorded ({e}); verdicts withheld");
+            false
+        }
     }
 }
 
+/// The verdict to show for a bundle, which is no verdict at all when the
+/// observation step failed.
+fn verdict_label(observed: bool, l: &crate::bundle::Loaded) -> &'static str {
+    verdict_label_for(observed, l.trust)
+}
+
+/// The same decision over a bare verdict, so it can be tested without a
+/// bundle on disk.
+fn verdict_label_for(observed: bool, t: crate::trust::Trust) -> &'static str {
+    if observed { t.label() } else { crate::trust::VERDICT_UNAVAILABLE }
+}
+
 fn state_json() -> String {
-    observe_or_log();
+    let observed = observed();
     let me = crate::identity::home();
     let contacts = crate::trust::Contacts::load();
     let routes = crate::routes::Routes::load();
@@ -366,7 +405,7 @@ fn state_json() -> String {
                     "claimed_name": m.from.handle,
                     "known_as": contacts.name_any(&m.from.key),
                     "key": m.from.key,
-                    "trust": l.trust.label(),
+                    "trust": verdict_label(observed, &l),
                     "forwarded": m.is_forwarded(),
                     "hops": m.chain.len(),
                     "prompts": m.prompt_count(),
@@ -390,6 +429,9 @@ fn state_json() -> String {
 
     serde_json::json!({
         "me": id.map(|i| serde_json::json!({ "handle": i.handle, "key": i.public_b64() })),
+        // The page shows a banner on this and stops presenting verdicts as
+        // though they were current.
+        "verdicts_stale": !observed,
         "home": me.display().to_string(),
         "pending": stage(crate::routes::pending_dir(&me), "pending"),
         "accepted": stage(crate::routes::accepted_dir(&me), "accepted"),
@@ -406,7 +448,7 @@ fn state_json() -> String {
 /// bundle list answered "what arrived"; this answers "what is going on and
 /// does any of it need me".
 fn threads_json() -> String {
-    observe_or_log();
+    let observed = observed();
     let me_id = crate::identity::Identity::load().ok();
     let mine = me_id.as_ref().map(|i| i.public_b64()).unwrap_or_default();
     let st = crate::state::LocalState::load();
@@ -427,7 +469,9 @@ fn threads_json() -> String {
         for (_, l) in crate::routes::list(&dir) {
             let id = l.manifest.id.clone();
             stage_of.entry(id.clone()).or_insert((name, dir.join(&id).display().to_string()));
-            trust_of.entry(id.clone()).or_insert((l.trust.label().to_string(), l.tampered.clone()));
+            trust_of
+                .entry(id.clone())
+                .or_insert((verdict_label(observed, &l).to_string(), l.tampered.clone()));
             if !manifests.iter().any(|m: &crate::manifest::Manifest| m.id == id) {
                 manifests.push(l.manifest);
             }
@@ -530,6 +574,7 @@ fn threads_json() -> String {
 
     serde_json::json!({
         "me": me_id.map(|i| serde_json::json!({ "handle": i.handle, "key": i.public_b64() })),
+        "verdicts_stale": !observed,
         "threads": rows,
         "contacts": contacts.keys.iter().map(|(k, n)| serde_json::json!({
             "name": n, "key": k })).collect::<Vec<_>>(),
@@ -538,3 +583,48 @@ fn threads_json() -> String {
 }
 
 const INDEX: &str = include_str!("ui.html");
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_id_route_matches_exactly_one_segment() {
+        assert_eq!(bundle_id("/api/read/abc123", "/api/read/"), Some("abc123"));
+
+        // The shapes codex found. All three used to resolve to the trailing
+        // segment and act on it.
+        assert_eq!(bundle_id("/api/accept/extra/abc123", "/api/accept/"), None);
+        assert_eq!(bundle_id("/api/read//abc123", "/api/read/"), None);
+        assert_eq!(bundle_id("/api/read/abc123/", "/api/read/"), None);
+
+        assert_eq!(bundle_id("/api/read/", "/api/read/"), None);
+        assert_eq!(bundle_id("/api/read/../../etc", "/api/read/"), None);
+        assert_eq!(bundle_id("/api/read/zz", "/api/read/"), None, "hex only");
+        assert_eq!(bundle_id("/api/read/abc?x=1", "/api/read/"), None);
+        assert_eq!(bundle_id(&format!("/api/read/{}", "a".repeat(65)), "/api/read/"), None);
+        // A prefix that is not this route's.
+        assert_eq!(bundle_id("/api/close/abc", "/api/read/"), None);
+    }
+
+    #[test]
+    fn a_failed_observation_withholds_the_verdict_instead_of_softening_it() {
+        // The label is what the viewer shows in place of a verdict, and the
+        // one thing it must never be is a verdict. `ctx open` refuses to
+        // print at all in this case; the viewer polls, so it says this.
+        assert_eq!(
+            verdict_label_for(false, crate::trust::Trust::Revoked),
+            crate::trust::VERDICT_UNAVAILABLE
+        );
+        // ...and when observation worked, nothing changes.
+        assert_eq!(
+            verdict_label_for(true, crate::trust::Trust::Revoked),
+            crate::trust::Trust::Revoked.label()
+        );
+        // The failure must not be renderable as the mildest verdict, which is
+        // the specific way this bug would have hurt: a rejected key reading
+        // as "no record either way", or worse, as verified.
+        assert_ne!(crate::trust::VERDICT_UNAVAILABLE, crate::trust::Trust::Known.label());
+        assert_ne!(crate::trust::VERDICT_UNAVAILABLE, crate::trust::Trust::Unwitnessed.label());
+    }
+}

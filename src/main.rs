@@ -1045,8 +1045,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             let to_dir = routes::accepted_dir(&me);
             std::fs::create_dir_all(&to_dir)?;
             let dest = to_dir.join(&id);
-            routes::deliver(&from, &dest)?;
-            std::fs::remove_dir_all(&from)?;
+            routes::restage(&from, &dest)?;
             println!("accepted {id}");
             println!("  ctx open {}", dest.display());
         }

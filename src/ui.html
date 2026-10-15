@@ -138,6 +138,9 @@ button{background:none;border:0;cursor:pointer}
 .v-ok{color:var(--ok);background:color-mix(in srgb,var(--ok) 10%,transparent)}
 .v-warn{color:var(--warn);background:color-mix(in srgb,var(--warn) 10%,transparent)}
 .v-bad{color:var(--bad);background:color-mix(in srgb,var(--bad) 12%,transparent)}
+.stale{margin:0 0.75rem 0.5rem;padding:0.55rem 0.7rem;border-radius:8px;font-size:0.78rem;
+  line-height:1.45;color:var(--bad);border:1px solid color-mix(in srgb,var(--bad) 35%,transparent);
+  background:color-mix(in srgb,var(--bad) 10%,transparent)}
 .alert{padding:9px 15px;font-size:12.5px;line-height:1.5;color:var(--warn);
   border-top:1px solid var(--line)}
 .alert.bad{color:var(--bad)}
@@ -203,6 +206,7 @@ textarea:focus{border-color:var(--accent);outline:none}
       <span class="wordmark">Conversations</span>
       <span class="whoami" id="me"></span>
     </div>
+    <div class="stale" id="stale" hidden></div>
     <div class="filters" id="filters"></div>
     <div class="list" id="list"></div>
   </div>
@@ -235,7 +239,11 @@ const V=[['SENDER VERIFIED','Verified','v-ok'],
          ['SENDER KEY RETIRED','Retired key','v-warn'],
          ['SENDER KEY REJECTED','Key rejected','v-bad'],
          ['ARRIVAL UNRECORDED','Arrival unrecorded','v-bad'],
-         ['SENDER UNVERIFIABLE','Unverifiable','v-bad']];
+         ['SENDER UNVERIFIABLE','Unverifiable','v-bad'],
+         // Not a judgement about a sender -- the absence of one, because the
+         // observation step failed. Styled as bad, since the one thing it
+         // must never look like is a pass.
+         ['VERDICT UNAVAILABLE','Verdict unavailable','v-bad']];
 const vRow=t=>V.find(r=>(t||'').startsWith(r[0]));
 const vClass=t=>{const r=vRow(t);return r?r[2]:'v-bad';};
 const vShort=t=>{const r=vRow(t);return r?r[1]:(t||'No verdict');};
@@ -331,6 +339,15 @@ function composerHtml(t){
 
 function render(){
   const me=DATA.me;
+  // When the inbox could not be recorded, every verdict in this payload was
+  // withheld server-side. Saying why beats leaving the labels to explain
+  // themselves.
+  const st=document.getElementById('stale');
+  st.hidden=!DATA.verdicts_stale;
+  if(DATA.verdicts_stale) st.textContent=
+    'Verdicts withheld: your inbox could not be recorded, so a verdict here could read '+
+    'milder than the truth. Usually another ctx process is writing \u2014 it clears on '+
+    'the next poll. Until then, read bundles with ctx open in a terminal.';
   document.getElementById('me').innerHTML = me
     ? `<div class="h">${esc(me.handle)}</div><div class="k">${esc((me.key||'').slice(0,10))}&hellip;</div>`
     : `<div class="h">no identity</div><div class="k">run ctx init</div>`;
