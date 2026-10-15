@@ -428,6 +428,9 @@ fn threads_json() -> String {
                         "trust": trust,
                         "tampered": tampered,
                         "forwarded": m.is_forwarded(),
+                        // False when the message's claim to this thread could
+                        // not be checked against anything held locally.
+                        "thread_ok": !t.unverified.contains(&m.id),
                         "hops": m.chain.len(),
                         "claimed_name": m.from.handle,
                         "known_as": contacts.name_any(&m.from.key),
@@ -448,7 +451,16 @@ fn threads_json() -> String {
             // it, and when the answer is "nobody" it says why rather than
             // offering a box that fails on submit.
             let parent = t.messages.iter().rev().find(|m| m.from.key != mine);
-            let reply = match parent {
+            let reply = if t.others.len() > 1 {
+                // Same refusal as the CLI. A thread with two correspondents
+                // does not name a recipient, and a composer that guessed
+                // would be the thing a grafted bundle exploits.
+                serde_json::json!({ "can": false,
+                    "why": format!("this thread has {} correspondents, so replying to \
+                                    the thread does not say who to. Reply to one \
+                                    message from a terminal: ctx reply <message id>",
+                                   t.others.len()) })
+            } else { match parent {
                 None => serde_json::json!({ "can": false,
                     "why": "every message here is your own" }),
                 Some(p) => match contacts.name_for(&p.from.key) {
@@ -458,15 +470,21 @@ fn threads_json() -> String {
                         "can": false, "to": name,
                         "why": format!("{name} has no local route, so a reply has to go out \
                                         through ctx push in a terminal") }),
+                    Some(_) if t.unverified.contains(&p.id) => serde_json::json!({
+                        "can": false,
+                        "why": "the newest message claims this thread while answering \
+                                something you do not hold, so it is not a safe reply \
+                                target" }),
                     Some(name) => serde_json::json!({ "can": true, "to": name,
                         "type": if p.msg_type.expects_reply() { "answer" } else { "share" } }),
                 },
-            };
+            } };
             serde_json::json!({
                 "id": t.id,
                 "subject": t.subject,
                 "state": t.state.label(),
                 "unread": t.unread,
+                "correspondents": t.others.len(),
                 "reply": reply,
                 "messages": msgs,
             })

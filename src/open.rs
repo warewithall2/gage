@@ -137,17 +137,31 @@ pub fn render(l: &Loaded, reveal: bool) -> String {
                  \x20              can sign too, and can put any date in the manifest.\n",
             );
         } else if matches!(l.trust, Trust::Retired) {
-            s.push_str(
-                "  \x20             This bundle is dated before the retirement, so it is\n\
-                 \x20             attributable -- on the assumption the key was never\n\
-                 \x20             stolen. The date is the sender's own field.\n",
-            );
+            if l.dated_by_sender {
+                // The weaker of the two cases, and it says so. A bundle that
+                // has never been in this inbox has only the signer's own
+                // timestamp to be judged by.
+                s.push_str(
+                    "  \x20             It predates the retirement according to the SENDER'S\n\
+                     \x20             OWN timestamp -- this bundle has never been in your\n\
+                     \x20             inbox, so there is no independent record of when it\n\
+                     \x20             arrived. Anyone holding that key could have written\n\
+                     \x20             that date.\n",
+                );
+            } else {
+                s.push_str(
+                    "  \x20             It was already in your inbox before you retired the\n\
+                     \x20             key, by your own record rather than the sender's\n\
+                     \x20             timestamp, so it is attributable.\n",
+                );
+            }
         } else {
             s.push_str(
-                "  !! This bundle is dated AFTER you retired the key, so the key does\n\
+                "  !! This bundle turned up AFTER you retired the key, so the key does\n\
                  \x20              not cover it. Either the sender is still using an old\n\
                  \x20              key, or someone else has it. Ask them over a channel\n\
-                 \x20              that is not this one.\n",
+                 \x20              that is not this one. A `created` field claiming to be\n\
+                 \x20              older changes nothing: the signer writes that.\n",
             );
         }
     }

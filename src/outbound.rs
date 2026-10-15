@@ -27,15 +27,27 @@ pub fn find_manifest(id: &str) -> Option<manifest::Manifest> {
 pub fn all_manifests() -> Vec<manifest::Manifest> {
     let home = identity::home();
     let mut out = Vec::new();
+    let mut arrived = Vec::new();
     for stage in [
         routes::accepted_dir(&home),
         routes::pending_dir(&home),
         routes::sent_dir(&home),
     ] {
+        let mine = stage == routes::sent_dir(&home);
         for (_, l) in routes::list(&stage) {
+            if !mine {
+                arrived.push(l.manifest.id.clone());
+            }
             out.push(l.manifest);
         }
     }
+    // Stamp arrivals with this machine's clock. Done on listing rather than on
+    // delivery because local delivery writes into the RECIPIENT's home, where
+    // the sender has no business touching state -- so "first seen" means the
+    // first time this inbox looked, which is a local observation either way
+    // and always after the bundle was really there.
+    let mut st = state::LocalState::load();
+    let _ = st.note_seen(&arrived, &bundle::now_rfc3339());
     // The same bundle can sit in more than one stage; a thread must not count
     // it twice.
     out.sort_by(|a, b| a.id.cmp(&b.id));
@@ -94,6 +106,41 @@ pub fn resolve_reply(id: &str) -> Result<ReplyTarget, Box<dyn std::error::Error>
                 return Err(format!("{id} matches {} threads: {}", ids.len(), ids.join(", ")).into());
             }
         };
+        // More than one correspondent means naming the thread does not name a
+        // recipient. This is the whole fix: with exactly one other party there
+        // is no redirect to perform, verified claim or not, and with two there
+        // is no way to guess which one the person meant. Picking the newest looks helpful and is how a grafted
+        // bundle steals a reply: anyone who has seen one message of a
+        // conversation can post into it and become "the newest message that is
+        // not yours". So the ambiguity is handed back rather than guessed.
+        if t.others.len() > 1 {
+            let contacts = trust::Contacts::load();
+            let who: Vec<String> = t
+                .others
+                .iter()
+                .map(|k| match contacts.name_any(k) {
+                    Some(n) => format!("{n} ({}…)", k.chars().take(10).collect::<String>()),
+                    None => format!("an unlisted key ({}…)", k.chars().take(10).collect::<String>()),
+                })
+                .collect();
+            let newest: Vec<String> = t
+                .messages
+                .iter()
+                .rev()
+                .filter(|m| m.from.key != me)
+                .take(2)
+                .map(|m| format!("{} from {}", m.id, m.from.handle))
+                .collect();
+            return Err(format!(
+                "thread {} has {} correspondents ({}), so naming the thread does not \
+                 name a recipient. Reply to one MESSAGE instead:\n  {}",
+                t.id,
+                t.others.len(),
+                who.join(", "),
+                newest.join("\n  ")
+            )
+            .into());
+        }
         // The newest message that is not yours. Replying to your own last
         // message is a follow-up, not a reply, and guessing which it was
         // would get the recipient from a message you wrote.

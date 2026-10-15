@@ -63,6 +63,11 @@ pub struct Retired {
     /// an ending.
     #[serde(default)]
     pub replaced_by: Option<String>,
+    /// What the rotation notice said the time was, when one was applied. Kept
+    /// as a record and never used to decide a verdict: the party that wrote
+    /// it chose it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claimed_at: Option<String>,
     /// Retired because it was STOLEN. Then even old bundles are worthless:
     /// `created` is a field the signer writes, so a thief backdates it. The
     /// honest-rotation case leans on that timestamp; this case cannot.
@@ -126,11 +131,13 @@ impl Contacts {
 
     /// Trust for a key whose signature already checked out.
     ///
-    /// `created` is the manifest's own timestamp, which the signer chose. It
-    /// is load-bearing for exactly one verdict -- whether a retired key still
-    /// covers this bundle -- and that is why a compromised key is refused
-    /// without consulting it.
-    pub fn verdict(&self, pubkey: &str, created: &str) -> Trust {
+    /// `when` is this machine's record of when the bundle arrived, falling
+    /// back to the manifest's own `created` for a bundle that has never been
+    /// in this inbox. The distinction is the point: `created` is the signer's
+    /// field, so a thief holding an ordinarily-retired key could date a new
+    /// bundle before the cutoff and be read as attributable. A compromised
+    /// key consults no date at all.
+    pub fn verdict(&self, pubkey: &str, when: &str) -> Trust {
         if self.knows(pubkey) {
             return Trust::Known;
         }
@@ -139,7 +146,7 @@ impl Contacts {
             // String comparison is the right one here: RFC3339 UTC with
             // fixed-width fields sorts lexicographically, which is the whole
             // reason this codebase writes timestamps that way.
-            Some(r) if created < r.retired_at.as_str() => Trust::Retired,
+            Some(r) if when < r.retired_at.as_str() => Trust::Retired,
             Some(_) => Trust::Revoked,
             None => Trust::Unknown,
         }
@@ -178,7 +185,7 @@ impl Contacts {
         self.box_keys.remove(pubkey);
         self.retired.insert(
             pubkey.to_string(),
-            Retired { name, retired_at: at.to_string(), replaced_by, compromised },
+            Retired { name, retired_at: at.to_string(), claimed_at: None, replaced_by, compromised },
         );
         true
     }
@@ -233,6 +240,23 @@ mod tests {
         // notice they sent.
         let c = with_retired(false);
         assert_eq!(c.verdict("OLD", "2026-10-14T12:00:00Z"), Trust::Revoked);
+    }
+
+    #[test]
+    fn a_backdated_bundle_does_not_get_in_on_the_senders_word() {
+        // The sequence the codex reviewer found. A key is stolen; the owner
+        // rotates for ordinary reasons before anyone knows, so the recipient
+        // records the old key as retired-not-compromised. The thief then signs
+        // a new bundle with `created` set before the cutoff. What the verdict
+        // is given is the recipient's own record of when the bundle arrived,
+        // which is after the retirement, so the backdating buys nothing.
+        let c = with_retired(false);
+        let created_by_thief = "2026-10-01T00:00:00Z";
+        let when_it_actually_arrived = "2026-10-20T00:00:00Z";
+        assert_eq!(c.verdict("OLD", created_by_thief), Trust::Retired,
+                   "the sender's own date is the weak case, kept only for bundles \
+                    that were never in this inbox");
+        assert_eq!(c.verdict("OLD", when_it_actually_arrived), Trust::Revoked);
     }
 
     #[test]

@@ -240,6 +240,15 @@ having read the thing.
     ctx reply <thread-or-message-id> --text "Full jitter, cap 30s."
 
 The id can be a thread or a single message, and a unique prefix is enough.
+A thread with **two correspondents** is refused rather than guessed, and that
+refusal is the fix for a real attack: `thread` is a field the sender writes,
+so anyone who had seen one message of a conversation could post into it,
+become "the newest message that is not yours", and collect the reply meant for
+someone else. Naming a message instead of a thread is unambiguous, and while
+you hold the thread's root, naming the thread *is* naming that message. A
+message whose claim to a thread cannot be checked against anything held
+locally is shown as a claim, in the list, in `ctx thread` and in the viewer.
+
 Everything else is worked out: the recipient comes from the **key that signed
 the message being answered**, never from its `from.handle` or its `to` list,
 both of which the sender writes. The type defaults to `answer` when the parent
@@ -353,8 +362,8 @@ this one.
 
 ### The retired key keeps the past and loses the future
 
-A retired key verifies bundles made **before** the retirement and nothing
-after:
+A retired key covers bundles that were **here before the retirement** and
+nothing after:
 
 * `SENDER KEY RETIRED` — valid signature, bundle predates the retirement. Still
   attributable, and the thread history stays readable.
@@ -362,13 +371,30 @@ after:
   bundle. Contents withheld, non-zero exit, same as a bad signature.
 
 If a retired key kept working for new mail, retiring it would buy nothing at
-all. The timestamp that decides this is the sender's own field, which is
-honest about what the rule rests on: that the old key was never stolen. For
-the case where it *was*, `ctx retire <name> --compromised` refuses everything
-that key signed, old bundles included, because a thief chooses the date too.
-That form touches one key and says so; `--compromised --all` condemns every key
-you ever held for that person, for when you learn the compromise predates what
-you knew.
+all. So the question is which clock decides, and the first version got it
+wrong: it read the manifest's `created`, which is a field the **signer**
+writes. A key stolen before an ordinary rotation could sign something new,
+date it before the cutoff, and be read as attributable. The codex reviewer
+found that sequence.
+
+The verdict now uses **this machine's own record of when the bundle turned
+up**, written on the first listing that sees it and never moved forward
+afterwards. That is the one timestamp in the system a sender does not control.
+A bundle that has never been in this inbox has only the sender's date to be
+judged by, and `ctx open` says so in those words rather than presenting the
+two cases as one.
+
+For a key that was actually stolen, `ctx retire <name> --compromised` refuses
+everything it signed, old bundles included, consulting no date at all. That
+form touches one key and says so; `--compromised --all` condemns every key you
+ever held for that person, for when you learn the compromise predates what you
+knew.
+
+The same rule applies to the cutoff itself. `keychange --accept` stamps the
+retirement from **your** clock at the moment you accept, and keeps the
+notice's own date as `claimed_at`: a record, never a verdict. Whoever wrote
+the notice chose that date, and adopting it let them put the retirement
+anywhere they liked.
 
 Rotating your own key keeps the old secrets so mail already sealed to it can
 still be collected — `ctx pull` drains the retired mailbox alongside the
@@ -401,9 +427,11 @@ importer.
 
     cargo build --release && cargo test --release && bash tests/attacks.sh
 
-221 checks plus 19 Rust unit tests. Every one is an attack that worked, or
+246 checks plus 20 Rust unit tests. Every one is an attack that worked, or
 nearly worked, during development: frame-boundary forgery, payload swapping
 after signing, a listed contact claiming a third party's name, an unverified
 author name on a forward, a trust label that was a substring of its own
 opposite, a rotation notice countersigned by the wrong key, a retired key
-still signing new mail, and a cross-site POST to the viewer.
+still signing new mail, a cross-site POST to the viewer, a bundle grafted onto
+someone else's thread to collect the reply, and a retired key backdating its
+way past its own retirement.

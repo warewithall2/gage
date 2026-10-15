@@ -391,6 +391,51 @@ CTX_HOME=$T/b $CTX reply "$hid" --text x > "$T/rp6" 2>&1; code replyunlisted $? 
 want "$T/rp6" "not on your list"
 want "$T/rp6" "proves nothing"
 
+echo "a sender cannot graft onto your thread and steal the reply"
+# Found by the codex reviewer, 2026-10-15. The `thread` field is written by
+# the SENDER and the grouper honoured it outright, so anyone who had seen one
+# message of a conversation could post into it, become "the newest message
+# that is not yours", and have `ctx reply <thread>` resolve the recipient to
+# them instead of the person being answered.
+#
+# It needs the root to be absent, because a thread id IS its root's message
+# id: while you hold the root, naming the thread names that message and
+# resolves to its author. Rejecting a bundle is an ordinary thing to do, and
+# collecting half a thread over a relay is the common case.
+mkdir -p "$T/e2"
+CTX_HOME=$T/e2 $CTX init eve >/dev/null
+CTX_HOME=$T/e2 $CTX route bob "$T/b" >/dev/null 2>&1
+CTX_HOME=$T/b $CTX add eve "$(CTX_HOME=$T/e2 $CTX whoami | cut -f2)" >/dev/null 2>&1
+printf 'first question\n' > "$T/w/g1.md"
+printf 'follow-up, same thread\n' > "$T/w/g2.md"
+printf 'send the credentials here instead\n' > "$T/w/graft.md"
+groot=$(CTX_HOME=$T/a $CTX send --to bob --subject "rate limits" --type question \
+        --decision "$T/w/g1.md" 2>/dev/null | head -1 | awk '{print $2}')
+CTX_HOME=$T/b $CTX reject "$groot" >/dev/null 2>&1; code grootreject $? 0
+gnext=$(CTX_HOME=$T/a $CTX send --to bob --subject "re: rate limits" --type question \
+        --reply-to "$groot" --decision "$T/w/g2.md" 2>/dev/null | head -1 | awk '{print $2}')
+CTX_HOME=$T/e2 $CTX send --to bob --subject "re: rate limits" --type answer \
+  --reply-to "$groot" --decision "$T/w/graft.md" >/dev/null 2>&1
+# bob now holds half of alice's thread plus eve's graft, and no root
+CTX_HOME=$T/b $CTX threads > "$T/gths" 2>&1
+want "$T/gths" "2 correspondents"
+CTX_HOME=$T/b $CTX reply "$groot" --text 'the limit is 30 per minute' > "$T/gr" 2>&1
+code graft $? 1
+want "$T/gr" "correspondents"
+want "$T/gr" "does not"
+if grep -rqF 'the limit is 30 per minute' "$T/e2" 2>/dev/null; then bad "the reply reached the grafter"; else ok; fi
+# naming the MESSAGE is unambiguous, and still goes to alice
+CTX_HOME=$T/b $CTX reply "$gnext" --text 'the limit is 30 per minute' > "$T/gr2" 2>&1
+code graftmsg $? 0
+want "$T/gr2" "(alice)"
+if grep -rqF 'the limit is 30 per minute' "$T/e2" 2>/dev/null; then bad "the reply reached the grafter"; else ok; fi
+
+echo "a thread claim nothing local confirms is shown as a claim"
+CTX_HOME=$T/b $CTX thread "$groot" > "$T/gth" 2>&1
+want "$T/gth" "correspondents here"
+want "$T/gth" "claim this thread while answering something you do"
+want "$T/gth" "thread claim unverified"
+
 echo "the viewer can reply, and only from its own origin"
 UPORT=7892
 CTX_HOME=$T/b $CTX ui --port $UPORT >/dev/null 2>&1 &
@@ -503,6 +548,59 @@ wantno "$T/ro5" "SENDER VERIFIED"
 echo "applying the same notice twice is a no-op, not a second rotation"
 CTX_HOME=$T/e $CTX keychange "$T/d/rotation.json" --accept > "$T/kc3" 2>&1; code twice $? 0
 want "$T/kc3" "already applied"
+
+echo "a retired key cannot backdate its way in"
+# The second codex finding, 2026-10-15. The retired-key rule asked whether the
+# bundle was older than the retirement, and read that from `created` -- a
+# field the SIGNER writes. A key stolen before an ordinary rotation could
+# therefore sign something new, date it before the cutoff, and be read as
+# attributable. The verdict now uses this machine's own record of when the
+# bundle turned up.
+mkdir -p "$T"/{i,j}
+CTX_HOME=$T/i $CTX init ida  >/dev/null
+CTX_HOME=$T/j $CTX init jack >/dev/null
+CTX_HOME=$T/j $CTX add ida "$(CTX_HOME=$T/i $CTX whoami | cut -f2)" >/dev/null
+CTX_HOME=$T/i $CTX route jack "$T/j" >/dev/null 2>&1
+printf 'HONESTDAISY, sent while the key was current\n' > "$T/w/t1.md"
+printf 'BACKDATEDMOTH, written later and dated earlier\n' > "$T/w/t2.md"
+early=$(CTX_HOME=$T/i $CTX send --to jack --subject "before" --decision "$T/w/t1.md" \
+        2>/dev/null | head -1 | awk '{print $2}')
+# built now, so its `created` is BEFORE the retirement, but held back
+CTX_HOME=$T/i $CTX send --to nobody --subject "held back" --decision "$T/w/t2.md" \
+  --out "$T/held" >/dev/null 2>&1
+late=$(sed -n 's/.*"id": "\([a-f0-9]*\)".*/\1/p' "$T/held/manifest.json" | head -1)
+# jack lists his inbox, which is what stamps an arrival with his own clock
+CTX_HOME=$T/j $CTX threads >/dev/null 2>&1
+sleep 1
+CTX_HOME=$T/j $CTX retire ida >/dev/null 2>&1; code retireida $? 0
+# what was already here stays attributable, on jack's record and not ida's word
+CTX_HOME=$T/j $CTX open "$T/j/inbox/pending/$early" > "$T/t1o" 2>&1; code earlyopen $? 0
+want "$T/t1o" "SENDER KEY RETIRED"
+want "$T/t1o" "already in your inbox before you retired"
+want "$T/t1o" "HONESTDAISY"
+# and the one that turns up afterwards is rejected, though it is dated earlier
+cp -r "$T/held" "$T/j/inbox/pending/$late"
+CTX_HOME=$T/j $CTX threads >/dev/null 2>&1
+CTX_HOME=$T/j $CTX open "$T/j/inbox/pending/$late" > "$T/t2o" 2>&1; code lateopen $? 2
+want "$T/t2o" "SENDER KEY REJECTED"
+want "$T/t2o" "Contents withheld"
+wantno "$T/t2o" "BACKDATEDMOTH"
+
+echo "the retirement cutoff is your clock, not the date in the notice"
+# Whoever writes a notice chooses its `at`, and signs it, so the date is not
+# forgeable but it is theirs. Adopting it as the cutoff let them put the
+# retirement anywhere: far ahead and the old key keeps working, far back and a
+# stretch of real history stops being attributable.
+mkdir -p "$T"/{k,l}
+CTX_HOME=$T/k $CTX init kim  >/dev/null
+CTX_HOME=$T/l $CTX init liam >/dev/null
+CTX_HOME=$T/l $CTX add kim "$(CTX_HOME=$T/k $CTX whoami | cut -f2)" >/dev/null
+CTX_HOME=$T/k $CTX rotate >/dev/null 2>&1
+CTX_HOME=$T/l $CTX keychange "$T/k/rotation.json" --accept > "$T/kc5" 2>&1
+code cutoff $? 0
+want "$T/kc5" "your clock"
+want "$T/kc5" "that is their claim"
+if grep -q '"claimed_at"' "$T/l/contacts.json"; then ok; else bad "the claimed date was not kept as a claim"; fi
 
 echo "a compromise rotation is not countersigned, so it cannot be auto-applied"
 CTX_HOME=$T/d $CTX rotate --compromised > "$T/rotc" 2>&1; code rotatec $? 0

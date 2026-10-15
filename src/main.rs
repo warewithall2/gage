@@ -484,7 +484,17 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 return Ok(ExitCode::SUCCESS);
             }
             let compromised = v.claim.reason == "compromised";
-            c.retire(&v.old_sign, &v.claim.at, compromised, Some(v.new_sign.clone()));
+            // The cutoff is MY clock, at the moment I accept. Whoever wrote
+            // the notice chose `at`, and adopting it let them set the
+            // retirement anywhere they liked: far in the future and the old
+            // key keeps working, far in the past and a stretch of real
+            // history stops being attributable. Their date is kept as what it
+            // is -- a claim.
+            let now = bundle::now_rfc3339();
+            c.retire(&v.old_sign, &now, compromised, Some(v.new_sign.clone()));
+            if let Some(r) = c.retired.get_mut(&v.old_sign) {
+                r.claimed_at = Some(v.claim.at.clone());
+            }
             c.keys.insert(v.new_sign.clone(), name.clone());
             match &v.new_box {
                 Some(b) => {
@@ -494,6 +504,8 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             }
             c.save()?;
             println!("\n{name} moved onto the new key.");
+            println!("  cutoff recorded as {now} (your clock). They state they rotated at");
+            println!("  {} -- that is their claim, and it is not what the verdict uses.", v.claim.at);
             println!("  their old bundles stay verifiable, marked as signed with a retired key");
             println!("  anything NEW signed with the old key is now rejected");
         }
@@ -971,8 +983,15 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 } else {
                     String::new()
                 };
+                let flag = if t.others.len() > 1 {
+                    format!("  !! {} correspondents", t.others.len())
+                } else if !t.unverified.is_empty() {
+                    "  !! unverified thread claim".to_string()
+                } else {
+                    String::new()
+                };
                 println!(
-                    "{}  {}  [{}]",
+                    "{}  {}  [{}]{flag}",
                     t.id,
                     t.subject,
                     t.state.label()
@@ -994,6 +1013,29 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 return Err(format!("no thread {id}").into());
             };
             println!("{}  [{}]\n", t.subject, t.state.label());
+            // Said before the messages, because it changes how they should be
+            // read. A thread with two correspondents is either a group or
+            // somebody posting into a conversation they were not part of, and
+            // the reader is the only one who can tell which.
+            if t.others.len() > 1 {
+                let who: Vec<String> = t
+                    .others
+                    .iter()
+                    .map(|k| match contacts.name_any(k) {
+                        Some(n) => n.to_string(),
+                        None => format!("unlisted {}…", k.chars().take(10).collect::<String>()),
+                    })
+                    .collect();
+                println!("!! {} correspondents here: {}", t.others.len(), who.join(", "));
+                println!("   a reply must name a message, not this thread\n");
+            }
+            if !t.unverified.is_empty() {
+                println!(
+                    "!! {} message(s) claim this thread while answering something you do",
+                    t.unverified.len()
+                );
+                println!("   not hold: {}\n", t.unverified.join(", "));
+            }
             for m in &t.messages {
                 let who = if m.from.key == me {
                     "you".to_string()
@@ -1008,7 +1050,8 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 // started showed your own words as something to catch up on.
                 let mine_msg = m.from.key == me;
                 let mark = if mine_msg || st.is_read(&m.id) { " " } else { "*" };
-                println!("{mark} {}  {:<14} {}  {}", m.created, m.msg_type.label(), who, m.id);
+                let claim = if t.unverified.contains(&m.id) { "  [thread claim unverified]" } else { "" };
+                println!("{mark} {}  {:<14} {}  {}{claim}", m.created, m.msg_type.label(), who, m.id);
                 for it in &m.items {
                     println!("      {:?}  {}", it.kind, it.path.strip_prefix("items/").unwrap_or(&it.path));
                 }

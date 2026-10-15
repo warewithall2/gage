@@ -53,6 +53,11 @@ pub struct Loaded {
     pub dir: PathBuf,
     /// Items whose stored bytes do not match their recorded digest.
     pub tampered: Vec<String>,
+    /// Which timestamp decided a retired-key verdict: this machine's record of
+    /// when the bundle turned up, or, for a bundle that has never been in this
+    /// inbox, the sender's own `created` field. Worth saying out loud, because
+    /// only one of the two is trustworthy.
+    pub dated_by_sender: bool,
 }
 
 /// Build a bundle. `specs` are (kind, source path) pairs.
@@ -148,10 +153,17 @@ pub fn load(dir: &Path) -> std::io::Result<Loaded> {
     let sig_ok = !sig.trim().is_empty()
         && crate::identity::verify(&manifest.from.key, &bytes, &sig);
     let contacts = Contacts::load();
+    // Prefer this machine's own record of when the bundle arrived. `created`
+    // is the signer's field, and for a retired key it was the whole basis of
+    // "this predates the retirement".
+    let st = crate::state::LocalState::load();
+    let seen = st.first_seen(&manifest.id).map(|s| s.to_string());
+    let dated_by_sender = seen.is_none();
+    let when = seen.unwrap_or_else(|| manifest.created.clone());
     let trust = if !sig_ok {
         Trust::Unverified
     } else {
-        contacts.verdict(&manifest.from.key, &manifest.created)
+        contacts.verdict(&manifest.from.key, &when)
     };
 
     // A good signature covers the manifest, which covers the digests. Check
@@ -169,7 +181,7 @@ pub fn load(dir: &Path) -> std::io::Result<Loaded> {
             Err(_) => tampered.push(format!("{} (missing)", it.path)),
         }
     }
-    Ok(Loaded { manifest, trust, dir: dir.to_path_buf(), tampered })
+    Ok(Loaded { manifest, trust, dir: dir.to_path_buf(), tampered, dated_by_sender })
 }
 
 /// Re-sign for a forward, appending to the chain rather than replacing it.

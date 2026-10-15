@@ -264,6 +264,8 @@ function alerts(m){
     `Name mismatch. This key is <b>${esc(m.known_as)}</b> on your list, but the bundle claims "${esc(m.claimed_name)}". The claimed name is text the sender chose.`]);
   if(!m.mine && !m.known_as) out.push(['',
     `This key is not on your list. It claims the name "${esc(m.claimed_name)}", which is unverified.`]);
+  if(m.thread_ok===false) out.push(['bad',
+    `This message <b>claims</b> to belong to this conversation while answering something you do not hold. The thread field is written by the sender. Treat it as a separate message, and reply to the person you meant.`]);
   if(m.forwarded) out.push(['',`Forwarded, ${m.hops} hop(s). The sender is not the author, and any hop could have altered it before signing.`]);
   if(m.memories) out.push(['bad',
     `${m.memories} memory file(s). Memory outlives the session that accepts it, so it is never merged automatically.`]);
@@ -353,6 +355,7 @@ function render(){
           <span class="when">${esc(ago(last.created))}</span></span>
         <span class="tmeta">
           ${t.unread?'<span class="pip"></span>':''}
+          ${t.correspondents>1?'<span class="state s-you">'+t.correspondents+' senders</span>':''}
           <span class="state ${sClass(t.state)}">${esc(sShort(t.state))}</span>
           <span class="peers">${esc(who)}</span></span>
       </span>
