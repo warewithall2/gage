@@ -16,6 +16,15 @@ announce-once, thread dedup and the `pending/` directory name are keyed on the
 id, so one of the pair can hide the other. It requires the same author, two
 messages in the same second, and identical digests and subject.
 
+**Observed in the wild, 15 Oct.** Not a constructed case: sending the same
+review-request to two reviewers one after the other produced two distinct
+signed manifests -- different `to`, different signatures -- that share the id
+`254c99c77115bfaf`, because they were built in the same second from the same
+item and subject. It was harmless only because the two recipients have
+separate ctx homes. One inbox holding both, or a relay keyed on the id, and
+one would have suppressed the other. The two-messages-in-one-second condition
+is not exotic; it is what a loop sending to a list does every time.
+
 Closing it means changing the id formula, which invalidates the id of every
 bundle already on disk — they would all read as tampered. So it needs either a
 `FORMAT_VERSION` bump with the old formula grandfathered (and an attacker can
