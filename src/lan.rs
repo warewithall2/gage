@@ -719,3 +719,246 @@ mod tests {
         assert_eq!(bare.token(), "SIGN");
     }
 }
+
+// ---------------------------------------------------------------------------
+// One command, which is what was actually asked for
+// ---------------------------------------------------------------------------
+
+/// What `ctx lan` writes while it runs, so another terminal can send to a
+/// name it saw on the list. Deleted on the way out, because a stale address
+/// is worse than no address: it would send a bundle to whoever holds that IP
+/// now.
+pub fn nearby_path() -> std::path::PathBuf {
+    crate::identity::home().join("nearby.json")
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct NearbyEntry {
+    pub label: String,
+    pub handle: String,
+    pub sign: String,
+    pub boxpub: String,
+    pub addr: String,
+    pub at: u64,
+}
+
+pub fn read_nearby() -> Vec<NearbyEntry> {
+    std::fs::read_to_string(nearby_path())
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+/// Find a device by the word-pair label on the list, or by a contact name.
+///
+/// Returns the sealing key and the address, which is everything a send needs.
+pub fn lookup_nearby(name: &str) -> Option<NearbyEntry> {
+    let want = name.trim().to_ascii_lowercase().replace('-', " ");
+    let seen = read_nearby();
+    // An exact label first, then a prefix, so "yellow" is enough when only
+    // one device on the list starts with it.
+    seen.iter()
+        .position(|e| e.label == want || e.handle.to_ascii_lowercase() == want)
+        .or_else(|| {
+            let hits: Vec<usize> = seen
+                .iter()
+                .enumerate()
+                .filter(|(_, e)| e.label.starts_with(&want))
+                .map(|(i, _)| i)
+                .collect();
+            if hits.len() == 1 { Some(hits[0]) } else { None }
+        })
+        .map(|i| seen.into_iter().nth(i).unwrap())
+}
+
+/// `ctx lan`: visible, discoverable and reachable for exactly as long as this
+/// command is in the foreground.
+///
+/// This is the shape the design doc argued itself out of and should not have.
+/// The objection to announcing was presence -- a laptop broadcasting its key
+/// onto every network it joins -- and the answer was a `--announce 60` flag,
+/// which made the common case three commands and two machines' worth of
+/// timing. But LocalSend has the same objection and solves it better: it is
+/// visible while its window is open and silent when it is closed, and nobody
+/// thinks of that as presence because the person can see it running.
+///
+/// So the time box is the process lifetime. Ctrl-C and this machine is as
+/// invisible as it was before. That is strictly clearer than a number of
+/// seconds, because the state is on screen rather than in a flag you have to
+/// remember you passed.
+///
+/// Pairing is deliberately NOT a gate here. An unpaired device can send to
+/// you, and what arrives lands in `inbox/pending` under `SENDER NOT ON YOUR
+/// LIST`, unread, behind the same accept gate as everything else -- which is
+/// the protection, and always was. Confirming a fingerprint upgrades a device
+/// from "some machine on this wifi" to "the key I checked", which is what a
+/// grant should require. Making it a precondition for sending one file was my
+/// mistake, not a property of the design.
+pub fn run(port: u16) -> std::io::Result<()> {
+    let id = match Identity::load() {
+        Ok(i) => i,
+        // No identity is not an error on this path. It is the first run, and
+        // asking someone to choose a name before they have seen the thing
+        // work is the step LocalSend does not have.
+        Err(_) => {
+            let i = Identity::create_named(None)?;
+            println!("new identity, named after its own key: {}", i.handle);
+            println!("  {}", crate::words::fingerprint(&i.public_b64()));
+            println!();
+            i
+        }
+    };
+    let me = id.public_b64();
+    let my_label = crate::words::label(&me);
+
+    let tcp = TcpListener::bind(("0.0.0.0", port))?;
+    println!("ctx lan -- you are \"{my_label}\" on this network");
+    println!("  visible and reachable while this runs, silent the moment you stop it");
+    println!("  anything sent to you lands unread in inbox/pending");
+    println!("  broadcasting to: {}", bcast_targets().join(", "));
+    println!();
+
+    let rid = Identity::load()?;
+    std::thread::spawn(move || {
+        for s in tcp.incoming() {
+            match s {
+                Ok(s) => {
+                    if let Err(e) = handle_inbound(s, &rid) {
+                        eprintln!("ctx lan: {e}");
+                    }
+                }
+                Err(e) => eprintln!("ctx lan: accept: {e}"),
+            }
+        }
+    });
+    std::thread::spawn(move || {
+        if let Err(e) = answer_queries(port) {
+            eprintln!("ctx lan: query responder stopped: {e}");
+        }
+    });
+
+    // Best effort: a stale list is worse than none, so it goes on the way out
+    // too. A kill -9 can still leave one behind, which is why every entry
+    // carries the time it was seen and a send refuses an old one.
+    let _ = std::fs::remove_file(nearby_path());
+    let out = nearby_path();
+    let cleanup = out.clone();
+    let _ = ctrlc_remove(cleanup);
+
+    let sock = UdpSocket::bind(("0.0.0.0", announce_bind())).map_err(|e| {
+        std::io::Error::new(
+            e.kind(),
+            format!(
+                "could not bind udp {} ({e}). Another ctx lan is already running on \
+                 this machine.",
+                announce_bind()
+            ),
+        )
+    })?;
+    sock.set_broadcast(true)?;
+    sock.set_read_timeout(Some(Duration::from_millis(500)))?;
+
+    let mut seen: Vec<NearbyEntry> = Vec::new();
+    let mut last_shout = std::time::Instant::now() - Duration::from_secs(10);
+    let mut shown = String::new();
+    loop {
+        if last_shout.elapsed() >= Duration::from_secs(2) {
+            let p = sign_packet(
+                &id,
+                Packet {
+                    t: "announce".into(),
+                    handle: id.handle.clone(),
+                    sign: me.clone(),
+                    boxpub: id.box_public_b64(),
+                    port,
+                    at: now(),
+                    want: String::new(),
+                    nonce: String::new(),
+                    sig: String::new(),
+                },
+            );
+            let body = serde_json::to_vec(&p).unwrap_or_default();
+            for d in bcast_targets() {
+                let _ = sock.send_to(&body, (d.as_str(), announce_dest()));
+            }
+            last_shout = std::time::Instant::now();
+            // Forget anyone who stopped announcing, so the list on screen is
+            // who is there rather than who has ever been there.
+            seen.retain(|e| now().saturating_sub(e.at) <= 15);
+        }
+
+        let mut buf = [0u8; MAX_PACKET];
+        if let Ok((n, from)) = sock.recv_from(&mut buf) {
+            if let Some(p) = parse(&buf[..n]) {
+                if p.t == "announce" && p.sign != me {
+                    let e = NearbyEntry {
+                        label: crate::words::label(&p.sign),
+                        handle: p.handle.clone(),
+                        sign: p.sign.clone(),
+                        boxpub: p.boxpub.clone(),
+                        addr: format!("{}:{}", from.ip(), p.port),
+                        at: now(),
+                    };
+                    match seen.iter().position(|x| x.sign == e.sign) {
+                        Some(i) => seen[i] = e,
+                        None => seen.push(e),
+                    }
+                }
+            }
+        }
+
+        // Written every pass, so a send from another terminal sees the list
+        // as it is now.
+        if let Ok(j) = serde_json::to_vec_pretty(&seen) {
+            let _ = std::fs::write(&out, j);
+        }
+        let c = crate::trust::Contacts::load();
+        let mut lines = String::new();
+        for e in &seen {
+            let known = match c.name_for(&e.sign) {
+                Some(n) => format!("paired, on your list as {n}"),
+                None => "not paired -- ctx pair <name> to confirm its key".to_string(),
+            };
+            lines.push_str(&format!("  {}  at {}  ({known})\n", e.label, e.addr));
+            lines.push_str(&format!("      says : {}\n", crate::words::fingerprint(&e.sign)));
+        }
+        if lines != shown {
+            if lines.is_empty() {
+                println!("nobody else here yet. Run `ctx lan` on the other machine.");
+            } else {
+                print!("{lines}");
+            }
+            let _ = std::io::stdout().flush();
+            shown = lines;
+        }
+    }
+}
+
+/// Remove the nearby list on Ctrl-C.
+///
+/// Hand-rolled rather than a signal-handling crate: the whole handler is one
+/// `unlink`, and the default disposition is restored immediately after so a
+/// second Ctrl-C always kills the process even if the first one is somehow
+/// stuck.
+#[cfg(unix)]
+fn ctrlc_remove(path: std::path::PathBuf) -> std::io::Result<()> {
+    use std::sync::OnceLock;
+    static PATH: OnceLock<std::path::PathBuf> = OnceLock::new();
+    let _ = PATH.set(path);
+    unsafe extern "C" {
+        fn signal(sig: i32, handler: extern "C" fn(i32)) -> usize;
+    }
+    extern "C" fn on_int(_: i32) {
+        if let Some(p) = PATH.get() {
+            let _ = std::fs::remove_file(p);
+        }
+        std::process::exit(130);
+    }
+    unsafe { signal(2, on_int) };
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn ctrlc_remove(_path: std::path::PathBuf) -> std::io::Result<()> {
+    Ok(())
+}

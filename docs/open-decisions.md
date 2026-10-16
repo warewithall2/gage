@@ -242,6 +242,18 @@ broadcast, and -- the part that does the work -- address resolution by a
 list. A stranger gets silence they cannot tell from an empty network, so
 being reachable stopped requiring being visible.
 
+**Reshaped 16 Oct**, on the owner's verdict that it was too much work, which
+it was: the second machine took eleven steps and nine of them were the tool's
+fault. `ctx lan` is now one foreground command that announces, discovers,
+listens and receives; presence is bounded by the process rather than by a
+flag, which is LocalSend's own answer and a clearer one. An identity names
+itself from its own key when no name is given, and pairing became an upgrade
+rather than a precondition -- an unpaired machine can send, and what arrives
+is `SENDER NOT ON YOUR LIST` behind the accept gate that was always the
+protection. The fingerprint argument survives where it belongs: as what a
+*grant* should require before an agent acts unattended, not as a toll on
+moving one file.
+
 Two things remain the owner's, and both are smaller than the decision was:
 
 - **`ctx listen` is a process holding a port**, which is the first thing in

@@ -124,6 +124,30 @@ impl Identity {
     /// Create a new keypair. Refuses to clobber an existing one: silently
     /// replacing a key would make every bundle you ever sent unverifiable,
     /// and `ctx rotate` is the operation that does it properly.
+    /// Create an identity, naming it after its own key when no name is given.
+    ///
+    /// LocalSend never asks you to pick a name, and that is most of why
+    /// opening it feels like nothing. The difference here is that the name is
+    /// DERIVED from the signing key rather than drawn at random, so it is one
+    /// nobody chooses -- which makes it a slightly better label than a random
+    /// one, at no cost to the person. It is still only a label: 16 bits, and
+    /// grindable, so nothing is ever confirmed against it. See `words`.
+    pub fn create_named(handle: Option<&str>) -> std::io::Result<Self> {
+        match handle {
+            Some(h) => Self::create(h),
+            None => {
+                // The name comes from the key, so the key has to exist
+                // first. Created under a placeholder and renamed, rather
+                // than generating a seed out here and duplicating the write
+                // path that `create` already gets right.
+                let me = Self::create("unnamed")?;
+                let label = crate::words::label(&me.public_b64());
+                fs::write(home().join("handle"), &label)?;
+                Ok(Self { handle: label, ..me })
+            }
+        }
+    }
+
     pub fn create(handle: &str) -> std::io::Result<Self> {
         let dir = home();
         fs::create_dir_all(&dir)?;

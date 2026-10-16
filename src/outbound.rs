@@ -221,6 +221,10 @@ pub struct SendArgs {
     pub reply_to: Option<String>,
     pub msg_type: String,
     pub allow_findings: bool,
+    /// Delivery is being handled over the local network by the caller, so the
+    /// "no local route, move it yourself" advice would be wrong rather than
+    /// merely noisy -- it tells a person to do a step that is already done.
+    pub lan: bool,
     pub agent: Option<String>,
     pub model: Option<String>,
 }
@@ -228,7 +232,7 @@ pub struct SendArgs {
 pub fn send_bundle(a: SendArgs) -> Result<manifest::Manifest, Box<dyn std::error::Error>> {
     let SendArgs {
         to, subject, out, file, prompt, decision, memory, dir,
-        allow_secrets, reply_to, msg_type: type_in, allow_findings, agent, model,
+        allow_secrets, reply_to, msg_type: type_in, allow_findings, lan, agent, model,
     } = a;
     let r#type = type_in;
 
@@ -358,7 +362,7 @@ pub fn send_bundle(a: SendArgs) -> Result<manifest::Manifest, Box<dyn std::error
             }
             let unrouted: Vec<String> =
                 to.iter().filter(|w| routes.home_of(w).is_none()).cloned().collect();
-            if !unrouted.is_empty() {
+            if !unrouted.is_empty() && !lan {
                 println!("  no local route for: {}", unrouted.join(", "));
                 println!("  bundle is at {} -- move it yourself, or", stage.display());
                 println!("  ctx route <handle> <their-ctx-home> to deliver automatically");

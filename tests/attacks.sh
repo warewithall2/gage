@@ -1662,6 +1662,99 @@ kill $LPID 2>/dev/null
 wait 2>/dev/null
 unset CTX_LAN_BCAST
 
+echo "one command is the whole of it, and a key names itself"
+mkdir -p "$T"/{sx,sy}
+export CTX_LAN_BCAST=127.0.0.1
+SX="CTX_LAN_ANNOUNCE_BIND=19789 CTX_LAN_ANNOUNCE_DEST=19790 CTX_LAN_QUERY_BIND=19889 CTX_LAN_QUERY_DEST=19890"
+SY="CTX_LAN_ANNOUNCE_BIND=19790 CTX_LAN_ANNOUNCE_DEST=19789 CTX_LAN_QUERY_BIND=19890 CTX_LAN_QUERY_DEST=19889"
+
+# A name nobody picked. `ctx init` with no argument takes one from its own
+# key, which is the step LocalSend does not make you do.
+CTX_HOME=$T/sx $CTX init > "$T/i0" 2>&1
+code "init with no handle" $? 0
+h=$(CTX_HOME=$T/sx $CTX whoami 2>/dev/null | cut -f1)
+words=$(printf '%s' "$h" | wc -w)
+if [ "$words" -eq 2 ]; then ok; else bad "a self-named identity is $words words, wanted 2"; fi
+# Derived, not random: it is the first pair of its own fingerprint, so the
+# name on the list and the words you confirm cannot disagree.
+sxfp=$(CTX_HOME=$T/sx $CTX fingerprint 2>/dev/null | cut -f2)
+case "$sxfp" in "$h"*) ok;; *) bad "the handle '$h' is not the first pair of '$sxfp'";; esac
+
+# And `ctx lan` on a machine with no identity makes one rather than failing,
+# because being asked to choose a name before seeing the thing work is the
+# step being removed.
+env CTX_HOME=$T/sy $SY $CTX lan --port 19892 > "$T/sylog" 2>&1 &
+SYPID=$!
+env CTX_HOME=$T/sx $SX $CTX lan --port 19891 > "$T/sxlog" 2>&1 &
+SXPID=$!
+sleep 4
+want "$T/sylog" "new identity, named after its own key"
+want "$T/sxlog" "visible and reachable while this runs"
+# Each sees the other, by a label neither of them chose.
+sylab=$(CTX_HOME=$T/sy $CTX whoami 2>/dev/null | cut -f1)
+want "$T/sxlog" "$sylab"
+want "$T/sxlog" "not paired"
+
+# Sending needs no pairing. What protects the receiver is the accept gate and
+# the verdict, which is what has always protected it -- requiring a confirmed
+# fingerprint before one file could move was a step I added, not a property
+# of the design.
+printf 'hello\n' > "$T/w/simple.md"
+env CTX_HOME=$T/sx $SX $CTX send --to "$sylab" --subject "unpaired hop" --file "$T/w/simple.md" --lan > "$T/sp1" 2>&1
+code "send --lan to an unpaired device" $? 0
+want "$T/sp1" "NOT PAIRED"
+want "$T/sp1" "inbox/pending -- not accepted"
+# The advice about moving the bundle by hand would be wrong here, not merely
+# noisy: it names a step that has already happened.
+wantno "$T/sp1" "move it yourself"
+CTX_HOME=$T/sy $CTX inbox > "$T/si1" 2>&1
+want "$T/si1" "unpaired hop"
+want "$T/si1" "SENDER NOT ON YOUR LIST"
+
+# Pairing reads the list that `ctx lan` is already keeping, so it needs no
+# second announce window and no timing between two machines.
+syfp=$(CTX_HOME=$T/sy $CTX fingerprint 2>/dev/null | cut -f2)
+env CTX_HOME=$T/sx $SX $CTX pair other --confirm "$syfp" > "$T/sp2" 2>&1
+code "pair off the live list" $? 0
+want "$T/sp2" "matches what you read off the other screen"
+
+# Pairing is one-sided, and the paired NAME has to keep working anyway: the
+# other machine still announces under its word-pair and will not answer a
+# query from a key it has not paired with. Sending by the better name was the
+# path that broke.
+sleep 3
+env CTX_HOME=$T/sx $SX $CTX send --to other --subject "paired hop" --file "$T/w/simple.md" --lan > "$T/sp3" 2>&1
+code "send --lan to a paired contact name" $? 0
+want "$T/sp3" "paired, on your list as other"
+CTX_HOME=$T/sy $CTX inbox > "$T/si2" 2>&1
+want "$T/si2" "paired hop"
+
+# Stopping it puts the machine back where it was: no list, nothing bound.
+kill -2 $SXPID $SYPID 2>/dev/null
+sleep 1
+if [ -e "$T/sx/nearby.json" ]; then bad "the nearby list survived Ctrl-C"; else ok; fi
+wait 2>/dev/null
+
+# An address is only an address while the machine is still saying so. A list
+# left behind by a kill -9 would otherwise send a bundle to whoever holds
+# that IP now. Written by hand AFTER the listeners are gone, because editing
+# it while `ctx lan` runs is a race -- it rewrites the file twice a second.
+syk=$(CTX_HOME=$T/sy $CTX whoami 2>/dev/null | cut -f2)
+python3 - "$T/sx/nearby.json" "$syk" "$sylab" <<'PY'
+import json,sys,time
+p,tok,lab = sys.argv[1], sys.argv[2], sys.argv[3]
+sign, box = tok.split(".", 1)
+json.dump([{ "label": lab, "handle": lab, "sign": sign, "boxpub": box,
+             "addr": "127.0.0.1:19892", "at": int(time.time()) - 600 }], open(p, "w"))
+PY
+env CTX_HOME=$T/sx $SX $CTX send --to other --subject "stale" --file "$T/w/simple.md" --lan > "$T/sp4" 2>&1
+code "send to a stale list entry" $? 1
+want "$T/sp4" "not an address any more"
+# And it refuses rather than quietly falling back to a broadcast query, which
+# would have asked the network where a machine that is not there has gone.
+wantno "$T/sp4" "no answer from"
+unset CTX_LAN_BCAST
+
 echo "a good bundle exits 0"
 CTX_HOME=$T/b $CTX open "$T/b1" >/dev/null 2>&1; code good $? 0
 

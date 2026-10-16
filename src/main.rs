@@ -40,8 +40,10 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Create your identity keypair
-    Init { handle: String },
+    /// Create your identity keypair. With no name, it is named after its own
+    /// key -- two words nobody chose, like LocalSend's device names except
+    /// that they are derived rather than picked.
+    Init { handle: Option<String> },
     /// Print your public handle and key, to give to someone else
     Whoami,
     /// Replace your keypair, keeping the old one on record
@@ -118,6 +120,10 @@ enum Cmd {
         /// Proceed despite findings from the outbound content scan. Prints
         /// what it is overriding.
         #[arg(long)] allow_findings: bool,
+        /// Hand it straight to a machine on this network once it is built,
+        /// so sending is one command rather than a build and then a push.
+        /// --to may be a word-pair from the `ctx lan` list.
+        #[arg(long)] lan: bool,
         #[arg(long)] agent: Option<String>,
         #[arg(long)] model: Option<String>,
     },
@@ -212,6 +218,13 @@ enum Cmd {
     Ui {
         #[arg(long, default_value = "7777")] port: u16,
     },
+    /// Be on this network: visible, discoverable and reachable, for exactly
+    /// as long as this runs. The whole of it in one command -- start it on
+    /// both machines and they can see and send to each other. Stop it and
+    /// this machine is silent again.
+    Lan {
+        #[arg(long, default_value_t = lan::LISTEN_PORT)] port: u16,
+    },
     /// Who is announcing themselves on this network, right now
     Nearby {
         /// Also announce YOURSELF, for this many seconds. Off by default:
@@ -229,6 +242,9 @@ enum Cmd {
     Pair {
         /// What to call them on YOUR list
         name: String,
+        /// Which machine, by the word-pair `ctx lan` shows. Only needed when
+        /// more than one unpaired machine is on the network.
+        r#as: Option<String>,
         /// The four word-pairs the other machine shows. Given here, they are
         /// compared for you and the pairing fails on any difference -- which
         /// is stricter than a person squinting at a y/n prompt. Omit it to
@@ -326,6 +342,86 @@ fn add_contact(name: &str, key: &str) -> Result<(), Box<dyn std::error::Error>> 
     println!("  this key says : {}", words::fingerprint(&sign_for_words));
     println!("  Check that with {name} over a channel that is not this one.");
     println!("  If their machine says anything else, you have the wrong key.");
+    Ok(())
+}
+
+/// Seal a built bundle and hand it to a machine on this network.
+///
+/// Two ways to find them, and the first needs no pairing at all: if `ctx lan`
+/// is running it has already written down who is here and where, so an
+/// unpaired device on the list can be sent to by its word-pair label. Failing
+/// that, a contact is found by the signed query, which is the path that works
+/// without `ctx lan` open but only for a key already on the list.
+fn hand_over_lan(dir: &std::path::Path, who: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let id = identity::Identity::load()?;
+    let c = trust::Contacts::load();
+
+    // A name on the list, OR a contact whose key is on the list. The second
+    // matters because pairing is one-sided: once you have paired with a
+    // machine you will call it `laptop`, and it will still be announcing
+    // under its word-pair. Without this, `--to laptop` fell through to the
+    // signed query -- which the other machine correctly ignores until it has
+    // paired with YOU, so the better-named path was the one that failed.
+    let on_list = lan::lookup_nearby(who).or_else(|| {
+        let k = c.key_for_name(who)?;
+        lan::read_nearby().into_iter().find(|e| e.sign == k)
+    });
+    let (boxpub, addr, desc) = match on_list {
+        Some(e) => {
+            // A list entry older than a minute is not an address any more:
+            // DHCP moves on, and sending to whoever holds that IP now is a
+            // worse failure than refusing. `ctx lan` rewrites it every couple
+            // of seconds while it runs.
+            if lan::now().saturating_sub(e.at) > 60 {
+                return Err(format!(
+                    "the entry for {who} is {}s old, so it is not an address any more. \
+                     Is `ctx lan` still running on both machines?",
+                    lan::now().saturating_sub(e.at)
+                )
+                .into());
+            }
+            if e.boxpub.is_empty() {
+                return Err(format!("{who} announced no encryption key, so nothing can be sealed to it").into());
+            }
+            let known = match c.name_for(&e.sign) {
+                Some(n) => format!("paired, on your list as {n}"),
+                None => "NOT PAIRED -- it will arrive as SENDER NOT ON YOUR LIST".to_string(),
+            };
+            (e.boxpub.clone(), e.addr.clone(), format!("{} ({known})", e.label))
+        }
+        None => {
+            let sign = c.key_for_name(who).ok_or_else(|| {
+                format!(
+                    "no machine called {who} on this network, and no contact by that name.\n  \
+                     Run `ctx lan` on both machines and use the word-pair it shows."
+                )
+            })?;
+            let boxpub = c
+                .box_keys
+                .get(&sign)
+                .ok_or(format!("{who} has no encryption key on file; re-add them"))?
+                .clone();
+            let seen = lan::resolve(&id, &sign, 8)?.ok_or_else(|| {
+                format!(
+                    "no answer from {who} on this network. They need `ctx lan` or `ctx \
+                     listen` running, and you need to be on their list -- a query from a \
+                     key they do not know is ignored, deliberately and silently."
+                )
+            })?;
+            (boxpub, format!("{}:{}", seen.addr.ip(), seen.port), who.to_string())
+        }
+    };
+
+    let env = seal::seal_dir(dir, &boxpub)?;
+    let body = serde_json::json!({
+        "to_box": boxpub, "envelope": serde_json::to_string(&env)? })
+        .to_string();
+    let sa: std::net::SocketAddr = addr
+        .parse()
+        .map_err(|e| format!("{who} announced an address that is not one ({addr}): {e}"))?;
+    lan::deliver_to(sa, &body)?;
+    println!("  handed to {desc} at {addr}, over this network");
+    println!("  it is in their inbox/pending -- not accepted");
     Ok(())
 }
 
@@ -579,9 +675,9 @@ fn main() -> ExitCode {
 fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     match Cli::parse().cmd {
         Cmd::Init { handle } => {
-            let id = identity::Identity::create(&handle)?;
+            let id = identity::Identity::create_named(handle.as_deref())?;
             println!("identity created in {}", identity::home().display());
-            println!("handle : {handle}");
+            println!("handle : {}", id.handle);
             println!("key    : {}", id.public_b64());
             println!("\nGive the line above to anyone who should be able to send to you.");
         }
@@ -1053,12 +1149,21 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         }
         Cmd::Send {
             to, subject, out, file, prompt, decision, memory, dir,
-            allow_secrets, reply_to, r#type, allow_findings, agent, model,
+            allow_secrets, reply_to, r#type, allow_findings, lan, agent, model,
         } => {
-            send_bundle(SendArgs {
+            let targets = to.clone();
+            let m = send_bundle(SendArgs {
                 to, subject, out, file, prompt, decision, memory, dir,
-                allow_secrets, reply_to, msg_type: r#type, allow_findings, agent, model,
+                allow_secrets, reply_to, msg_type: r#type, allow_findings, lan, agent, model,
             })?;
+            if lan {
+                // Pushed from our own kept copy rather than the staging dir,
+                // which is the same bytes and is still there after the build.
+                let from = routes::sent_dir(&identity::home()).join(&m.id);
+                for who in &targets {
+                    hand_over_lan(&from, who)?;
+                }
+            }
         }
         Cmd::Reply {
             id, text, file, prompt, decision, memory, dir, r#type, subject,
@@ -1100,6 +1205,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 reply_to: Some(t.parent),
                 msg_type: r#type.unwrap_or(t.msg_type),
                 allow_findings,
+                lan: false,
                 agent, model,
             });
             let _ = std::fs::remove_dir_all(&tmp);
@@ -1347,6 +1453,10 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 }
                 return Err("not sent. Re-run with --yes once you have read the list above.".into());
             }
+            if lan {
+                hand_over_lan(&dir, &to)?;
+                return Ok(ExitCode::SUCCESS);
+            }
             let c = trust::Contacts::load();
             let sign = match c.key_for_name(&to) {
                 Some(k) => k,
@@ -1370,27 +1480,6 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             let body = serde_json::json!({
                 "to_box": boxpub, "envelope": serde_json::to_string(&env)? })
                 .to_string();
-            if lan {
-                // Sealed BEFORE the address is even known, which is why a
-                // wrong answer to the query is not a disclosure: the worst a
-                // spoofed responder gets is ciphertext for a key it does not
-                // hold.
-                let id = identity::Identity::load()?;
-                let Some(seen) = lan::resolve(&id, &sign, 8)? else {
-                    return Err(format!(
-                        "no answer from {to} on this network. They need `ctx listen` \
-                         running, and you need to be on their list -- a query from a key \
-                         they do not know is ignored, deliberately and silently."
-                    )
-                    .into());
-                };
-                let mut dest = seen.addr;
-                dest.set_port(seen.port);
-                lan::deliver_to(dest, &body)?;
-                println!("handed to {to} at {dest}, over this network");
-                println!("  no relay, and it is in their inbox/pending -- not accepted");
-                return Ok(ExitCode::SUCCESS);
-            }
             let resp = remote::post(&addr, "/send", &body)?;
             println!("pushed to {to} via {addr}");
             println!("  {}", resp.trim());
@@ -1562,6 +1651,9 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         Cmd::Ui { port } => {
             ui::serve(port)?;
         }
+        Cmd::Lan { port } => {
+            lan::run(port)?;
+        }
         Cmd::Nearby { announce, r#for } => {
             let id = identity::Identity::load().ok();
             let secs = announce.unwrap_or(r#for).max(r#for);
@@ -1601,10 +1693,32 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             println!("the handle is decoration. The words are the key, and the only thing");
             println!("worth comparing with the person sitting at the other machine.");
         }
-        Cmd::Pair { name, confirm, r#for } => {
+        Cmd::Pair { name, r#as, confirm, r#for } => {
             let id = identity::Identity::load()?;
-            println!("listening for {}s. The other machine wants `ctx nearby --announce`.", r#for);
-            let seen = lan::nearby(Some(&id), lan::LISTEN_PORT, r#for, false)?;
+            // If `ctx lan` is running it has already written down who is
+            // here, so pairing needs no second announce window and no timing
+            // between two machines. Falling back to listening keeps `ctx
+            // pair` working on its own.
+            let live: Vec<lan::Seen> = lan::read_nearby()
+                .into_iter()
+                .filter(|e| lan::now().saturating_sub(e.at) <= 60)
+                .filter_map(|e| {
+                    let addr: std::net::SocketAddr = e.addr.parse().ok()?;
+                    Some(lan::Seen {
+                        handle: e.handle,
+                        sign: e.sign,
+                        boxpub: e.boxpub,
+                        addr,
+                        port: addr.port(),
+                    })
+                })
+                .collect();
+            let seen = if live.is_empty() {
+                println!("listening for {}s. The other machine wants `ctx lan`.", r#for);
+                lan::nearby(Some(&id), lan::LISTEN_PORT, r#for, false)?
+            } else {
+                live
+            };
             let c = trust::Contacts::load();
             let fresh: Vec<_> = seen.iter().filter(|s| !c.knows(&s.sign)).collect();
             let cand = match fresh.len() {
@@ -1617,15 +1731,33 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 // exactly the step where a person stops reading, and the
                 // whole value of this command is that they read. Narrow it
                 // down by having one machine announce at a time.
+                // More than one, so the NAME has to say which. `ctx pair
+                // laptop simple-dahlia` -- still no numbered menu, because
+                // picking "2" from a list is exactly where a person stops
+                // reading, and reading is the whole value of this command.
                 n => {
-                    for s in &fresh {
-                        println!("  \"{}\" at {}  {}", s.handle, s.addr.ip(), words::fingerprint(&s.sign));
+                    let want = r#as
+                        .as_deref()
+                        .map(|w| w.trim().to_ascii_lowercase().replace('-', " "));
+                    let pick: Vec<_> = match &want {
+                        Some(w) => fresh
+                            .iter()
+                            .filter(|s| words::label(&s.sign).starts_with(w.as_str()))
+                            .collect(),
+                        None => Vec::new(),
+                    };
+                    if pick.len() == 1 {
+                        pick[0]
+                    } else {
+                        for s in &fresh {
+                            println!("  {}  at {}  {}", words::label(&s.sign), s.addr.ip(), words::fingerprint(&s.sign));
+                        }
+                        return Err(format!(
+                            "{n} unpaired machines are here. Say which, by the word-pair \
+                             above: ctx pair {name} <word-pair>"
+                        )
+                        .into());
                     }
-                    return Err(format!(
-                        "{n} unpaired machines are announcing. Pair them one at a time: \
-                         stop the others, or re-run when only the one you mean is announcing."
-                    )
-                    .into());
                 }
             };
             let fp = words::fingerprint(&cand.sign);
@@ -1667,7 +1799,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             }
             add_contact(&name, &cand.token())?;
             println!();
-            println!("paired. `ctx listen` on each machine, then: ctx push <dir> --to {name} --lan --yes");
+            println!("paired. With `ctx lan` running on both: ctx send --to {name} --file <path> --lan");
         }
         Cmd::Listen { bind, port } => {
             lan::listen(&bind, port)?;

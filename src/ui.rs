@@ -391,6 +391,7 @@ fn reply_from_ui(body: &str) -> Result<String, (&'static str, String)> {
         reply_to: Some(t.parent),
         msg_type: msg_type.unwrap_or(t.msg_type),
         allow_findings: false,
+        lan: false,
         agent: None,
         model: None,
     });

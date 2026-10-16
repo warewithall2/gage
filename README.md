@@ -71,51 +71,62 @@ always a real prefix of the fingerprint rather than a separate lookalike.
 
 ## The second machine
 
-    # on the laptop
-    $ ctx nearby --announce 60
-    announcing for 60s, then stopping. What leaves this machine:
-      handle "laptop"  (a string you chose; nobody should trust it)
-      signing key MtZ9...
-      encryption key 7Qa1...
-      port 7791
-      to every host on this network. Anything listening learns all of it.
+Install it, then one command on each:
 
-    # on the desktop
+    $ ctx lan
+    new identity, named after its own key: grey crowbar
+      grey crowbar · lavish jackdaw · sleepy hedgerow · electric delta
+
+    ctx lan -- you are "grey crowbar" on this network
+      visible and reachable while this runs, silent the moment you stop it
+      anything sent to you lands unread in inbox/pending
+      broadcasting to: 255.255.255.255, 192.168.1.255
+
+      gallant alcove  at 192.168.1.44:7791  (not paired)
+          says : gallant alcove · indigo burrow · merry banner · glassy nettle
+
+Then send, by the two words on the list:
+
+    $ ctx send --to "gallant alcove" --subject hi --file notes.md --lan
+    handed to gallant alcove at 192.168.1.44:7791, over this network
+    it is in their inbox/pending -- not accepted
+
+No name to choose, no key to copy, no pairing first, no relay. The name is
+two words taken from the signing key, so nobody picks their own — LocalSend's
+device names, except derived rather than chosen, which makes them a slightly
+better label at no cost to the person.
+
+**Presence is the process.** It announces while `ctx lan` is in the
+foreground and goes silent the moment you stop it. That is LocalSend's own
+answer to the same objection, and a better one than the flag this started
+with: the state is visible on screen rather than sitting in a number of
+seconds you have to remember you passed.
+
+**Pairing is an upgrade, not a gate.** An unpaired machine can send to you
+and what arrives is `SENDER NOT ON YOUR LIST`, unread, behind the same accept
+gate as everything else — which is the protection, and always was. When you
+want a key confirmed rather than merely observed:
+
     $ ctx pair laptop
-      "laptop" at 192.168.1.44
-      says : simple dahlia · mild forest · green daffodil · clear menhir
+      gallant alcove  at 192.168.1.44
+      says : gallant alcove · indigo burrow · merry banner · glassy nettle
 
     Does the other machine show EXACTLY those words? [y/N] y
-    added laptop (verify + encrypt)
 
-Then `ctx listen` on each, and `ctx push <dir> --to laptop --lan --yes` goes
-straight across with no relay, landing in their `inbox/pending` for the same
-accept gate as everything else.
+Four word-pairs is 64 bits and is what a person compares; the single pair in
+the list is 16 bits and is a label only, never confirmed against, because
+grinding 65,000 keypairs to match one is trivial. That confirmation is what
+makes a key *yours* rather than *some machine on this wifi*, which is what a
+[grant](#authority-the-one-thing-that-says-you-may-act) should require before
+an agent acts on a message unattended. Requiring it before one file could
+move was a step I added and it was wrong.
 
-That is LocalSend's experience with one step added, and the step is the whole
-point. LocalSend identifies a peer by a name the device chose, which is fine
-for one expected file: the blast radius of a spoof is one unwanted download. A
-ctx payload is instructions an agent may act on later, unattended, possibly
-under a grant — "I glanced at a device name once" cannot carry that. So
-**discovery answers where a key is reachable and the fingerprint answers whose
-it is**, and the two never get conflated. Spoofing a peer in a discovery
-service is the named attack in OWASP ASI07.
-
-**Nothing announces by default.** `--announce` is time-boxed, prints
-everything it is about to broadcast before broadcasting it, and stops on its
-own; there is no mode where a laptop keeps shouting onto every café network it
-joins. Afterwards, finding a paired machine is a *query*, not a broadcast of
-your existence — and `ctx listen` answers a query only when it is signed by a
-key already on your list. A stranger gets silence they cannot tell from an
-empty network, which is how being reachable stopped requiring being visible.
-The key being asked about travels hashed with the query's nonce, so the
-segment does not learn who you are sending to.
-
-What that does *not* buy: the TCP port takes a sealed envelope from anyone who
-reaches it, on purpose, because a first bundle from a new contact has to be
-able to arrive. It lands unread under `SENDER NOT ON YOUR LIST`. The query
-gate hides your address; the accept gate is what protects you, as always.
-Design and the two costs: [docs/lan-discovery-design.md](docs/lan-discovery-design.md).
+Underneath, `ctx nearby`, `ctx pair` and `ctx listen` are still there as the
+explicit forms, and `ctx listen` is the one to use for a machine that should
+be reachable without announcing — it answers an address query only when the
+query is signed by a key already on your list, so a stranger gets silence they
+cannot tell from an empty network. Design and the costs:
+[docs/lan-discovery-design.md](docs/lan-discovery-design.md).
 
 ## Authority: the one thing that says you may act
 
@@ -195,10 +206,9 @@ write. A file you edit is already revocable by editing it.
     ctx reply   <id> --text "..."      # answer a thread, recipient inferred
     ctx forward ./handoff --to group:eng --out ./fwd
 
-    ctx nearby --announce 60           # be findable on this network, briefly
-    ctx pair laptop                    # compare words out of band, then add
-    ctx listen                         # be reachable for keys on your list
-    ctx push ./handoff --to laptop --lan --yes
+    ctx lan                            # the whole of the local network, one command
+    ctx send --to "grey crowbar" --file notes.md --lan
+    ctx pair laptop                    # confirm a key, rather than just see it
 
 `open` exits 0 when the bundle is attributable, and 2 when the signature fails,
 the payload does not match, or the signing key has been taken out of service,
@@ -656,11 +666,11 @@ invoked rather than online, so the instant-messenger model's buddy list and
 accept-before-transfer carry over and its presence does not. If moving
 directories by hand gets annoying, add a relay — the format does not change.
 
-Two commands do hold a port, and it is worth naming them rather than letting
-"no server" quietly stop being true: `ctx ui` on loopback, and `ctx listen` on
-the local network. Neither is required for anything, both are in the
-foreground where you can see them, and `ctx listen` answers a discovery query
-only for keys already on your list.
+Three commands do hold a port, and it is worth naming them rather than letting
+"no server" quietly stop being true: `ctx ui` on loopback, and `ctx lan` and
+`ctx listen` on the local network. None is required for anything, all are in
+the foreground where you can see them, and `ctx lan` is the only thing in ctx
+that announces — for exactly as long as you are looking at it.
 
 It does not sandbox anything. A verified sender is an *accountable* sender, not
 a safe one. The frame tells a reader what the content is; deciding to act on it
@@ -681,7 +691,7 @@ in the message. See [Authority](#authority-the-one-thing-that-says-you-may-act).
 
     cargo build --release && cargo test --release && bash tests/attacks.sh
 
-457 checks plus 70 Rust unit tests. Every one is an attack that worked, or
+479 checks plus 70 Rust unit tests. Every one is an attack that worked, or
 nearly worked, during development: frame-boundary forgery, payload swapping
 after signing, a listed contact claiming a third party's name, an unverified
 author name on a forward, a trust label that was a substring of its own

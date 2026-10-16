@@ -134,6 +134,45 @@ plain statement of what leaves the machine.
 version that skips it for convenience has thrown away the reason to use ctx
 rather than LocalSend. Making it fast is the job; making it optional is not.
 
+## Corrected 16 Oct: the three commands should have been one
+
+The design above is right about the properties and wrong about the shape, and
+the person who asked for it said so in one sentence: too much work. Counting
+honestly, the runbook for a second machine came to eleven steps, and only two
+of them were about the second machine. The rest were mine.
+
+What was wrong was the time box. The presence objection is real -- a laptop
+should not broadcast its key onto every network it joins -- and the answer
+taken here was `--announce 60`, a number of seconds. But LocalSend has the
+identical objection and answers it better: it is visible while its window is
+open and silent when it is closed, and nobody calls that presence, because the
+person can see it running. **The time box is the process lifetime.** Ctrl-C
+and the machine is as invisible as it was before, with the state on screen
+instead of in a flag you have to remember you passed.
+
+So `ctx lan` is one foreground command that announces, discovers, listens and
+receives, and it collapses `nearby --announce`, `nearby` and `listen` into the
+thing a person actually does. The explicit three remain underneath;
+`ctx listen` in particular is still the right command for a machine that
+should be reachable *without* announcing.
+
+Two further steps went the same way:
+
+- **A name nobody has to choose.** `ctx init` with no argument takes a
+  word-pair from its own signing key. Derived rather than random, which is
+  strictly better than LocalSend: it is the first pair of the fingerprint, so
+  the name on the list and the words you confirm cannot disagree. And `ctx
+  lan` on a machine with no identity makes one, because being asked to pick a
+  name before seeing the thing work is exactly the step being removed.
+- **Pairing is an upgrade, not a gate.** This is the one that mattered. An
+  unpaired machine can send, and what arrives is `SENDER NOT ON YOUR LIST`,
+  unread, behind the accept gate -- which is the protection, and was the
+  protection all along. The argument that "the pairing step cannot be removed"
+  was about what a *grant* should require before an agent acts unattended, and
+  that argument is intact. It was never an argument for requiring a confirmed
+  fingerprint before one file could move between two machines, and reading it
+  as one turned a correct principle into a bad tool.
+
 ## The presence decision, as taken
 
 Default off, time-boxed when on, full disclosure of what is sent, and no
