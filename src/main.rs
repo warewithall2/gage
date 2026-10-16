@@ -237,8 +237,11 @@ enum Cmd {
         #[arg(long, default_value = "10")] r#for: u64,
     },
     /// Confirm a nearby machine's fingerprint out of band, then add its key.
-    /// The one step that cannot be optimised away: discovery says where a
-    /// key is, and only this says whose it is.
+    /// Not needed to send -- an unpaired machine's bundle arrives as SENDER
+    /// NOT ON YOUR LIST, behind the same accept gate as everything else.
+    /// This is what turns "some machine on this wifi" into "the key I
+    /// checked", which is what a grant should require before an agent acts
+    /// on a message unattended.
     Pair {
         /// What to call them on YOUR list
         name: String,
