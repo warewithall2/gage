@@ -90,11 +90,45 @@ fn query_dest() -> u16 {
     env_u16("CTX_LAN_QUERY_DEST", query_bind())
 }
 
-/// Where a broadcast goes. On a real network this is the all-hosts address;
-/// a loopback test points it at 127.0.0.1 so the two homes can hear each
-/// other without a second machine.
-fn bcast() -> String {
-    std::env::var("CTX_LAN_BCAST").unwrap_or_else(|_| "255.255.255.255".to_string())
+/// This machine's address on the network it would use to reach the world.
+///
+/// A connected UDP socket, which sends nothing: `connect` on a datagram
+/// socket only fixes the route, and the kernel then reports which local
+/// address that route would use. No packet leaves, and the address it is
+/// pointed at is never contacted.
+fn local_ip() -> Option<std::net::IpAddr> {
+    let s = UdpSocket::bind(("0.0.0.0", 0)).ok()?;
+    s.connect(("1.1.1.1", 9)).ok()?;
+    Some(s.local_addr().ok()?.ip())
+}
+
+/// Every address worth sending one announcement to.
+///
+/// Two, because one of them does not work everywhere. `255.255.255.255` is
+/// the all-hosts broadcast and is what Linux wants; macOS and the BSDs
+/// generally refuse it outright with "can't assign requested address" unless
+/// the socket is bound to a specific interface, and want the
+/// subnet-directed form (`192.168.1.255`) instead. Sending to both costs one
+/// extra datagram and removes a platform question from the one command a
+/// person runs first.
+///
+/// The subnet address assumes a /24, because reading the real netmask means
+/// `getifaddrs` and a libc dependency for one number. A wrong guess sends a
+/// packet nowhere; it does not break the other destination. `CTX_LAN_BCAST`
+/// replaces the whole list, which is how the test suite puts both homes on
+/// loopback and how an unusual network can be pointed at by hand.
+pub fn bcast_targets() -> Vec<String> {
+    if let Ok(v) = std::env::var("CTX_LAN_BCAST") {
+        return vec![v];
+    }
+    let mut out = vec!["255.255.255.255".to_string()];
+    if let Some(std::net::IpAddr::V4(ip)) = local_ip() {
+        let o = ip.octets();
+        if o[0] != 127 {
+            out.push(format!("{}.{}.{}.255", o[0], o[1], o[2]));
+        }
+    }
+    out
 }
 
 /// A datagram is one packet, so this caps what a stranger can make us parse.
@@ -279,7 +313,12 @@ pub fn nearby(
                     // A failed broadcast is not fatal: a machine with no
                     // route for 255.255.255.255 can still be the one that
                     // LISTENS while the other announces.
-                    let _ = sock.send_to(&body, (bcast().as_str(), announce_dest()));
+                    // A failure on one destination is not a failure: the
+                    // whole point of having two is that a platform refuses
+                    // one of them.
+                    for d in bcast_targets() {
+                        let _ = sock.send_to(&body, (d.as_str(), announce_dest()));
+                    }
                     last_shout = std::time::Instant::now();
                 }
             }
@@ -342,7 +381,23 @@ pub fn resolve(id: &Identity, want_sign: &str, secs: u64) -> std::io::Result<Opt
     let mut last = std::time::Instant::now() - Duration::from_secs(10);
     while std::time::Instant::now() < deadline {
         if last.elapsed() >= Duration::from_secs(1) {
-            sock.send_to(&body, (bcast().as_str(), query_dest()))?;
+            let mut sent = false;
+            let mut last_err = None;
+            for d in bcast_targets() {
+                match sock.send_to(&body, (d.as_str(), query_dest())) {
+                    Ok(_) => sent = true,
+                    Err(e) => last_err = Some(e),
+                }
+            }
+            // Only an error when NOTHING went out. On macOS the all-hosts
+            // address fails and the subnet one works, so treating the first
+            // refusal as fatal would have made this command platform-
+            // specific for no reason.
+            if !sent {
+                return Err(last_err.unwrap_or_else(|| {
+                    std::io::Error::other("no broadcast address could be used")
+                }));
+            }
             last = std::time::Instant::now();
         }
         let mut buf = [0u8; MAX_PACKET];

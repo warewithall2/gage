@@ -1573,6 +1573,11 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 println!("  encryption key {}", id.box_public_b64());
                 println!("  port {}", lan::LISTEN_PORT);
                 println!("  to every host on this network. Anything listening learns all of it.");
+                // Printed because the failure mode is silence. If the other
+                // machine sees nothing, this line is the first thing worth
+                // looking at -- a destination that is not your actual subnet
+                // means the guess was wrong, and CTX_LAN_BCAST overrides it.
+                println!("  sending to: {}", lan::bcast_targets().join(", "));
             } else {
                 println!("listening for {secs}s. Not announcing -- pass --announce to be seen.");
             }
