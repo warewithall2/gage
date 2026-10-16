@@ -247,13 +247,27 @@ pub fn collect(
     allow_secret: bool,
 ) -> std::io::Result<Collected> {
     let mut c = Collected::new();
-    for (kind, list) in [
-        (ItemKind::File, files),
-        (ItemKind::Prompt, prompts),
-        (ItemKind::Decision, decisions),
-        (ItemKind::Memory, memories),
+    for (kind, flag, list) in [
+        (ItemKind::File, "--file", files),
+        (ItemKind::Prompt, "--prompt", prompts),
+        (ItemKind::Decision, "--decision", decisions),
+        (ItemKind::Memory, "--memory", memories),
     ] {
         for p in list {
+            // Named, with the flag, because these flags all take a PATH and the
+            // bare io error ("No such file or directory") says neither which
+            // path nor which flag -- which reads as a broken tool rather than
+            // as text passed where a file was wanted.
+            if !p.exists() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!(
+                        "{flag} {}: no such file. {flag} takes a path to a file, \
+                         not text to include.",
+                        p.display()
+                    ),
+                ));
+            }
             if p.is_dir() {
                 let root = p.parent().unwrap_or(Path::new(""));
                 walk(&mut c, kind, root, p, allow_secret)?;
