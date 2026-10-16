@@ -7,6 +7,7 @@
 //! the instant-messenger model that does not transfer.
 
 mod authority;
+mod lan;
 mod words;
 mod bundle;
 mod collect;
@@ -186,6 +187,9 @@ enum Cmd {
     Push {
         dir: PathBuf,
         #[arg(long)] to: String,
+        /// Hand it to them over this network instead of the relay. Finds
+        /// their address by a signed query, which only they can answer.
+        #[arg(long)] lan: bool,
         /// Skip the confirmation. Required for a non-interactive push, so an
         /// agent has to state that it meant to send this off the machine.
         #[arg(long)] yes: bool,
@@ -208,12 +212,121 @@ enum Cmd {
     Ui {
         #[arg(long, default_value = "7777")] port: u16,
     },
+    /// Who is announcing themselves on this network, right now
+    Nearby {
+        /// Also announce YOURSELF, for this many seconds. Off by default:
+        /// ctx has never had presence, and a laptop broadcasting its handle
+        /// and public key onto every network it joins would change that
+        /// quietly. This is the pairing mode, and it stops on its own.
+        #[arg(long, value_name = "SECS", num_args = 0..=1, default_missing_value = "60")]
+        announce: Option<u64>,
+        /// How long to listen
+        #[arg(long, default_value = "10")] r#for: u64,
+    },
+    /// Confirm a nearby machine's fingerprint out of band, then add its key.
+    /// The one step that cannot be optimised away: discovery says where a
+    /// key is, and only this says whose it is.
+    Pair {
+        /// What to call them on YOUR list
+        name: String,
+        /// The four word-pairs the other machine shows. Given here, they are
+        /// compared for you and the pairing fails on any difference -- which
+        /// is stricter than a person squinting at a y/n prompt. Omit it to
+        /// be shown the words and asked.
+        #[arg(long)] confirm: Option<String>,
+        #[arg(long, default_value = "20")] r#for: u64,
+    },
+    /// Be reachable on this network: answer address queries from keys on your
+    /// list, and accept a sealed bundle straight from them. No announcing.
+    Listen {
+        #[arg(long, default_value = "0.0.0.0")] bind: String,
+        #[arg(long, default_value_t = lan::LISTEN_PORT)] port: u16,
+    },
     /// Re-sign a bundle for someone else, appending to its chain
     Forward {
         dir: PathBuf,
         #[arg(long)] to: Vec<String>,
         #[arg(long)] out: PathBuf,
     },
+}
+
+/// Put a key on the list, with every guard `ctx add` has always had.
+///
+/// Extracted so `ctx pair` lands a key by exactly this path and not a second
+/// one. A pairing flow that quietly skipped the "already on your list under a
+/// different key" refusal would make a LAN announcement able to do what `ctx
+/// add` deliberately will not: take over a trusted name in one step.
+fn add_contact(name: &str, key: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let (sign, boxpub) = identity::split_key(key);
+    if !bundle::b64_decode_ok(&sign) {
+        return Err("that signing key is not valid base64".into());
+    }
+    if let Some(b) = &boxpub {
+        if !bundle::b64_decode_ok(b) {
+            return Err("that encryption key is not valid base64".into());
+        }
+    }
+    let mut c = trust::Contacts::load();
+    // Adding an existing name under a DIFFERENT key used to just
+    // overwrite it, which is key rotation performed by accident and
+    // with no record: every bundle the old key signed turned into
+    // SENDER UNVERIFIABLE, and a stranger's key could take over a
+    // trusted name in one command. `keychange` is the operation that
+    // does this with evidence; `retire` is the one that does it
+    // deliberately without.
+    if let Some(existing) = c.key_for_name(name) {
+        if existing != sign {
+            return Err(format!(
+                "{name} is already on your list under a different key. This would \
+                 replace it and orphan everything that key signed.\n  \
+                 If they rotated: ctx keychange <their notice file> --accept\n  \
+                 If you are doing it by hand: ctx retire {name}, then add them \
+                 again under a name you choose"
+            )
+            .into());
+        }
+    }
+    if let Some(r) = c.retired_record(&sign) {
+        if r.compromised {
+            return Err(format!(
+                "that key is recorded as COMPROMISED (retired {}). Re-adding it \
+                 undoes that decision; if it really is safe again, edit \
+                 contacts.json deliberately.",
+                r.retired_at
+            )
+            .into());
+        }
+        println!(
+            "note: you retired this key on {} -- re-adding it puts it back in service",
+            r.retired_at
+        );
+        let k = sign.clone();
+        c.retired.remove(&k);
+    }
+    c.keys.insert(sign.clone(), name.to_string());
+    match &boxpub {
+        Some(b) => {
+            c.box_keys.insert(sign, b.clone());
+            println!("added {name} (verify + encrypt)");
+        }
+        None => println!(
+            "added {name} (verify only -- no encryption key, so you cannot seal to them)"
+        ),
+    }
+    c.save()?;
+    // Printed AFTER the add, not before, because this is the step
+    // where a person checks they added the key they meant to. An
+    // out-of-band confirmation is the only thing that makes a key
+    // belong to a person, and it is a great deal easier to do when
+    // the thing being compared can be read aloud.
+    let sign_for_words = c
+        .key_for_name(name)
+        .unwrap_or_else(|| name.to_string());
+    println!();
+    println!("  this key says : {}", words::fingerprint(&sign_for_words));
+    println!("  Check that with {name} over a channel that is not this one.");
+    println!("  If their machine says anything else, you have the wrong key.");
+    Ok(())
 }
 
 /// Observe the inbox, and say so loudly if it could not be done.
@@ -564,8 +677,13 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     }
                 }
             };
+            // One line on stdout, and the short form on stderr. The same
+            // shape as `whoami`, for the same reason: `ctx fingerprint x |
+            // cut -f2` is the obvious thing to write, and `cut` passes a
+            // second line straight through, so two lines here turn one value
+            // into two. Found by writing exactly that in the LAN test.
             println!("{who}\t{}", words::fingerprint(&key));
-            println!("{who}\t{}\t(label only)", words::label(&key));
+            eprintln!("{who}\t{}\t(the label only -- never confirm against this)", words::label(&key));
         }
         Cmd::Authority => {
             let a = authority::Authority::load();
@@ -883,75 +1001,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             }
         }
         Cmd::Add { name, key } => {
-            let (sign, boxpub) = identity::split_key(&key);
-            if !bundle::b64_decode_ok(&sign) {
-                return Err("that signing key is not valid base64".into());
-            }
-            if let Some(b) = &boxpub {
-                if !bundle::b64_decode_ok(b) {
-                    return Err("that encryption key is not valid base64".into());
-                }
-            }
-            let mut c = trust::Contacts::load();
-            // Adding an existing name under a DIFFERENT key used to just
-            // overwrite it, which is key rotation performed by accident and
-            // with no record: every bundle the old key signed turned into
-            // SENDER UNVERIFIABLE, and a stranger's key could take over a
-            // trusted name in one command. `keychange` is the operation that
-            // does this with evidence; `retire` is the one that does it
-            // deliberately without.
-            if let Some(existing) = c.key_for_name(&name) {
-                if existing != sign {
-                    return Err(format!(
-                        "{name} is already on your list under a different key. This would \
-                         replace it and orphan everything that key signed.\n  \
-                         If they rotated: ctx keychange <their notice file> --accept\n  \
-                         If you are doing it by hand: ctx retire {name}, then add them \
-                         again under a name you choose"
-                    )
-                    .into());
-                }
-            }
-            if let Some(r) = c.retired_record(&sign) {
-                if r.compromised {
-                    return Err(format!(
-                        "that key is recorded as COMPROMISED (retired {}). Re-adding it \
-                         undoes that decision; if it really is safe again, edit \
-                         contacts.json deliberately.",
-                        r.retired_at
-                    )
-                    .into());
-                }
-                println!(
-                    "note: you retired this key on {} -- re-adding it puts it back in service",
-                    r.retired_at
-                );
-                let k = sign.clone();
-                c.retired.remove(&k);
-            }
-            c.keys.insert(sign.clone(), name.clone());
-            match &boxpub {
-                Some(b) => {
-                    c.box_keys.insert(sign, b.clone());
-                    println!("added {name} (verify + encrypt)");
-                }
-                None => println!(
-                    "added {name} (verify only -- no encryption key, so you cannot seal to them)"
-                ),
-            }
-            c.save()?;
-            // Printed AFTER the add, not before, because this is the step
-            // where a person checks they added the key they meant to. An
-            // out-of-band confirmation is the only thing that makes a key
-            // belong to a person, and it is a great deal easier to do when
-            // the thing being compared can be read aloud.
-            let sign_for_words = c
-                .key_for_name(&name)
-                .unwrap_or_else(|| name.clone());
-            println!();
-            println!("  this key says : {}", words::fingerprint(&sign_for_words));
-            println!("  Check that with {name} over a channel that is not this one.");
-            println!("  If their machine says anything else, you have the wrong key.");
+            add_contact(&name, &key)?;
         }
         Cmd::Seal { dir, to, out } => {
             let c = trust::Contacts::load();
@@ -1269,8 +1319,12 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             println!("  can claim it by quoting your public key");
             println!("  the relay holds sealed envelopes; it cannot read them");
         }
-        Cmd::Push { dir, to, yes } => {
-            let addr = remote::relay_addr().ok_or("no relay set; ctx join <addr> first")?;
+        Cmd::Push { dir, to, yes, lan } => {
+            let addr = if lan {
+                "this network".to_string()
+            } else {
+                remote::relay_addr().ok_or("no relay set; ctx join <addr> first")?
+            };
             // The human gate on the way OUT, and it belongs HERE rather than
             // on `send`: `send` either delivers to a local route or writes a
             // directory you still have to move, so nothing has left the
@@ -1316,6 +1370,27 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             let body = serde_json::json!({
                 "to_box": boxpub, "envelope": serde_json::to_string(&env)? })
                 .to_string();
+            if lan {
+                // Sealed BEFORE the address is even known, which is why a
+                // wrong answer to the query is not a disclosure: the worst a
+                // spoofed responder gets is ciphertext for a key it does not
+                // hold.
+                let id = identity::Identity::load()?;
+                let Some(seen) = lan::resolve(&id, &sign, 8)? else {
+                    return Err(format!(
+                        "no answer from {to} on this network. They need `ctx listen` \
+                         running, and you need to be on their list -- a query from a key \
+                         they do not know is ignored, deliberately and silently."
+                    )
+                    .into());
+                };
+                let mut dest = seen.addr;
+                dest.set_port(seen.port);
+                lan::deliver_to(dest, &body)?;
+                println!("handed to {to} at {dest}, over this network");
+                println!("  no relay, and it is in their inbox/pending -- not accepted");
+                return Ok(ExitCode::SUCCESS);
+            }
             let resp = remote::post(&addr, "/send", &body)?;
             println!("pushed to {to} via {addr}");
             println!("  {}", resp.trim());
@@ -1486,6 +1561,111 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         }
         Cmd::Ui { port } => {
             ui::serve(port)?;
+        }
+        Cmd::Nearby { announce, r#for } => {
+            let id = identity::Identity::load().ok();
+            let secs = announce.unwrap_or(r#for).max(r#for);
+            if let Some(n) = announce {
+                let id = id.as_ref().ok_or("ctx init first -- announcing needs a key to sign with")?;
+                println!("announcing for {n}s, then stopping. What leaves this machine:");
+                println!("  handle \"{}\"  (a string you chose; nobody should trust it)", id.handle);
+                println!("  signing key {}", id.public_b64());
+                println!("  encryption key {}", id.box_public_b64());
+                println!("  port {}", lan::LISTEN_PORT);
+                println!("  to every host on this network. Anything listening learns all of it.");
+            } else {
+                println!("listening for {secs}s. Not announcing -- pass --announce to be seen.");
+            }
+            let seen = lan::nearby(id.as_ref(), lan::LISTEN_PORT, secs, announce.is_some())?;
+            if seen.is_empty() {
+                println!();
+                println!("nobody announcing. The other machine needs `ctx nearby --announce`.");
+                return Ok(ExitCode::SUCCESS);
+            }
+            let c = trust::Contacts::load();
+            println!();
+            for s in &seen {
+                let known = match c.name_for(&s.sign) {
+                    Some(n) => format!("on your list as {n}"),
+                    None => "NOT on your list -- ctx pair <name> to add it".to_string(),
+                };
+                println!("  \"{}\" at {}  ({known})", s.handle, s.addr.ip());
+                println!("      says : {}", words::fingerprint(&s.sign));
+            }
+            println!();
+            println!("the handle is decoration. The words are the key, and the only thing");
+            println!("worth comparing with the person sitting at the other machine.");
+        }
+        Cmd::Pair { name, confirm, r#for } => {
+            let id = identity::Identity::load()?;
+            println!("listening for {}s. The other machine wants `ctx nearby --announce`.", r#for);
+            let seen = lan::nearby(Some(&id), lan::LISTEN_PORT, r#for, false)?;
+            let c = trust::Contacts::load();
+            let fresh: Vec<_> = seen.iter().filter(|s| !c.knows(&s.sign)).collect();
+            let cand = match fresh.len() {
+                0 if seen.is_empty() => {
+                    return Err("nobody announcing on this network".into())
+                }
+                0 => return Err("everyone announcing is already on your list".into()),
+                1 => fresh[0],
+                // No numbered menu, on purpose: picking "2" from a list is
+                // exactly the step where a person stops reading, and the
+                // whole value of this command is that they read. Narrow it
+                // down by having one machine announce at a time.
+                n => {
+                    for s in &fresh {
+                        println!("  \"{}\" at {}  {}", s.handle, s.addr.ip(), words::fingerprint(&s.sign));
+                    }
+                    return Err(format!(
+                        "{n} unpaired machines are announcing. Pair them one at a time: \
+                         stop the others, or re-run when only the one you mean is announcing."
+                    )
+                    .into());
+                }
+            };
+            let fp = words::fingerprint(&cand.sign);
+            println!();
+            println!("  \"{}\" at {}", cand.handle, cand.addr.ip());
+            println!("  says : {fp}");
+            println!();
+            match &confirm {
+                Some(given) => {
+                    // Compared on the words, whitespace-insensitive, so a
+                    // value read off a screen and typed with a double space
+                    // still matches -- but a single different word does not.
+                    let norm = |x: &str| {
+                        x.split_whitespace()
+                            .filter(|t| *t != "·")
+                            .map(|t| t.to_ascii_lowercase())
+                            .collect::<Vec<_>>()
+                    };
+                    if norm(given) != norm(&fp) {
+                        return Err(format!(
+                            "those are not the same words.\n  you gave : {given}\n  \
+                             it says  : {fp}\nNothing was added. Either you mistyped, or \
+                             the machine announcing is not the one you are looking at."
+                        )
+                        .into());
+                    }
+                    println!("  matches what you read off the other screen.");
+                }
+                None => {
+                    print!("Does the other machine show EXACTLY those words? [y/N] ");
+                    use std::io::Write;
+                    std::io::stdout().flush()?;
+                    let mut ans = String::new();
+                    std::io::stdin().read_line(&mut ans)?;
+                    if !matches!(ans.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
+                        return Err("not paired. Nothing was added.".into());
+                    }
+                }
+            }
+            add_contact(&name, &cand.token())?;
+            println!();
+            println!("paired. `ctx listen` on each machine, then: ctx push <dir> --to {name} --lan --yes");
+        }
+        Cmd::Listen { bind, port } => {
+            lan::listen(&bind, port)?;
         }
         Cmd::Forward { dir, to, out } => {
             let id = identity::Identity::load()?;

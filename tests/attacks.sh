@@ -1532,7 +1532,13 @@ else bad "add showed different words than alice's own fingerprint"; fi
 # separate lookalike value.
 pairs=$(printf '%s' "$afp" | awk -F' · ' '{print NF}')
 if [ "$pairs" -eq 4 ]; then ok; else bad "a fingerprint is $pairs pairs, wanted 4"; fi
-alab=$(CTX_HOME=$T/a $CTX fingerprint 2>/dev/null | sed -n '2p' | cut -f2)
+# The label is on STDERR, for the same reason whoami's words are: `ctx
+# fingerprint x | cut -f2` is the obvious thing to write, and cut passes a
+# second line straight through, so two lines on stdout turn one value into
+# two. Caught by writing exactly that in the LAN pairing test.
+lines=$(CTX_HOME=$T/a $CTX fingerprint 2>/dev/null | wc -l)
+if [ "$lines" -eq 1 ]; then ok; else bad "fingerprint put $lines lines on stdout, wanted 1"; fi
+alab=$(CTX_HOME=$T/a $CTX fingerprint 2>&1 >/dev/null | cut -f2)
 case "$afp" in "$alab"*) ok;; *) bad "the label '$alab' is not a prefix of '$afp'";; esac
 # A different key says something different, or the check is decoration.
 bfp=$(CTX_HOME=$T/b $CTX fingerprint 2>/dev/null | head -1 | cut -f2)
@@ -1541,6 +1547,120 @@ if [ "$afp" != "$bfp" ]; then ok; else bad "two different keys render the same w
 # a reader could mistake for a match.
 CTX_HOME=$T/a $CTX fingerprint nobody > "$T/fpno" 2>&1; code "fingerprint of a stranger" $? 1
 want "$T/fpno" "no contact named nobody"
+
+echo "LAN discovery says where a key is, never whose it is"
+# Two homes on one host, so the ports are split: each binds one and sends to
+# the other's. The code paths are the real ones -- announce, signed query,
+# answer, and a sealed bundle over TCP.
+mkdir -p "$T"/{la,lb,lg}
+export CTX_LAN_BCAST=127.0.0.1
+LA="CTX_LAN_ANNOUNCE_BIND=18789 CTX_LAN_ANNOUNCE_DEST=18790 CTX_LAN_QUERY_BIND=18889 CTX_LAN_QUERY_DEST=18890"
+LB="CTX_LAN_ANNOUNCE_BIND=18790 CTX_LAN_ANNOUNCE_DEST=18789 CTX_LAN_QUERY_BIND=18890 CTX_LAN_QUERY_DEST=18889"
+CTX_HOME=$T/la $CTX init lalpha >/dev/null
+CTX_HOME=$T/lb $CTX init lbeta  >/dev/null
+CTX_HOME=$T/lg $CTX init lgamma >/dev/null
+LBFP=$(CTX_HOME=$T/lb $CTX fingerprint 2>/dev/null | cut -f2)
+LAFP=$(CTX_HOME=$T/la $CTX fingerprint 2>/dev/null | cut -f2)
+
+# Not announcing is the default, and the command says so rather than leaving
+# a reader to wonder why nobody can see them.
+env CTX_HOME=$T/la $LA $CTX nearby --for 1 > "$T/nb0" 2>&1
+want "$T/nb0" "Not announcing -- pass --announce to be seen"
+want "$T/nb0" "nobody announcing"
+
+# Announcing states what leaves the machine, in full, BEFORE it leaves.
+# Presence is the thing this tool has never had, so it is not allowed to be
+# a surprise in a changelog.
+env CTX_HOME=$T/lb $LB $CTX nearby --announce 6 > "$T/ann" 2>&1 &
+sleep 1
+want "$T/ann" "What leaves this machine"
+want "$T/ann" "to every host on this network"
+
+env CTX_HOME=$T/la $LA $CTX nearby --for 3 > "$T/nb1" 2>&1
+want "$T/nb1" "lbeta"
+want "$T/nb1" "NOT on your list"
+want "$T/nb1" "$LBFP"
+# The handle is decoration and the output has to say so, because the whole
+# failure being avoided is a person reading a self-chosen name as identity.
+want "$T/nb1" "the handle is decoration"
+
+# A fingerprint that does not match adds NOTHING. This is the step that makes
+# the difference between "a device said it was your laptop" and "this is the
+# key you confirmed", so a near miss must fail closed.
+env CTX_HOME=$T/la $LA $CTX pair lbeta --confirm "muted ember . outer beetle . somber kestrel . wrong hornet" --for 3 > "$T/p0" 2>&1
+code "pair on a mismatched fingerprint" $? 1
+want "$T/p0" "those are not the same words"
+want "$T/p0" "Nothing was added"
+CTX_HOME=$T/la $CTX contacts > "$T/pc0" 2>&1
+wantno "$T/pc0" "lbeta"
+wait
+
+env CTX_HOME=$T/lb $LB $CTX nearby --announce 6 >/dev/null 2>&1 &
+sleep 1
+env CTX_HOME=$T/la $LA $CTX pair lbeta --confirm "$LBFP" --for 3 > "$T/p1" 2>&1
+code "pair on the right fingerprint" $? 0
+want "$T/p1" "matches what you read off the other screen"
+want "$T/p1" "added lbeta (verify + encrypt)"
+wait
+env CTX_HOME=$T/la $LA $CTX nearby --announce 6 >/dev/null 2>&1 &
+sleep 1
+env CTX_HOME=$T/lb $LB $CTX pair lalpha --confirm "$LAFP" --for 3 >/dev/null 2>&1
+code "reverse pairing" $? 0
+wait
+
+# A real bundle, straight between the two, with no relay set on either side.
+env CTX_HOME=$T/lb $LB $CTX listen --port 18891 > "$T/lblog" 2>&1 &
+LPID=$!
+sleep 1
+printf 'over the wire\n' > "$T/w/lan.md"
+CTX_HOME=$T/la $CTX send --to lbeta --subject "lan hop" --file "$T/w/lan.md" --out "$T/lout" >/dev/null 2>&1
+env CTX_HOME=$T/la $LA $CTX push "$T/lout" --to lbeta --lan --yes > "$T/lpush" 2>&1
+code "push over the lan" $? 0
+want "$T/lpush" "over this network"
+want "$T/lpush" "inbox/pending -- not accepted"
+CTX_HOME=$T/lb $CTX inbox > "$T/lin" 2>&1
+want "$T/lin" "lan hop"
+want "$T/lin" "SENDER VERIFIED"
+# Arrival is still not consent, over this transport as over every other one.
+wantno "$T/lin" "accepted"
+
+# A key the listener does not know gets SILENCE, not a refusal it could use
+# to learn the machine is there. This is the line that makes a standing
+# listener compatible with having no presence.
+CTX_HOME=$T/lg $CTX add lbeta "$(CTX_HOME=$T/lb $CTX whoami | cut -f2)" >/dev/null 2>&1
+CTX_HOME=$T/lg $CTX send --to lbeta --subject "uninvited" --file "$T/w/lan.md" --out "$T/gout" >/dev/null 2>&1
+env CTX_HOME=$T/lg CTX_LAN_QUERY_BIND=18990 CTX_LAN_QUERY_DEST=18890 $CTX push "$T/gout" --to lbeta --lan --yes > "$T/gpush" 2>&1
+code "a stranger cannot resolve an address" $? 1
+want "$T/gpush" "no answer from lbeta"
+want "$T/gpush" "ignored, deliberately and silently"
+want "$T/lblog" "ignored a query from a key not on your list"
+CTX_HOME=$T/lb $CTX inbox > "$T/lin2" 2>&1
+wantno "$T/lin2" "uninvited"
+
+# What the listener does NOT do, stated as a test so the claim stays true:
+# the TCP port accepts from anyone who finds it. That is correct -- a first
+# bundle from someone new has to be able to arrive -- and it lands unread
+# with the verdict that says who it is from.
+LBB=$(CTX_HOME=$T/lb $CTX whoami | cut -f2 | cut -d. -f2)
+CTX_HOME=$T/lg $CTX seal "$T/gout" --to lbeta --out "$T/g.env" >/dev/null 2>&1
+python3 -c "import json;print(json.dumps({'to_box':'$LBB','envelope':open('$T/g.env').read()}))" > "$T/g.body"
+curl -s -X POST --data-binary @"$T/g.body" http://127.0.0.1:18891/lan/send > "$T/gdirect" 2>&1
+want "$T/gdirect" '"ok":true'
+CTX_HOME=$T/lb $CTX inbox > "$T/lin3" 2>&1
+want "$T/lin3" "SENDER NOT ON YOUR LIST"
+
+# Junk on the socket is refused without narrating what it got wrong, and an
+# unknown route is not a map of the ones that exist.
+curl -s -X POST -d 'not json' http://127.0.0.1:18891/lan/send > "$T/gjunk" 2>&1
+want "$T/gjunk" '"error":"refused"'
+wantno "$T/gjunk" "line 1 column"
+curl -s http://127.0.0.1:18891/api/state > "$T/groute" 2>&1
+want "$T/groute" "no such route"
+wantno "$T/groute" "signing"
+
+kill $LPID 2>/dev/null
+wait 2>/dev/null
+unset CTX_LAN_BCAST
 
 echo "a good bundle exits 0"
 CTX_HOME=$T/b $CTX open "$T/b1" >/dev/null 2>&1; code good $? 0

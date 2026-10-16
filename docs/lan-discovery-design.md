@@ -72,15 +72,53 @@ accounts. That is the LocalSend experience, plus the one step that makes the
 difference between "a device said it was your laptop" and "this is the key you
 confirmed was your laptop".
 
-## What it would take
+## Built 15 Oct
 
-    ctx nearby                 # who is announcing on this network, with fingerprints
-    ctx pair <name>            # confirm a fingerprint out of band, then add the key
-    ctx push --to laptop       # straight over the LAN, no relay
+    ctx nearby [--announce SECS]       # who is announcing, with fingerprints
+    ctx pair <name> [--confirm WORDS]  # compare out of band, then add the key
+    ctx listen                         # be reachable: answer queries, take bundles
+    ctx push <dir> --to laptop --lan   # straight over the network, no relay
 
-Three pieces: a UDP announce/listen loop, a fingerprint the human can read
-aloud (four groups of four hex, from the signing key), and a LAN listener that
-accepts a sealed bundle into `pending/`.
+The fingerprint turned out better than four groups of hex: it is four
+word-pairs derived from the signing key (`src/words.rs`), so nobody picks
+their own, and it can be read across a room.
+
+**Nothing announces by default, ever.** `ctx nearby` listens. `--announce`
+takes a number of seconds, defaults to 60 if you pass the bare flag, and
+stops on its own -- there is no mode in which a laptop keeps shouting onto
+every network it joins. Before it sends anything it prints the handle, both
+public keys and the port, and says they go to every host on the network, so
+the posture change is read rather than discovered.
+
+**After pairing, finding a machine is a query rather than a broadcast of your
+existence.** `ctx listen` binds a UDP socket and answers one thing: a query
+signed by a key already on its list. A stranger's query gets silence, which
+is indistinguishable from an empty network. The key being asked about travels
+as `sha256(key + nonce)`, so the segment does not learn who you are sending
+to; the asker's own key is in the clear, because the signature over it is the
+whole reason answering is safe. That is a cost at the moment you deliberately
+send, not a standing broadcast.
+
+Three ports: 7789/udp for pairing announcements (bound only while `ctx
+nearby` runs), 7790/udp for queries, 7791/tcp for an envelope arriving. Split
+so the pairing mode and the listener never fight over one socket.
+
+### What the listener does not do
+
+The TCP port takes a sealed envelope from anyone who can reach it, and that
+is deliberate: a first bundle from someone new has to be able to arrive, or
+`ctx add` could never be the second step. What protects you is what has
+always protected you -- it lands in `inbox/pending`, unread, under a verdict
+that says `SENDER NOT ON YOUR LIST`, and nothing reads it until you accept
+it. Arrival is not consent over this transport either. The query gate hides
+your *address* from strangers; it does not pretend to gate delivery, and a
+port scan still finds an open port.
+
+Envelopes are refused on the same grounds a relay pull refuses them: sealed
+to a key this machine does not hold, a manifest id that would have become a
+path, or a signature that does not verify. The refusal is one word on the
+wire, because a parser error narrated back to a stranger is a way to find out
+the service is there.
 
 ## The two real costs
 
@@ -96,4 +134,15 @@ plain statement of what leaves the machine.
 version that skips it for convenience has thrown away the reason to use ctx
 rather than LocalSend. Making it fast is the job; making it optional is not.
 
-**Not built. Needs the owner**, for the presence decision specifically.
+## The presence decision, as taken
+
+Default off, time-boxed when on, full disclosure of what is sent, and no
+standing announcement in any mode. The README's "no server, no presence, no
+accounts" survives with one honest amendment: `ctx listen` *is* a process
+holding a port, and the README now says so where it says there is no server.
+
+What was given up to get there: you cannot see a paired machine in a list
+without that machine announcing. `ctx nearby` after pairing shows nothing,
+because nothing is announcing. That is the price of the property, and it is
+the right trade -- a roster that is always visible is a roster somebody else
+can also read.

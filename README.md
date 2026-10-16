@@ -69,6 +69,54 @@ against it. The **fingerprint** is four pairs, 64 bits, and is what a person
 compares. Both come from the same hash in the same order, so the label is
 always a real prefix of the fingerprint rather than a separate lookalike.
 
+## The second machine
+
+    # on the laptop
+    $ ctx nearby --announce 60
+    announcing for 60s, then stopping. What leaves this machine:
+      handle "laptop"  (a string you chose; nobody should trust it)
+      signing key MtZ9...
+      encryption key 7Qa1...
+      port 7791
+      to every host on this network. Anything listening learns all of it.
+
+    # on the desktop
+    $ ctx pair laptop
+      "laptop" at 192.168.1.44
+      says : simple dahlia · mild forest · green daffodil · clear menhir
+
+    Does the other machine show EXACTLY those words? [y/N] y
+    added laptop (verify + encrypt)
+
+Then `ctx listen` on each, and `ctx push <dir> --to laptop --lan --yes` goes
+straight across with no relay, landing in their `inbox/pending` for the same
+accept gate as everything else.
+
+That is LocalSend's experience with one step added, and the step is the whole
+point. LocalSend identifies a peer by a name the device chose, which is fine
+for one expected file: the blast radius of a spoof is one unwanted download. A
+ctx payload is instructions an agent may act on later, unattended, possibly
+under a grant — "I glanced at a device name once" cannot carry that. So
+**discovery answers where a key is reachable and the fingerprint answers whose
+it is**, and the two never get conflated. Spoofing a peer in a discovery
+service is the named attack in OWASP ASI07.
+
+**Nothing announces by default.** `--announce` is time-boxed, prints
+everything it is about to broadcast before broadcasting it, and stops on its
+own; there is no mode where a laptop keeps shouting onto every café network it
+joins. Afterwards, finding a paired machine is a *query*, not a broadcast of
+your existence — and `ctx listen` answers a query only when it is signed by a
+key already on your list. A stranger gets silence they cannot tell from an
+empty network, which is how being reachable stopped requiring being visible.
+The key being asked about travels hashed with the query's nonce, so the
+segment does not learn who you are sending to.
+
+What that does *not* buy: the TCP port takes a sealed envelope from anyone who
+reaches it, on purpose, because a first bundle from a new contact has to be
+able to arrive. It lands unread under `SENDER NOT ON YOUR LIST`. The query
+gate hides your address; the accept gate is what protects you, as always.
+Design and the two costs: [docs/lan-discovery-design.md](docs/lan-discovery-design.md).
+
 ## Authority: the one thing that says you may act
 
 Everything above is about what is *known*. None of it says whether an agent
@@ -146,6 +194,11 @@ write. A file you edit is already revocable by editing it.
     ctx open    ./handoff              # render for an agent, inside the frame
     ctx reply   <id> --text "..."      # answer a thread, recipient inferred
     ctx forward ./handoff --to group:eng --out ./fwd
+
+    ctx nearby --announce 60           # be findable on this network, briefly
+    ctx pair laptop                    # compare words out of band, then add
+    ctx listen                         # be reachable for keys on your list
+    ctx push ./handoff --to laptop --lan --yes
 
 `open` exits 0 when the bundle is attributable, and 2 when the signature fails,
 the payload does not match, or the signing key has been taken out of service,
@@ -597,10 +650,17 @@ which is a format change; see [docs/open-decisions.md](docs/open-decisions.md).
 
 ## What this is not
 
-No server, no presence, no accounts. Agents are invoked rather than online, so
-the instant-messenger model's buddy list and accept-before-transfer carry over
-and its presence does not. If moving directories by hand gets annoying, add a
-relay — the format does not change.
+No accounts, and no presence: nothing announces itself unless you ask it to,
+for a number of seconds, having been told what it is about to say. Agents are
+invoked rather than online, so the instant-messenger model's buddy list and
+accept-before-transfer carry over and its presence does not. If moving
+directories by hand gets annoying, add a relay — the format does not change.
+
+Two commands do hold a port, and it is worth naming them rather than letting
+"no server" quietly stop being true: `ctx ui` on loopback, and `ctx listen` on
+the local network. Neither is required for anything, both are in the
+foreground where you can see them, and `ctx listen` answers a discovery query
+only for keys already on your list.
 
 It does not sandbox anything. A verified sender is an *accountable* sender, not
 a safe one. The frame tells a reader what the content is; deciding to act on it
@@ -621,7 +681,7 @@ in the message. See [Authority](#authority-the-one-thing-that-says-you-may-act).
 
     cargo build --release && cargo test --release && bash tests/attacks.sh
 
-423 checks plus 63 Rust unit tests. Every one is an attack that worked, or
+457 checks plus 70 Rust unit tests. Every one is an attack that worked, or
 nearly worked, during development: frame-boundary forgery, payload swapping
 after signing, a listed contact claiming a third party's name, an unverified
 author name on a forward, a trust label that was a substring of its own
@@ -636,4 +696,6 @@ shaped like a path escaping the inbox, a witness pre-seeded with a junk
 signature and claimed later with a real one, a bundle with no provenance chain
 borrowing another message's id, a revocation that left the old key trusted
 while it was being written, a secret hidden from the outbound scan by one
-invalid byte, and an envelope that unpacked half of itself before refusing.
+invalid byte, an envelope that unpacked half of itself before refusing, a discovery query
+from a key nobody added, and a pairing waved through on a fingerprint that
+was one word different.

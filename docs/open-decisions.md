@@ -234,4 +234,25 @@ and the relay. Two things are not:
   leaves the machine, and the owner should decide it rather than find it in a
   changelog. Default off, explicit flag, and say plainly what is sent.
 
-**Not built. Needs the owner** on the presence question; the rest follows.
+**Built 15 Oct**, as `src/lan.rs`, with the presence question answered the
+narrow way: no standing announcement in any mode, `--announce` time-boxed and
+off by default, the full list of what is broadcast printed before anything is
+broadcast, and -- the part that does the work -- address resolution by a
+*signed query* that is answered only when the asker's key is already on the
+list. A stranger gets silence they cannot tell from an empty network, so
+being reachable stopped requiring being visible.
+
+Two things remain the owner's, and both are smaller than the decision was:
+
+- **`ctx listen` is a process holding a port**, which is the first thing in
+  ctx that is true of. Its TCP side accepts a sealed envelope from anyone who
+  reaches it, deliberately -- a first bundle from a new contact has to be able
+  to arrive -- and that bundle lands unread in `pending/` under `SENDER NOT ON
+  YOUR LIST`. The protection is the accept gate, not the port. Whether to
+  narrow it to known senders is a real choice, and it costs the first contact.
+- **A query reveals that somebody holding this key is looking for someone**,
+  to anyone sniffing the segment at that moment. The key being sought is
+  hashed with the query nonce so the pair of you is not on the wire, but the
+  asker's key is in the clear because the signature is what makes answering
+  safe at all. Hiding it needs a shared secret per contact, which is a
+  different design.
