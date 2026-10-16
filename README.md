@@ -472,6 +472,22 @@ Two panes: conversations on the left, the thread on the right, with a
 composer at the bottom. Loopback only, never `0.0.0.0`: an inbox viewer on a
 laptop has no business being reachable from the network it happens to be on.
 
+Under the conversations is **On this network** — every machine `ctx lan` can
+see, each with its four word-pairs under it. Drop files on one and they go
+straight there over the wifi; `Pair` confirms a fingerprint without leaving
+the page. The panel reads the list `ctx lan` keeps and never announces
+anything itself, so no button here can make this machine visible when the
+person did not choose to be.
+
+A push through a *relay* is still terminal-only behind `ctx push --yes`.
+Handing a bundle to a machine on your own wifi is allowed from the page
+because the gesture names both halves — particular files, dropped on a
+particular named machine you can see — which is more than `--yes` on a
+directory says. The outbound scan runs on that path exactly as it does in the
+terminal, the findings are shown in the page, and there is deliberately no
+override button: a finding sends you back to the terminal to look at the
+file.
+
 It never renders payload contents. A page that pastes a stranger's prompt into
 a browser is a different risk surface, and `ctx open` is where content is read,
 inside its frame. What the page shows instead is the verdict, the warnings and
@@ -691,7 +707,7 @@ in the message. See [Authority](#authority-the-one-thing-that-says-you-may-act).
 
     cargo build --release && cargo test --release && bash tests/attacks.sh
 
-479 checks plus 70 Rust unit tests. Every one is an attack that worked, or
+506 checks plus 71 Rust unit tests. Every one is an attack that worked, or
 nearly worked, during development: frame-boundary forgery, payload swapping
 after signing, a listed contact claiming a third party's name, an unverified
 author name on a forward, a trust label that was a substring of its own
@@ -708,4 +724,4 @@ borrowing another message's id, a revocation that left the old key trusted
 while it was being written, a secret hidden from the outbound scan by one
 invalid byte, an envelope that unpacked half of itself before refusing, a discovery query
 from a key nobody added, and a pairing waved through on a fingerprint that
-was one word different.
+was one word different, and a dropped file whose name was a path.

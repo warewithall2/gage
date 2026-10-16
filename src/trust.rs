@@ -368,3 +368,84 @@ mod tests {
     }
 
 }
+
+/// Put a key on the list, with every guard `ctx add` has always had.
+///
+/// Shared rather than duplicated, so `ctx add`, `ctx pair` and the viewer's
+/// pair button all land a key by one path. A pairing flow that quietly
+/// skipped the "already on your list under a different key" refusal would let
+/// a LAN announcement do what `ctx add` deliberately will not: take over a
+/// trusted name in one step.
+///
+/// Returns the lines to show rather than printing them, because one of the
+/// three callers is a web page.
+pub fn add_contact(name: &str, key: &str) -> Result<Vec<String>, String> {
+    let mut out: Vec<String> = Vec::new();
+    let (sign, boxpub) = crate::identity::split_key(key);
+    if !crate::bundle::b64_decode_ok(&sign) {
+        return Err("that signing key is not valid base64".to_string());
+    }
+    if let Some(b) = &boxpub {
+        if !crate::bundle::b64_decode_ok(b) {
+            return Err("that encryption key is not valid base64".to_string());
+        }
+    }
+    let mut c = Contacts::load();
+    // Adding an existing name under a DIFFERENT key used to just overwrite
+    // it, which is key rotation performed by accident and with no record:
+    // every bundle the old key signed turned into SENDER UNVERIFIABLE, and a
+    // stranger's key could take over a trusted name in one command.
+    // `keychange` is the operation that does this with evidence; `retire` is
+    // the one that does it deliberately without.
+    if let Some(existing) = c.key_for_name(name) {
+        if existing != sign {
+            return Err(format!(
+                "{name} is already on your list under a different key. This would \
+                 replace it and orphan everything that key signed.\n  \
+                 If they rotated: ctx keychange <their notice file> --accept\n  \
+                 If you are doing it by hand: ctx retire {name}, then add them \
+                 again under a name you choose"
+            ));
+        }
+    }
+    if let Some(r) = c.retired_record(&sign) {
+        if r.compromised {
+            return Err(format!(
+                "that key is recorded as COMPROMISED (retired {}). Re-adding it undoes \
+                 that decision; if it really is safe again, edit contacts.json \
+                 deliberately.",
+                r.retired_at
+            ));
+        }
+        out.push(format!(
+            "note: you retired this key on {} -- re-adding it puts it back in service",
+            r.retired_at
+        ));
+        let k = sign.clone();
+        c.retired.remove(&k);
+    }
+    c.keys.insert(sign.clone(), name.to_string());
+    match &boxpub {
+        Some(b) => {
+            c.box_keys.insert(sign, b.clone());
+            out.push(format!("added {name} (verify + encrypt)"));
+        }
+        None => out.push(format!(
+            "added {name} (verify only -- no encryption key, so you cannot seal to them)"
+        )),
+    }
+    c.save().map_err(|e| e.to_string())?;
+    // Shown AFTER the add, not before, because this is the step where a
+    // person checks they added the key they meant to. An out-of-band
+    // confirmation is the only thing that makes a key belong to a person, and
+    // it is a great deal easier to do when the thing being compared can be
+    // read aloud.
+    let words = c.key_for_name(name).map(|k| crate::words::fingerprint(&k));
+    if let Some(w) = words {
+        out.push(String::new());
+        out.push(format!("  this key says : {w}"));
+        out.push(format!("  Check that with {name} over a channel that is not this one."));
+        out.push("  If their machine says anything else, you have the wrong key.".to_string());
+    }
+    Ok(out)
+}

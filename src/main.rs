@@ -269,165 +269,6 @@ enum Cmd {
     },
 }
 
-/// Put a key on the list, with every guard `ctx add` has always had.
-///
-/// Extracted so `ctx pair` lands a key by exactly this path and not a second
-/// one. A pairing flow that quietly skipped the "already on your list under a
-/// different key" refusal would make a LAN announcement able to do what `ctx
-/// add` deliberately will not: take over a trusted name in one step.
-fn add_contact(name: &str, key: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let (sign, boxpub) = identity::split_key(key);
-    if !bundle::b64_decode_ok(&sign) {
-        return Err("that signing key is not valid base64".into());
-    }
-    if let Some(b) = &boxpub {
-        if !bundle::b64_decode_ok(b) {
-            return Err("that encryption key is not valid base64".into());
-        }
-    }
-    let mut c = trust::Contacts::load();
-    // Adding an existing name under a DIFFERENT key used to just
-    // overwrite it, which is key rotation performed by accident and
-    // with no record: every bundle the old key signed turned into
-    // SENDER UNVERIFIABLE, and a stranger's key could take over a
-    // trusted name in one command. `keychange` is the operation that
-    // does this with evidence; `retire` is the one that does it
-    // deliberately without.
-    if let Some(existing) = c.key_for_name(name) {
-        if existing != sign {
-            return Err(format!(
-                "{name} is already on your list under a different key. This would \
-                 replace it and orphan everything that key signed.\n  \
-                 If they rotated: ctx keychange <their notice file> --accept\n  \
-                 If you are doing it by hand: ctx retire {name}, then add them \
-                 again under a name you choose"
-            )
-            .into());
-        }
-    }
-    if let Some(r) = c.retired_record(&sign) {
-        if r.compromised {
-            return Err(format!(
-                "that key is recorded as COMPROMISED (retired {}). Re-adding it \
-                 undoes that decision; if it really is safe again, edit \
-                 contacts.json deliberately.",
-                r.retired_at
-            )
-            .into());
-        }
-        println!(
-            "note: you retired this key on {} -- re-adding it puts it back in service",
-            r.retired_at
-        );
-        let k = sign.clone();
-        c.retired.remove(&k);
-    }
-    c.keys.insert(sign.clone(), name.to_string());
-    match &boxpub {
-        Some(b) => {
-            c.box_keys.insert(sign, b.clone());
-            println!("added {name} (verify + encrypt)");
-        }
-        None => println!(
-            "added {name} (verify only -- no encryption key, so you cannot seal to them)"
-        ),
-    }
-    c.save()?;
-    // Printed AFTER the add, not before, because this is the step
-    // where a person checks they added the key they meant to. An
-    // out-of-band confirmation is the only thing that makes a key
-    // belong to a person, and it is a great deal easier to do when
-    // the thing being compared can be read aloud.
-    let sign_for_words = c
-        .key_for_name(name)
-        .unwrap_or_else(|| name.to_string());
-    println!();
-    println!("  this key says : {}", words::fingerprint(&sign_for_words));
-    println!("  Check that with {name} over a channel that is not this one.");
-    println!("  If their machine says anything else, you have the wrong key.");
-    Ok(())
-}
-
-/// Seal a built bundle and hand it to a machine on this network.
-///
-/// Two ways to find them, and the first needs no pairing at all: if `ctx lan`
-/// is running it has already written down who is here and where, so an
-/// unpaired device on the list can be sent to by its word-pair label. Failing
-/// that, a contact is found by the signed query, which is the path that works
-/// without `ctx lan` open but only for a key already on the list.
-fn hand_over_lan(dir: &std::path::Path, who: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let id = identity::Identity::load()?;
-    let c = trust::Contacts::load();
-
-    // A name on the list, OR a contact whose key is on the list. The second
-    // matters because pairing is one-sided: once you have paired with a
-    // machine you will call it `laptop`, and it will still be announcing
-    // under its word-pair. Without this, `--to laptop` fell through to the
-    // signed query -- which the other machine correctly ignores until it has
-    // paired with YOU, so the better-named path was the one that failed.
-    let on_list = lan::lookup_nearby(who).or_else(|| {
-        let k = c.key_for_name(who)?;
-        lan::read_nearby().into_iter().find(|e| e.sign == k)
-    });
-    let (boxpub, addr, desc) = match on_list {
-        Some(e) => {
-            // A list entry older than a minute is not an address any more:
-            // DHCP moves on, and sending to whoever holds that IP now is a
-            // worse failure than refusing. `ctx lan` rewrites it every couple
-            // of seconds while it runs.
-            if lan::now().saturating_sub(e.at) > 60 {
-                return Err(format!(
-                    "the entry for {who} is {}s old, so it is not an address any more. \
-                     Is `ctx lan` still running on both machines?",
-                    lan::now().saturating_sub(e.at)
-                )
-                .into());
-            }
-            if e.boxpub.is_empty() {
-                return Err(format!("{who} announced no encryption key, so nothing can be sealed to it").into());
-            }
-            let known = match c.name_for(&e.sign) {
-                Some(n) => format!("paired, on your list as {n}"),
-                None => "NOT PAIRED -- it will arrive as SENDER NOT ON YOUR LIST".to_string(),
-            };
-            (e.boxpub.clone(), e.addr.clone(), format!("{} ({known})", e.label))
-        }
-        None => {
-            let sign = c.key_for_name(who).ok_or_else(|| {
-                format!(
-                    "no machine called {who} on this network, and no contact by that name.\n  \
-                     Run `ctx lan` on both machines and use the word-pair it shows."
-                )
-            })?;
-            let boxpub = c
-                .box_keys
-                .get(&sign)
-                .ok_or(format!("{who} has no encryption key on file; re-add them"))?
-                .clone();
-            let seen = lan::resolve(&id, &sign, 8)?.ok_or_else(|| {
-                format!(
-                    "no answer from {who} on this network. They need `ctx lan` or `ctx \
-                     listen` running, and you need to be on their list -- a query from a \
-                     key they do not know is ignored, deliberately and silently."
-                )
-            })?;
-            (boxpub, format!("{}:{}", seen.addr.ip(), seen.port), who.to_string())
-        }
-    };
-
-    let env = seal::seal_dir(dir, &boxpub)?;
-    let body = serde_json::json!({
-        "to_box": boxpub, "envelope": serde_json::to_string(&env)? })
-        .to_string();
-    let sa: std::net::SocketAddr = addr
-        .parse()
-        .map_err(|e| format!("{who} announced an address that is not one ({addr}): {e}"))?;
-    lan::deliver_to(sa, &body)?;
-    println!("  handed to {desc} at {addr}, over this network");
-    println!("  it is in their inbox/pending -- not accepted");
-    Ok(())
-}
-
 /// Observe the inbox, and say so loudly if it could not be done.
 ///
 /// Every caller is about to print a trust verdict, and the verdict depends on
@@ -1100,7 +941,9 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             }
         }
         Cmd::Add { name, key } => {
-            add_contact(&name, &key)?;
+            for l in trust::add_contact(&name, &key)? {
+                println!("{l}");
+            }
         }
         Cmd::Seal { dir, to, out } => {
             let c = trust::Contacts::load();
@@ -1164,7 +1007,9 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 // which is the same bytes and is still there after the build.
                 let from = routes::sent_dir(&identity::home()).join(&m.id);
                 for who in &targets {
-                    hand_over_lan(&from, who)?;
+                    for l in lan::hand_over(&from, who)? {
+                        println!("{l}");
+                    }
                 }
             }
         }
@@ -1457,7 +1302,9 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 return Err("not sent. Re-run with --yes once you have read the list above.".into());
             }
             if lan {
-                hand_over_lan(&dir, &to)?;
+                for l in lan::hand_over(&dir, &to)? {
+                    println!("{l}");
+                }
                 return Ok(ExitCode::SUCCESS);
             }
             let c = trust::Contacts::load();
@@ -1800,7 +1647,9 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     }
                 }
             }
-            add_contact(&name, &cand.token())?;
+            for l in trust::add_contact(&name, &cand.token())? {
+                println!("{l}");
+            }
             println!();
             println!("paired. With `ctx lan` running on both: ctx send --to {name} --file <path> --lan");
         }

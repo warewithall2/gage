@@ -292,17 +292,29 @@ pub fn send_bundle(a: SendArgs) -> Result<manifest::Manifest, Box<dyn std::error
             // gone.
             let findings = scrub::scan(&specs);
             if !findings.is_empty() {
-                println!("outbound scan found {} item(s) that should not leave:", findings.len());
+                // The findings go in the ERROR rather than to stdout, so that
+                // every caller gets them. The viewer's send button reported a
+                // bare "refusing to build this bundle" with the reason
+                // printed in a terminal the person was not looking at, which
+                // is a refusal they cannot act on.
+                let mut lines = vec![format!(
+                    "outbound scan found {} item(s) that should not leave:",
+                    findings.len()
+                )];
                 for f in &findings {
-                    println!("  {}:{}  [{}]  {}", f.path, f.line, f.rule, f.preview);
+                    lines.push(format!("  {}:{}  [{}]  {}", f.path, f.line, f.rule, f.preview));
                 }
                 if !allow_findings {
-                    return Err(
+                    lines.push(
                         "refusing to build this bundle. Fix the files, add a rule to \
                          ~/.ctx/scrub.json, or pass --allow-findings if they are false \
                          positives."
-                            .into(),
+                            .to_string(),
                     );
+                    return Err(lines.join("\n").into());
+                }
+                for l in &lines {
+                    println!("{l}");
                 }
                 println!("  --allow-findings given: sending anyway");
             }

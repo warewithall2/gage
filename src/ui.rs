@@ -12,10 +12,23 @@
 //! gates this design is built around, plus the one thing a viewer could not
 //! do and still be an app.
 //!
-//! A reply from here is delivered to a LOCAL ROUTE only. Sending off the
-//! machine stays in the terminal behind `ctx push --yes`, because that
-//! confirmation is the last point at which a person sees what is leaving, and
-//! a button in a web page is not that.
+//! A reply from here is delivered to a LOCAL ROUTE only, and a push to a
+//! RELAY is still terminal-only behind `ctx push --yes`, because that
+//! confirmation is the last point at which a person sees what is leaving to a
+//! machine they cannot see.
+//!
+//! Handing a bundle to a machine on the LOCAL NETWORK is allowed from here,
+//! which is a change from what this file used to say, so the reasoning should
+//! be on the record rather than only in a commit. The old rule was that a
+//! button is not a confirmation. That is true of a button that pushes a
+//! bundle somebody already built: nothing in the gesture says what is
+//! leaving. It is not true of the gesture this adds, where a person picks
+//! particular files and drops them on a particular named machine that is
+//! announcing itself on their own wifi -- that names the payload and the
+//! destination in the act itself, which is more than `--yes` on a directory
+//! does. The outbound content scan still runs and still refuses, and
+//! `--allow-findings` is deliberately NOT reachable from the page: a finding
+//! sends you back to the terminal.
 //!
 //! Every mutating route demands a custom header and refuses a cross-site
 //! Origin or Sec-Fetch-Site. A page on the open internet can POST to
@@ -39,6 +52,10 @@ struct Req {
     fetch_site: Option<String>,
     guard: bool,
     body: String,
+    /// The body before UTF-8 replacement. `body` is lossy, which is right for
+    /// JSON and silently corrupts anything else; file bytes arrive base64 in
+    /// JSON, so this is kept for the decode rather than for binary directly.
+    raw: Vec<u8>,
 }
 
 /// Caps on the request head. `read_line` reads until a newline with no limit
@@ -50,6 +67,11 @@ struct Req {
 const MAX_HEAD_BYTES: u64 = 64 * 1024;
 const MAX_HEADERS: usize = 200;
 const MAX_BODY_BYTES: usize = 256 * 1024;
+/// Only `/api/send` may exceed the body cap above, and only because it is
+/// carrying files. Base64 in JSON rather than multipart: a multipart parser
+/// is the kind of thing that has bugs, and this keeps the whole surface
+/// readable. The inflation is why this is not simply the per-item limit.
+const MAX_SEND_BYTES: usize = 12 * 1024 * 1024;
 const IO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 fn read_req(stream: &TcpStream) -> std::io::Result<Req> {
@@ -66,6 +88,10 @@ fn read_req(stream: &TcpStream) -> std::io::Result<Req> {
     let method = parts.next().unwrap_or("").to_string();
     let target = parts.next().unwrap_or("/").to_string();
 
+    // The cap depends on the route, and the route is already known: the
+    // request line was read above. Everything except a send keeps the small
+    // cap it has always had.
+    let cap = if target == "/api/send" { MAX_SEND_BYTES } else { MAX_BODY_BYTES };
     let mut host = None;
     let mut origin = None;
     let mut fetch_site = None;
@@ -98,13 +124,22 @@ fn read_req(stream: &TcpStream) -> std::io::Result<Req> {
             // Capped well below anything legitimate. The body is one short
             // reply, and an unbounded read here is a one-line denial of
             // service against a server with no other limits.
-            "content-length" => len = v.parse().unwrap_or(0).min(MAX_BODY_BYTES),
+            "content-length" => len = v.parse().unwrap_or(0).min(cap),
             _ => {}
         }
     }
-    // The body is read from the limited reader too, and `read_exact` now has
-    // a timeout behind it: a client that declares a length and then goes quiet
-    // fails rather than parking the server.
+    // The body is read from the same limited reader, with the limit moved to
+    // the declared length now that the head is parsed.
+    //
+    // This matters and was wrong for a minute: the reader is capped at
+    // MAX_HEAD_BYTES so that a header line with no newline cannot grow
+    // without bound, and that cap counts the body too. A send carrying files
+    // is larger than any head, so without this the reader hit EOF partway
+    // through and `read_exact` failed on every real upload. The cap is moved
+    // rather than removed: `len` is already clamped to this route's cap, so
+    // the body is still bounded, and the head was still read under the
+    // original limit.
+    reader.get_mut().set_limit(len as u64);
     let mut body = vec![0u8; len];
     if len > 0 {
         reader.read_exact(&mut body)?;
@@ -117,6 +152,7 @@ fn read_req(stream: &TcpStream) -> std::io::Result<Req> {
         fetch_site,
         guard,
         body: String::from_utf8_lossy(&body).to_string(),
+        raw: body,
     })
 }
 
@@ -323,6 +359,21 @@ fn handle(stream: TcpStream, port: u16) -> std::io::Result<()> {
                 ),
             }
         }
+        ("GET", "/api/nearby") => {
+            respond(stream, "200 OK", "application/json", &nearby_json())
+        }
+        ("POST", "/api/send") => match send_from_ui(&req.raw) {
+            Ok(lines) => respond(stream, "200 OK", "application/json",
+                &serde_json::json!({ "ok": true, "lines": lines }).to_string()),
+            Err((code, msg)) => respond(stream, code, "application/json",
+                &serde_json::json!({ "error": msg }).to_string()),
+        },
+        ("POST", "/api/pair") => match pair_from_ui(&req.body) {
+            Ok(lines) => respond(stream, "200 OK", "application/json",
+                &serde_json::json!({ "ok": true, "lines": lines }).to_string()),
+            Err((code, msg)) => respond(stream, code, "application/json",
+                &serde_json::json!({ "error": msg }).to_string()),
+        },
         ("POST", "/api/reply") => {
             let out = reply_from_ui(&req.body);
             match out {
@@ -334,6 +385,209 @@ fn handle(stream: TcpStream, port: u16) -> std::io::Result<()> {
         }
         _ => respond(stream, "404 Not Found", "text/plain", "not found\n"),
     }
+}
+
+
+/// Who is on this network, as the page shows it.
+///
+/// Read from the list `ctx lan` keeps rather than by sending anything: the
+/// viewer does not announce, and a page that could make a machine broadcast
+/// would be a way to make it visible without the person choosing to be.
+fn nearby_json() -> String {
+    let c = crate::trust::Contacts::load();
+    let now = crate::lan::now();
+    let list: Vec<serde_json::Value> = crate::lan::read_nearby()
+        .into_iter()
+        .filter(|e| now.saturating_sub(e.at) <= 60)
+        .map(|e| {
+            serde_json::json!({
+                "label": e.label,
+                "handle": e.handle,
+                "addr": e.addr,
+                "fingerprint": crate::words::fingerprint(&e.sign),
+                "sign": e.sign,
+                // The name on YOUR list, or nothing. The page must not infer
+                // trust from the handle, which is a string that machine chose.
+                "paired_as": c.name_for(&e.sign),
+                "age": now.saturating_sub(e.at),
+            })
+        })
+        .collect();
+    serde_json::json!({
+        "lan_running": !list.is_empty() || crate::lan::nearby_path().exists(),
+        "devices": list,
+    })
+    .to_string()
+}
+
+/// A filename from a browser is a string somebody else's filesystem produced.
+///
+/// It becomes a path, so only a basename of safe characters survives. The
+/// basename is what stops a traversal -- `../../etc/passwd` lands as a file
+/// called `passwd` -- and the charset is a second filter for what a basename
+/// can still contain: a leading dot, a control character, a shell
+/// metacharacter. The browser usually strips directories itself, which is
+/// exactly the kind of "already handled elsewhere" that stops being true one
+/// release later.
+fn safe_upload_name(raw: &str) -> Option<String> {
+    let base = raw.rsplit(['/', '\\']).next().unwrap_or("");
+    if base.is_empty() || base == "." || base == ".." || base.len() > 120 {
+        return None;
+    }
+    if !base
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || "._- ()[]".contains(c))
+    {
+        return None;
+    }
+    // A leading dot would make an uploaded file look like a dotfile to the
+    // outbound scan's own eyes, and there is no reason a dropped file needs
+    // to be one.
+    if base.starts_with('.') {
+        return None;
+    }
+    Some(base.to_string())
+}
+
+/// Build a bundle from files dropped on the page and hand it to a machine on
+/// this network.
+///
+/// Everything safety-relevant goes through the same code the CLI uses: the
+/// files are written to a temp directory and passed to `send_bundle` as
+/// ordinary `--file` paths, so the outbound secret scan runs exactly as it
+/// does in the terminal, and a finding refuses the send. `allow_findings` is
+/// not a field the page can set.
+fn send_from_ui(raw: &[u8]) -> Result<Vec<String>, (&'static str, String)> {
+    use base64::{engine::general_purpose::STANDARD as B64, Engine};
+    let v: serde_json::Value = serde_json::from_slice(raw)
+        .map_err(|e| ("400 Bad Request", format!("bad body: {e}")))?;
+    let to = v.get("to").and_then(|x| x.as_str()).unwrap_or("").trim().to_string();
+    if to.is_empty() {
+        return Err(("400 Bad Request", "no device chosen".into()));
+    }
+    let subject = v
+        .get("subject")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let subject = if subject.is_empty() { "(no subject)".to_string() } else { subject };
+    let msg_type = v.get("type").and_then(|x| x.as_str()).unwrap_or("share").to_string();
+    let files = v
+        .get("files")
+        .and_then(|x| x.as_array())
+        .cloned()
+        .unwrap_or_default();
+    if files.is_empty() {
+        return Err(("400 Bad Request", "no files".into()));
+    }
+
+    let tmp = crate::identity::home().join(format!("tmp-ui-send-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).map_err(|e| ("500 Internal Server Error", e.to_string()))?;
+
+    let run = |tmp: &std::path::Path| -> Result<Vec<String>, (&'static str, String)> {
+        let mut paths = Vec::new();
+        let mut seen: Vec<String> = Vec::new();
+        for f in &files {
+            let name = f.get("name").and_then(|x| x.as_str()).unwrap_or("");
+            let Some(name) = safe_upload_name(name) else {
+                return Err((
+                    "400 Bad Request",
+                    format!("{name:?} is not a name this will write to disk"),
+                ));
+            };
+            if seen.contains(&name) {
+                return Err((
+                    "400 Bad Request",
+                    format!("two files called {name} -- one would have overwritten the other"),
+                ));
+            }
+            seen.push(name.clone());
+            let b64 = f.get("data").and_then(|x| x.as_str()).unwrap_or("");
+            let bytes = B64
+                .decode(b64)
+                .map_err(|e| ("400 Bad Request", format!("{name}: unreadable contents: {e}")))?;
+            let p = tmp.join(&name);
+            std::fs::write(&p, &bytes)
+                .map_err(|e| ("500 Internal Server Error", e.to_string()))?;
+            paths.push(p);
+        }
+        let m = crate::outbound::send_bundle(crate::outbound::SendArgs {
+            to: vec![to.clone()],
+            subject: subject.clone(),
+            out: None,
+            file: paths,
+            prompt: vec![],
+            decision: vec![],
+            memory: vec![],
+            dir: vec![],
+            allow_secrets: false,
+            reply_to: None,
+            msg_type: msg_type.clone(),
+            // Not settable from here, on purpose. A finding is a reason to go
+            // back to the terminal and look, not a checkbox.
+            allow_findings: false,
+            lan: true,
+            agent: None,
+            model: None,
+        })
+        .map_err(|e| ("400 Bad Request", e.to_string()))?;
+        let from = crate::routes::sent_dir(&crate::identity::home()).join(&m.id);
+        let mut out = vec![format!("bundle {} -- {} item(s)", m.id, m.items.len())];
+        out.extend(
+            crate::lan::hand_over(&from, &to).map_err(|e| ("502 Bad Gateway", e))?,
+        );
+        Ok(out)
+    };
+    let r = run(&tmp);
+    let _ = std::fs::remove_dir_all(&tmp);
+    r
+}
+
+/// Confirm a device's fingerprint and add its key.
+///
+/// The page has shown the four word-pairs and the person has said they match
+/// what the other screen shows, which is the same moment the CLI's y/N is.
+/// What the page may NOT do is name a key: the key comes from the nearby list
+/// by the label that was displayed, so a request cannot pair something that
+/// was never on screen.
+fn pair_from_ui(body: &str) -> Result<Vec<String>, (&'static str, String)> {
+    let v: serde_json::Value =
+        serde_json::from_str(body).map_err(|e| ("400 Bad Request", format!("bad body: {e}")))?;
+    let label = v.get("label").and_then(|x| x.as_str()).unwrap_or("").trim().to_string();
+    let name = v.get("name").and_then(|x| x.as_str()).unwrap_or("").trim().to_string();
+    if name.is_empty() {
+        return Err(("400 Bad Request", "no name to file it under".into()));
+    }
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == ' ')
+        || name.len() > 40
+    {
+        return Err(("400 Bad Request", "a contact name is letters, digits, spaces, - and _".into()));
+    }
+    let e = crate::lan::lookup_nearby(&label)
+        .ok_or(("404 Not Found", format!("{label} is not on this network now")))?;
+    if crate::lan::now().saturating_sub(e.at) > 60 {
+        return Err(("409 Conflict", "that entry is stale -- is ctx lan still running?".into()));
+    }
+    // The page echoes back the fingerprint it displayed, and it has to be the
+    // one this key actually renders. Not a security boundary on its own --
+    // the caller is local -- but it catches the real bug, which is a list
+    // that changed under the person between seeing the words and clicking.
+    let shown = v.get("fingerprint").and_then(|x| x.as_str()).unwrap_or("");
+    let real = crate::words::fingerprint(&e.sign);
+    if shown != real {
+        return Err((
+            "409 Conflict",
+            format!("the words on screen are not this key's any more ({real}) -- look again"),
+        ));
+    }
+    crate::trust::add_contact(&name, &{
+        if e.boxpub.is_empty() { e.sign.clone() } else { format!("{}.{}", e.sign, e.boxpub) }
+    })
+    .map_err(|e| ("400 Bad Request", e))
 }
 
 /// Send a reply on behalf of the page.
@@ -659,6 +913,54 @@ mod tests {
         assert_eq!(bundle_id(&format!("/api/read/{}", "a".repeat(65)), "/api/read/"), None);
         // A prefix that is not this route's.
         assert_eq!(bundle_id("/api/close/abc", "/api/read/"), None);
+    }
+
+    #[test]
+    fn an_uploaded_name_cannot_become_a_path() {
+        // A filename from a browser is a string somebody else's filesystem
+        // produced, and it is joined onto a directory.
+        //
+        // The basename is what does the work: a traversal is STRIPPED rather
+        // than refused, which is also what a browser does with a dropped
+        // folder, so `../../etc/passwd` arrives as a file called `passwd` and
+        // goes nowhere near /etc. Verified by removing the charset filter and
+        // watching nothing escape -- the test that matters is this one, not
+        // the shell check, which passed either way and so proved less than it
+        // looked like it proved.
+        for (raw, want) in [
+            ("../../../../tmp/ctx-ui-pwn", "ctx-ui-pwn"),
+            ("docs/notes.md", "notes.md"),
+            ("C:\\Users\\x\\secrets.md", "secrets.md"),
+            ("notes.md", "notes.md"),
+            ("a b (1).md", "a b (1).md"),
+        ] {
+            assert_eq!(
+                safe_upload_name(raw).as_deref(),
+                Some(want),
+                "{raw:?} should land as {want:?}"
+            );
+        }
+        // The charset is the second filter, for what a basename can still
+        // contain: a leading dot, a separator the split missed, a control
+        // character, a shell metacharacter.
+        for bad in [
+            "..",
+            ".",
+            "",
+            ".env",
+            ".ssh",
+            "a\u{0000}b",
+            "nul\nline.md",
+            "semi;colon.md",
+            "quote\".md",
+            "star*.md",
+            "tilde~.md",
+            "$HOME.md",
+        ] {
+            assert_eq!(safe_upload_name(bad), None, "{bad:?} should not become a filename");
+        }
+        // Length is bounded: a filename is a filename, not a payload.
+        assert_eq!(safe_upload_name(&"a".repeat(200)), None);
     }
 
     #[test]

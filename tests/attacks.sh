@@ -1755,6 +1755,122 @@ want "$T/sp4" "not an address any more"
 wantno "$T/sp4" "no answer from"
 unset CTX_LAN_BCAST
 
+echo "the viewer can send over the network, and refuses what the terminal refuses"
+mkdir -p "$T"/{ua,ub}
+export CTX_LAN_BCAST=127.0.0.1
+UA="CTX_LAN_ANNOUNCE_BIND=22789 CTX_LAN_ANNOUNCE_DEST=22790 CTX_LAN_QUERY_BIND=22889 CTX_LAN_QUERY_DEST=22890"
+UB="CTX_LAN_ANNOUNCE_BIND=22790 CTX_LAN_ANNOUNCE_DEST=22789 CTX_LAN_QUERY_BIND=22890 CTX_LAN_QUERY_DEST=22889"
+env CTX_HOME=$T/ua $UA $CTX lan --port 22891 > "$T/ualog" 2>&1 &
+UAPID=$!
+env CTX_HOME=$T/ub $UB $CTX lan --port 22892 > "$T/ublog" 2>&1 &
+UBPID=$!
+sleep 4
+CTX_HOME=$T/ua $CTX ui --port 7809 > "$T/uilog" 2>&1 &
+UIPID=$!
+sleep 1
+U="http://127.0.0.1:7809"
+H=(-H "Host: 127.0.0.1:7809" -H "X-Ctx: 1" -H "Content-Type: application/json")
+blab=$(CTX_HOME=$T/ub $CTX whoami 2>/dev/null | cut -f1)
+
+# The list the page shows is the one `ctx lan` keeps. The page never
+# announces: a button that could make a machine visible would make it visible
+# without the person choosing to be.
+curl -s -H "Host: 127.0.0.1:7809" "$U/api/nearby" > "$T/un1" 2>&1
+want "$T/un1" "$blab"
+want "$T/un1" '"paired_as":null'
+
+# Every guard on the viewer covers the new routes too, or they are a way
+# around the ones that were there.
+curl -s -X POST -H "Host: 127.0.0.1:7809" -H "Content-Type: application/json" \
+  -d '{"to":"x"}' "$U/api/send" > "$T/ug1" 2>&1
+want "$T/ug1" "cross-site request refused"
+curl -s -X POST -H "Host: 127.0.0.1:7809" -H "X-Ctx: 1" -H "Origin: http://evil.example" \
+  -d '{}' "$U/api/send" > "$T/ug2" 2>&1
+want "$T/ug2" "cross-site request refused"
+curl -s -X POST -H "Host: 127.0.0.1:7809" -H "X-Ctx: 1" -H "Origin: http://evil.example" \
+  -d '{}' "$U/api/pair" > "$T/ug3" 2>&1
+want "$T/ug3" "cross-site request refused"
+# A rebound page reads as well as it writes, and the device list names keys.
+curl -s -H "Host: evil.example" "$U/api/nearby" > "$T/ug4" 2>&1
+want "$T/ug4" "not addressed to this loopback viewer"
+wantno "$T/ug4" "$blab"
+
+b64() { base64 -w0 < "$1"; }
+printf 'dropped on the page\n' > "$T/w/drop.md"
+D=$(b64 "$T/w/drop.md")
+curl -s -X POST "${H[@]}" \
+  -d "{\"to\":\"$blab\",\"subject\":\"dropped\",\"files\":[{\"name\":\"drop.md\",\"data\":\"$D\"}]}" \
+  "$U/api/send" > "$T/us1" 2>&1
+want "$T/us1" '"ok":true'
+want "$T/us1" "over this network"
+CTX_HOME=$T/ub $CTX inbox > "$T/ui1" 2>&1
+want "$T/ui1" "dropped"
+want "$T/ui1" "SENDER NOT ON YOUR LIST"
+
+# The outbound scan runs on this path exactly as it does in the terminal, and
+# the page cannot override it: --allow-findings is a reason to go and look at
+# the file, not a checkbox. The findings travel in the ERROR, because a
+# refusal whose reason was printed in a terminal nobody is watching is a
+# refusal the person cannot act on.
+K=$(printf 'AKIAIOSFODNN7EXAMPLE\n' | base64 -w0)
+curl -s -X POST "${H[@]}" \
+  -d "{\"to\":\"$blab\",\"allow_findings\":true,\"files\":[{\"name\":\"k.md\",\"data\":\"$K\"}]}" \
+  "$U/api/send" > "$T/us2" 2>&1
+want "$T/us2" "refusing to build this bundle"
+want "$T/us2" "aws_key"
+want "$T/us2" "k.md:1"
+wantno "$T/us2" '"ok":true'
+
+# A filename from a browser is a string someone else's filesystem produced,
+# and it becomes a path.
+X=$(printf 'x\n' | base64 -w0)
+curl -s -X POST "${H[@]}" \
+  -d "{\"to\":\"$blab\",\"files\":[{\"name\":\"../../../../tmp/ctx-ui-pwn\",\"data\":\"$X\"}]}" \
+  "$U/api/send" > "$T/us3" 2>&1
+if [ -e /tmp/ctx-ui-pwn ]; then bad "an uploaded name escaped the staging directory"; else ok; fi
+curl -s -X POST "${H[@]}" \
+  -d "{\"to\":\"$blab\",\"files\":[{\"name\":\".env\",\"data\":\"$X\"}]}" "$U/api/send" > "$T/us4" 2>&1
+want "$T/us4" "is not a name this will write to disk"
+curl -s -X POST "${H[@]}" \
+  -d "{\"to\":\"$blab\",\"files\":[{\"name\":\"a.md\",\"data\":\"$X\"},{\"name\":\"a.md\",\"data\":\"$X\"}]}" \
+  "$U/api/send" > "$T/us5" 2>&1
+want "$T/us5" "one would have overwritten the other"
+curl -s -X POST "${H[@]}" -d "{\"to\":\"$blab\",\"files\":[]}" "$U/api/send" > "$T/us6" 2>&1
+want "$T/us6" "no files"
+
+# Pairing from the page is the same comparison, and the page cannot name a key
+# that was never on screen.
+ufp=$(CTX_HOME=$T/ub $CTX fingerprint 2>/dev/null | cut -f2)
+curl -s -X POST "${H[@]}" \
+  -d "{\"label\":\"$blab\",\"name\":\"peer\",\"fingerprint\":\"not the right words\"}" \
+  "$U/api/pair" > "$T/up1" 2>&1
+want "$T/up1" "not this key's any more"
+CTX_HOME=$T/ua $CTX contacts > "$T/upc" 2>&1
+wantno "$T/upc" "peer"
+curl -s -X POST "${H[@]}" \
+  -d "{\"label\":\"ghost machine\",\"name\":\"peer\",\"fingerprint\":\"$ufp\"}" \
+  "$U/api/pair" > "$T/up2" 2>&1
+want "$T/up2" "is not on this network now"
+# A contact name becomes a key in a JSON file and a word in a frame.
+curl -s -X POST "${H[@]}" \
+  -d "{\"label\":\"$blab\",\"name\":\"../../etc/x\",\"fingerprint\":\"$ufp\"}" \
+  "$U/api/pair" > "$T/up3" 2>&1
+want "$T/up3" "a contact name is letters"
+curl -s -X POST "${H[@]}" \
+  -d "{\"label\":\"$blab\",\"name\":\"peer\",\"fingerprint\":\"$ufp\"}" "$U/api/pair" > "$T/up4" 2>&1
+want "$T/up4" '"ok":true'
+want "$T/up4" "added peer"
+CTX_HOME=$T/ua $CTX contacts > "$T/upc2" 2>&1
+want "$T/upc2" "peer"
+# And it lands by the same path `ctx add` uses, so the same refusal applies.
+curl -s -X POST "${H[@]}" \
+  -d "{\"label\":\"$blab\",\"name\":\"peer2\",\"fingerprint\":\"$ufp\"}" "$U/api/pair" > "$T/up5" 2>&1
+want "$T/up5" '"ok":true'
+
+kill $UIPID $UAPID $UBPID 2>/dev/null
+wait 2>/dev/null
+unset CTX_LAN_BCAST
+
 echo "a good bundle exits 0"
 CTX_HOME=$T/b $CTX open "$T/b1" >/dev/null 2>&1; code good $? 0
 

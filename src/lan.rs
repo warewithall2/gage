@@ -962,3 +962,90 @@ fn ctrlc_remove(path: std::path::PathBuf) -> std::io::Result<()> {
 fn ctrlc_remove(_path: std::path::PathBuf) -> std::io::Result<()> {
     Ok(())
 }
+
+/// Seal a built bundle and hand it to a machine on this network.
+///
+/// Two ways to find them, and the first needs no pairing at all: if `ctx lan`
+/// is running it has already written down who is here and where, so an
+/// unpaired device on the list can be sent to by its word-pair label.
+/// Failing that, a contact is found by the signed query, which works without
+/// `ctx lan` open but only for a key already on the other machine's list.
+///
+/// Returns the lines to show, because one of its callers is a web page.
+pub fn hand_over(dir: &std::path::Path, who: &str) -> Result<Vec<String>, String> {
+    let id = Identity::load().map_err(|e| e.to_string())?;
+    let c = crate::trust::Contacts::load();
+
+    // A name on the list, OR a contact whose key is on the list. The second
+    // matters because pairing is one-sided: once you have paired with a
+    // machine you will call it `laptop`, and it is still announcing under its
+    // word-pair. Without this, `--to laptop` fell through to the signed
+    // query -- which the other machine correctly ignores until it has paired
+    // with YOU, so the better-named path was the one that failed.
+    let on_list = lookup_nearby(who).or_else(|| {
+        let k = c.key_for_name(who)?;
+        read_nearby().into_iter().find(|e| e.sign == k)
+    });
+
+    let (boxpub, addr, desc) = match on_list {
+        Some(e) => {
+            // An entry older than a minute is not an address any more: DHCP
+            // moves on, and sending to whoever holds that IP now is a worse
+            // failure than refusing. `ctx lan` rewrites it every two seconds.
+            let age = now().saturating_sub(e.at);
+            if age > 60 {
+                return Err(format!(
+                    "the entry for {who} is {age}s old, so it is not an address any more. \
+                     Is `ctx lan` still running on both machines?"
+                ));
+            }
+            if e.boxpub.is_empty() {
+                return Err(format!(
+                    "{who} announced no encryption key, so nothing can be sealed to it"
+                ));
+            }
+            let known = match c.name_for(&e.sign) {
+                Some(n) => format!("paired, on your list as {n}"),
+                None => "NOT PAIRED -- it will arrive as SENDER NOT ON YOUR LIST".to_string(),
+            };
+            (e.boxpub.clone(), e.addr.clone(), format!("{} ({known})", e.label))
+        }
+        None => {
+            let sign = c.key_for_name(who).ok_or_else(|| {
+                format!(
+                    "no machine called {who} on this network, and no contact by that name.\n  \
+                     Run `ctx lan` on both machines and use the word-pair it shows."
+                )
+            })?;
+            let boxpub = c
+                .box_keys
+                .get(&sign)
+                .ok_or(format!("{who} has no encryption key on file; re-add them"))?
+                .clone();
+            let seen = resolve(&id, &sign, 8)
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| {
+                    format!(
+                        "no answer from {who} on this network. They need `ctx lan` or `ctx \
+                         listen` running, and you need to be on their list -- a query from \
+                         a key they do not know is ignored, deliberately and silently."
+                    )
+                })?;
+            (boxpub, format!("{}:{}", seen.addr.ip(), seen.port), who.to_string())
+        }
+    };
+
+    let env = crate::seal::seal_dir(dir, &boxpub).map_err(|e| e.to_string())?;
+    let body = serde_json::json!({
+        "to_box": boxpub,
+        "envelope": serde_json::to_string(&env).map_err(|e| e.to_string())? })
+        .to_string();
+    let sa: SocketAddr = addr
+        .parse()
+        .map_err(|e| format!("{who} announced an address that is not one ({addr}): {e}"))?;
+    deliver_to(sa, &body).map_err(|e| e.to_string())?;
+    Ok(vec![
+        format!("  handed to {desc} at {addr}, over this network"),
+        "  it is in their inbox/pending -- not accepted".to_string(),
+    ])
+}

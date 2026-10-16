@@ -197,6 +197,41 @@ textarea:focus{border-color:var(--accent);outline:none}
 .hint code{font-family:var(--mono);font-size:12px;color:var(--fg);
   background:var(--sunk);padding:1px 5px;border-radius:5px}
 .hint p + p{margin-top:12px}
+
+/* On this network. A panel rather than a page, because discovery is
+   peripheral information: it says where a key is, never whose it is, and the
+   fingerprint below each row is the only thing worth comparing. */
+.lanbox{border-top:1px solid var(--line);padding:10px 12px 12px;flex:none;
+  max-height:46dvh;overflow-y:auto}
+.lanhead{display:flex;align-items:center;gap:8px;font-size:11px;letter-spacing:.09em;
+  text-transform:uppercase;color:var(--dim);margin:0 0 8px}
+.lanhead .dot{width:7px;height:7px;border-radius:50%;background:#9aa;flex:none}
+.lanhead .dot.on{background:#2ea043;box-shadow:0 0 0 3px rgba(46,160,67,.17)}
+.dev{border:1px solid var(--line);border-radius:10px;padding:8px 10px;margin-bottom:7px;
+  background:var(--card)}
+.dev.sel{border-color:var(--accent);box-shadow:0 0 0 2px rgba(88,133,255,.16)}
+.devtop{display:flex;align-items:baseline;gap:7px}
+.devname{font-weight:650;font-size:13.5px}
+.devtag{font-size:10.5px;padding:1px 6px;border-radius:999px;border:1px solid var(--line);
+  color:var(--dim);white-space:nowrap}
+.devtag.ok{color:#2ea043;border-color:rgba(46,160,67,.4)}
+.devfp{font-size:11px;color:var(--dim);margin-top:4px;line-height:1.45;
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-word}
+.devrow{display:flex;gap:6px;margin-top:7px;flex-wrap:wrap}
+.devbtn{font:inherit;font-size:11.5px;padding:3px 9px;border-radius:7px;cursor:pointer;
+  border:1px solid var(--line);background:transparent;color:var(--fg)}
+.devbtn:hover{border-color:var(--accent)}
+.drop{border:1.5px dashed var(--line);border-radius:10px;padding:14px 10px;text-align:center;
+  font-size:12px;color:var(--dim);cursor:pointer}
+.drop.over{border-color:var(--accent);color:var(--fg);background:rgba(88,133,255,.07)}
+.drop.has{border-style:solid;color:var(--fg)}
+.lanerr{font-size:11.5px;color:#d1242f;margin-top:7px;white-space:pre-wrap}
+.lanok{font-size:11.5px;color:var(--dim);margin-top:7px;white-space:pre-wrap;
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.lanempty{font-size:12px;color:var(--dim);line-height:1.5}
+.lansub{font-size:11px;color:var(--dim);margin-top:6px;line-height:1.5}
+.lanin{font:inherit;font-size:12px;padding:4px 7px;border-radius:7px;border:1px solid var(--line);
+  background:var(--card);color:var(--fg);width:100%;box-sizing:border-box;margin-top:6px}
 </style>
 
 <div class="app" id="app">
@@ -209,6 +244,7 @@ textarea:focus{border-color:var(--accent);outline:none}
     <div class="stale" id="stale" hidden></div>
     <div class="filters" id="filters"></div>
     <div class="list" id="list"></div>
+    <div class="lanbox" id="lanbox"></div>
   </div>
   <div class="right">
     <div class="head">
@@ -399,8 +435,10 @@ function render(){
            read in your inbox.</p>
         <p><code>ctx send --to codex --type question --decision q.md</code><br>
            <code>ctx reply &lt;id&gt; --text "..."</code></p>
-        <p>Replies written here are delivered to a local route. Anything leaving
-           this machine goes through <code>ctx push</code>, where you see the list
+        <p>Replies written here are delivered to a local route. Files you drop
+           on a machine in <b>On this network</b> go straight to it, over the
+           wifi, and land unread in its inbox. Sending through a <i>relay</i> is
+           still <code>ctx push</code> in a terminal, where you see the list
            first.</p>
       </div>`;
   if(t){
@@ -469,5 +507,168 @@ async function load(){
   if(SEL&&!DATA.threads.some(t=>t.id===SEL))SEL=null;
   render();
 }
+// ---------------------------------------------------------------------------
+// On this network
+// ---------------------------------------------------------------------------
+// The page never announces. It reads the list `ctx lan` keeps, so the viewer
+// cannot make a machine visible that the person did not choose to make
+// visible -- which would be the one thing a button here must not be able to
+// do.
+let LAN={lan_running:false,devices:[]}, LSEL=null, FILES=[], LERR2='', LOK='', LBUSY=false;
+let LPAIR=null, LNAME='';
+
+const PAIRHINT='Check all four pairs against what the other machine shows. They come '
+  +'from its key, so nobody picks their own. If one word differs, it is not that key.';
+
+function lanRender(){
+  const box=document.getElementById('lanbox');
+  if(!box)return;
+  const on=LAN.lan_running;
+  let h=`<div class="lanhead"><span class="dot${on?' on':''}"></span>On this network</div>`;
+  if(!LAN.devices.length){
+    h+=`<div class="lanempty">${on
+      ? 'Nobody else here yet.'
+      : 'Not on the network. Run <b>ctx lan</b> in a terminal.'}</div>`
+      +`<div class="lansub">${on
+        ? 'Run <b>ctx lan</b> on the other machine too.'
+        : 'It announces while it runs and goes silent when you stop it.'}</div>`;
+    box.innerHTML=h; return;
+  }
+  for(const d of LAN.devices){
+    const sel=LSEL===d.label;
+    h+=`<div class="dev${sel?' sel':''}">
+      <div class="devtop">
+        <span class="devname">${esc(d.paired_as||d.label)}</span>
+        ${d.paired_as
+          ? `<span class="devtag ok">paired</span>`
+          : `<span class="devtag">not paired</span>`}
+      </div>
+      <div class="devfp">${esc(d.fingerprint)}</div>
+      <div class="devrow">
+        <button class="devbtn" onclick="lanPick('${esc(d.label)}')">${sel?'Chosen':'Send to this'}</button>
+        ${d.paired_as?'':`<button class="devbtn" onclick="lanPair('${esc(d.label)}')">${
+          LPAIR===d.label?'Cancel':'Pair'}</button>`}
+      </div>
+      ${LPAIR===d.label?`
+        <div class="lansub">${esc(PAIRHINT)}</div>
+        <input class="lanin" placeholder="Call it what on your list?" value="${esc(LNAME)}"
+          oninput="LNAME=this.value">
+        <div class="devrow">
+          <button class="devbtn" onclick="lanPairGo('${esc(d.label)}')" ${LBUSY?'disabled':''}>
+            ${LBUSY?'Pairing...':'Those four pairs match'}</button>
+        </div>`:''}
+      </div>`;
+  }
+  const names=FILES.map(f=>f.name).join(', ');
+  h+=`<div class="drop${FILES.length?' has':''}" id="drop"
+        onclick="document.getElementById('fpick').click()">
+      ${FILES.length?esc(names)+` &middot; ${kb(FILES.reduce((a,f)=>a+f.size,0))}`
+                    :'Drop files here, or click to choose'}
+    </div>
+    <input type="file" id="fpick" multiple hidden onchange="lanFiles(this.files)">`;
+  if(FILES.length&&LSEL){
+    h+=`<input class="lanin" id="lsubj" placeholder="Subject" value="${esc(LSUBJ)}"
+           oninput="LSUBJ=this.value">
+      <div class="devrow">
+        <button class="devbtn" onclick="lanSend()" ${LBUSY?'disabled':''}>
+          ${LBUSY?'Sending...':'Send to '+esc((LAN.devices.find(x=>x.label===LSEL)||{}).paired_as||LSEL)}</button>
+        <button class="devbtn" onclick="FILES=[];lanRender()">Clear</button>
+      </div>`;
+  } else if(FILES.length){
+    h+=`<div class="lansub">Choose a machine above.</div>`;
+  }
+  if(LERR2)h+=`<div class="lanerr">${esc(LERR2)}</div>`;
+  if(LOK)h+=`<div class="lanok">${esc(LOK)}</div>`;
+  box.innerHTML=h;
+  const dz=document.getElementById('drop');
+  if(dz){
+    dz.ondragover=e=>{e.preventDefault();dz.classList.add('over')};
+    dz.ondragleave=()=>dz.classList.remove('over');
+    dz.ondrop=e=>{e.preventDefault();dz.classList.remove('over');lanFiles(e.dataTransfer.files)};
+  }
+}
+let LSUBJ='';
+function lanPick(l){ LSEL=(LSEL===l?null:l); LERR2='';LOK=''; lanRender(); }
+
+async function lanFiles(fl){
+  LERR2='';LOK='';
+  const out=[];
+  let total=0;
+  for(const f of fl){
+    total+=f.size;
+    // Base64 in JSON inflates by a third, and the server caps the body at
+    // 12MB. Refused here with the real number rather than sent and rejected.
+    if(total*1.37>11*1024*1024){
+      LERR2='That is too much to send through the page ('+kb(total)
+        +'). Use ctx send --dir in the terminal for anything large.';
+      lanRender(); return;
+    }
+    out.push({name:f.name,size:f.size,data:await b64(f)});
+  }
+  FILES=out; lanRender();
+}
+const b64=f=>new Promise((res,rej)=>{
+  const r=new FileReader();
+  r.onerror=()=>rej(new Error('could not read '+f.name));
+  r.onload=()=>res(String(r.result).split(',',2)[1]||'');
+  r.readAsDataURL(f);
+});
+
+async function lanSend(){
+  if(!LSEL||!FILES.length||LBUSY)return;
+  LBUSY=true;LERR2='';LOK='';lanRender();
+  try{
+    const r=await post('/api/send',{to:LSEL,subject:LSUBJ,type:'share',
+      files:FILES.map(f=>({name:f.name,data:f.data}))});
+    const j=await r.json().catch(()=>({}));
+    if(r.ok){ LOK=(j.lines||[]).join('\n'); FILES=[]; LSUBJ=''; }
+    // The outbound scan refuses here exactly as it does in the terminal, and
+    // the page deliberately offers no override: --allow-findings is a reason
+    // to go and look at the file, not a checkbox.
+    else { LERR2=j.error||'that did not send'; }
+  }catch(e){ LERR2=String(e); }
+  LBUSY=false; lanRender();
+}
+
+// Pairing happens inline rather than through confirm()/prompt().
+//
+// Not only because blocking dialogs are unpleasant: the comparison IS the
+// feature, and a browser dialog renders the four pairs in a cramped box the
+// person dismisses by reflex. On the page they sit at the size everything
+// else is read at, next to the name being filed, and the button says what it
+// is agreeing to.
+function lanPair(label){ LPAIR=(LPAIR===label?null:label); LNAME=''; LERR2='';LOK=''; lanRender(); }
+
+async function lanPairGo(label){
+  const d=LAN.devices.find(x=>x.label===label);
+  if(!d||LBUSY)return;
+  if(!LNAME.trim()){ LERR2='Give it a name to file it under.'; lanRender(); return; }
+  LBUSY=true;LERR2='';LOK='';lanRender();
+  try{
+    // The fingerprint goes back up so the server can refuse if the list
+    // changed under us between showing the words and clicking.
+    const r=await post('/api/pair',{label:label,name:LNAME.trim(),fingerprint:d.fingerprint});
+    const j=await r.json().catch(()=>({}));
+    if(r.ok){ LOK=(j.lines||[]).join('\n'); LPAIR=null; LNAME=''; }
+    else { LERR2=j.error||'that did not pair'; }
+  }catch(e){ LERR2=String(e); }
+  LBUSY=false;
+  await lanLoad();
+}
+
+async function lanLoad(){
+  try{
+    const r=await fetch('/api/nearby');
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    LAN=await r.json();
+    if(LSEL&&!LAN.devices.some(d=>d.label===LSEL))LSEL=null;
+  }catch(e){
+    // Same rule as the inbox loader: never fail invisibly.
+    LERR2='Could not read the network list: '+(e&&e.message?e.message:e);
+  }
+  lanRender();
+}
+lanLoad();setInterval(lanLoad,2000);
+
 load();setInterval(load,2500);
 </script>
