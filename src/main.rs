@@ -213,6 +213,14 @@ enum Cmd {
         #[arg(long)] once: bool,
         /// print instead of firing a desktop notification
         #[arg(long)] quiet: bool,
+        /// Run this command when an arrival is covered by a grant in your
+        /// authority file. It is given CTX_BUNDLE_ID, CTX_FROM, CTX_FROM_KEY,
+        /// CTX_TYPE, CTX_SUBJECT, CTX_EXPECTS_REPLY and CTX_GRANT in its
+        /// environment -- never the bundle's contents, and it does not accept
+        /// the bundle. Arrivals with no grant notify as usual and run nothing
+        #[arg(long)] on_arrival: Option<String>,
+        /// seconds before a hook that has not finished is killed
+        #[arg(long, default_value = "300")] hook_timeout: u64,
     },
     /// Serve the local viewer on 127.0.0.1
     Ui {
@@ -1466,7 +1474,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             println!("thread {thread} marked closed locally");
             println!("  (your view only -- the other side decides their own)");
         }
-        Cmd::Watch { every, once, quiet } => {
+        Cmd::Watch { every, once, quiet, on_arrival, hook_timeout } => {
             // The interval is a trade: shorter means you hear sooner, and it
             // also tells the relay operator more precisely when you are
             // active, since fetch timing is metadata they can see. Two
@@ -1487,8 +1495,33 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     if quiet || !notify::desktop(&title, &body, urgent) {
                         println!("{title}\n{body}");
                     }
+                    // Announced first, then hooks. A hook that crashes the
+                    // watcher must not leave the arrival un-announced, or the
+                    // next run re-fires it against the same broken command.
                     let ids: Vec<String> = arrivals.iter().map(|a| a.id.clone()).collect();
                     notify::mark_announced(&ids);
+                    if let Some(cmd) = &on_arrival {
+                        for a in &arrivals {
+                            // No grant, no hook. The notification above already
+                            // told the human; this is the line that keeps the
+                            // unattended path narrower than the visible one.
+                            let Some(g) = &a.grant else {
+                                println!(
+                                    "  {} from {}: no grant covers it, so --on-arrival did not run",
+                                    &a.id[..8.min(a.id.len())],
+                                    a.from
+                                );
+                                continue;
+                            };
+                            println!(
+                                "  running --on-arrival for {} ({g})",
+                                &a.id[..8.min(a.id.len())]
+                            );
+                            if let Err(e) = notify::run_hook(cmd, a, hook_timeout) {
+                                eprintln!("  --on-arrival: {e}");
+                            }
+                        }
+                    }
                 } else if once {
                     println!("nothing new");
                 }

@@ -44,12 +44,21 @@ pub struct Pending {
     pub msg_type: String,
     pub subject: String,
     pub expects_reply: bool,
+    /// The sender's signing key, as `ctx whoami` prints it. Carried so the
+    /// hook can be given it without re-deriving it from `from`, which is a
+    /// contact name or a quoted claim and is not an identity.
+    pub key: String,
+    /// The grant in the receiver's own authority file that covers this
+    /// message, rendered as the line it came from. `None` is the normal case
+    /// and means no hook runs: see `run_hook`.
+    pub grant: Option<String>,
 }
 
 /// Unread, un-announced bundles sitting in pending.
 pub fn new_arrivals() -> Vec<Pending> {
     let st = crate::state::LocalState::load();
     let contacts = crate::trust::Contacts::load();
+    let authority = crate::authority::Authority::load();
     let seen = load_announced();
     let home = crate::identity::home();
     let mut out = Vec::new();
@@ -68,7 +77,21 @@ pub fn new_arrivals() -> Vec<Pending> {
         if st.is_read(&m.id) || seen.contains(&m.id) {
             continue;
         }
+        // The same lookup the frame prints, from the same inputs, so a hook
+        // can never fire on an authority the reader was not shown.
+        let grant = authority
+            .lookup(
+                &contacts,
+                l.trust,
+                &m.from.key,
+                m.msg_type,
+                m.in_reply_to.is_some(),
+            )
+            .ok()
+            .map(|g| g.to_string());
         out.push(Pending {
+            key: m.from.key.clone(),
+            grant,
             id: m.id.clone(),
             from: contacts
                 .name_for(&m.from.key)
@@ -169,6 +192,8 @@ mod tests {
             msg_type: ty.into(),
             subject: subj.into(),
             expects_reply: expects,
+            key: "k".into(),
+            grant: None,
         }
     }
 
@@ -216,5 +241,131 @@ mod tests {
         for s in [&t, &b] {
             assert!(!s.contains("items/"), "notification referenced bundle contents: {s}");
         }
+    }
+}
+
+/// Run the receiver's own command for one arrival.
+///
+/// This is the only place in ctx where something arriving causes something to
+/// happen without a human in the loop, so the shape of it is the whole
+/// security argument:
+///
+/// 1. **It fires only where a grant already covers the message.** Not
+///    "verified", which only says whose key signed it -- the authority file
+///    is the only thing in the tool that says an agent may act, and this is
+///    the unattended path, so it is the one caller that must not settle for
+///    less. An unlisted sender, or a verified sender with no grant, notifies
+///    exactly as before and runs nothing.
+/// 2. **The hook never receives the payload.** It gets the id, the sender's
+///    key, the contact name, the type and the subject, and that is all. A
+///    bundle's contents are the thing the accept gate exists to hold back; a
+///    hook that handed them over would have quietly removed the gate for
+///    every arrival that happened to match a grant.
+/// 3. **It does not accept the bundle.** After the hook runs, the bundle is
+///    still unread, still in `pending`, still needing `ctx accept`. The hook
+///    is told that something actionable arrived; deciding to read it stays a
+///    separate, recorded act.
+/// 4. **Sender-controlled text goes in the environment, never into the
+///    command string.** The subject is written by whoever sent it. Pasted
+///    into a shell line it would be a command injection with extra steps, so
+///    the command the receiver wrote is passed to `sh -c` untouched and every
+///    sender-chosen value arrives as `$CTX_SUBJECT` and friends -- already
+///    flattened to one bounded line by `one_line`, because a newline in an
+///    environment variable is still a newline in whatever the hook writes it
+///    to.
+///
+/// A non-zero exit or a timeout is reported and otherwise ignored, and the
+/// arrival is still marked announced. Retrying a failing hook forever would
+/// turn one broken command into an infinite loop against the relay, and the
+/// failure is on screen either way.
+pub fn run_hook(cmd: &str, p: &Pending, timeout: u64) -> Result<(), String> {
+    use std::process::Stdio;
+    let mut child = Command::new("sh")
+        .arg("-c")
+        .arg(cmd)
+        .env("CTX_BUNDLE_ID", &p.id)
+        .env("CTX_FROM", one_line(&p.from, 80))
+        .env("CTX_FROM_KEY", &p.key)
+        .env("CTX_TYPE", &p.msg_type)
+        .env("CTX_SUBJECT", one_line(&p.subject, 200))
+        .env("CTX_EXPECTS_REPLY", if p.expects_reply { "1" } else { "0" })
+        .env("CTX_GRANT", p.grant.clone().unwrap_or_default())
+        // No payload on stdin either: a hook that read stdin expecting the
+        // bundle would get EOF, which is the right answer to that question.
+        .stdin(Stdio::null())
+        .spawn()
+        .map_err(|e| format!("could not start the hook: {e}"))?;
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout);
+    loop {
+        match child.try_wait() {
+            Ok(Some(st)) if st.success() => return Ok(()),
+            Ok(Some(st)) => return Err(format!("the hook exited {}", code_of(st))),
+            Ok(None) => {}
+            Err(e) => return Err(format!("could not wait for the hook: {e}")),
+        }
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!("the hook ran longer than {timeout}s and was killed"));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+fn code_of(st: std::process::ExitStatus) -> String {
+    match st.code() {
+        Some(c) => c.to_string(),
+        None => "on a signal".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod hook_tests {
+    use super::*;
+
+    fn p() -> Pending {
+        Pending {
+            id: "abc123".into(),
+            from: "mac".into(),
+            msg_type: "share".into(),
+            subject: "one\ntwo".into(),
+            expects_reply: false,
+            key: "KEY".into(),
+            grant: Some("allow mac share".into()),
+        }
+    }
+
+    #[test]
+    fn the_hook_gets_sender_text_as_data_not_as_shell() {
+        let out = std::env::temp_dir().join(format!("ctx-hook-{}", std::process::id()));
+        let _ = std::fs::remove_file(&out);
+        let mut hostile = p();
+        // A subject that would run a command if it were ever pasted into the
+        // command string instead of handed over in the environment.
+        hostile.subject = format!("$(touch {})", out.display());
+        run_hook("printf '%s' \"$CTX_SUBJECT\" > /dev/null", &hostile, 10).unwrap();
+        assert!(!out.exists(), "a subject executed as shell");
+    }
+
+    #[test]
+    fn a_newline_in_the_subject_cannot_forge_a_second_line() {
+        // The hook writes one line per value; a subject holding a newline
+        // would otherwise become two lines in whatever the hook writes to.
+        let flat = one_line(&p().subject, 200);
+        assert!(!flat.contains('\n'));
+        assert_eq!(flat, "one two");
+    }
+
+    #[test]
+    fn a_hook_that_hangs_is_killed_rather_than_stalling_the_watcher() {
+        let err = run_hook("sleep 30", &p(), 1).unwrap_err();
+        assert!(err.contains("was killed"), "{err}");
+    }
+
+    #[test]
+    fn a_failing_hook_is_reported_with_its_code() {
+        let err = run_hook("exit 7", &p(), 10).unwrap_err();
+        assert!(err.contains("exited 7"), "{err}");
     }
 }

@@ -513,6 +513,7 @@ answer.
 
     ctx watch                    # poll, pull, notify
     ctx watch --once --quiet     # one check, print instead of notifying
+    ctx watch --on-arrival CMD   # and run CMD for an arrival a grant covers
 
 Polling, because a relay that pushed would hold an open connection per
 mailbox, and the agents are not long-lived processes anyway -- they are
@@ -533,6 +534,45 @@ The interval is a trade. Shorter means hearing sooner, and it also tells the
 relay operator more precisely when you are active, since fetch timing is
 metadata they can see. The default is two minutes: slow enough not to be a
 presence feed.
+
+### The on-arrival hook
+
+`--on-arrival` is the only thing in ctx that turns an arrival into an action
+with nobody watching, so it is deliberately narrower than the notification
+beside it.
+
+**It fires only where a grant already covers the message.** Not merely
+`SENDER VERIFIED` -- that says whose key signed something, which is a
+statement about what is known, not permission to act. `~/.ctx/authority` is
+the only file in the tool that says an agent may act, and this is the
+unattended path, so it is the one caller that must not settle for less. A
+verified sender with no grant, or a grant for a different message kind,
+notifies exactly as before and runs nothing. The run prints which grant
+matched, so the line in the file and the action taken can be read together.
+
+**The hook never receives the payload.** It gets the id, the sender's key,
+the contact name, the type, the subject and the matched grant, in the
+environment -- `CTX_BUNDLE_ID`, `CTX_FROM`, `CTX_FROM_KEY`, `CTX_TYPE`,
+`CTX_SUBJECT`, `CTX_EXPECTS_REPLY`, `CTX_GRANT`. Nothing on stdin, nothing on
+the command line. A bundle's contents are the thing the accept gate exists to
+hold back; a hook that handed them over would have quietly removed that gate
+for every arrival matching a grant.
+
+**It does not accept the bundle.** Afterwards the bundle is still unread,
+still in `pending`, still needing `ctx accept`. The hook is told something
+actionable arrived; deciding to read it stays a separate, recorded act.
+
+**Sender-chosen text is data, never command.** The subject is written by
+whoever sent it. Interpolated into a shell line it would be command injection
+with extra steps, so the command you wrote goes to `sh -c` untouched and
+every sender-chosen value arrives as an environment variable, flattened to
+one bounded line first -- a newline in `CTX_SUBJECT` is still a newline in
+whatever the hook writes it to, and could forge an arrival record there.
+
+A hook that exits non-zero is reported; one that outlives
+`--hook-timeout` (default 300s) is killed. Either way the arrival stays
+marked announced, because retrying a broken command forever would turn one
+bad hook into an endless loop against the relay.
 
 As a background service:
 
@@ -707,7 +747,7 @@ in the message. See [Authority](#authority-the-one-thing-that-says-you-may-act).
 
     cargo build --release && cargo test --release && bash tests/attacks.sh
 
-506 checks plus 71 Rust unit tests. Every one is an attack that worked, or
+527 checks plus 75 Rust unit tests. Every one is an attack that worked, or
 nearly worked, during development: frame-boundary forgery, payload swapping
 after signing, a listed contact claiming a third party's name, an unverified
 author name on a forward, a trust label that was a substring of its own

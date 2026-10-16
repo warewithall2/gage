@@ -1871,6 +1871,114 @@ kill $UIPID $UAPID $UBPID 2>/dev/null
 wait 2>/dev/null
 unset CTX_LAN_BCAST
 
+echo
+echo "--- ctx watch --on-arrival: the unattended path"
+# A hook is the only thing in ctx that turns an arrival into an action with
+# nobody watching, so each property it rests on gets a check here. Two homes:
+# `ha` sends, `hb` receives and runs the hook.
+mkdir -p "$T"/{ha,hb}
+CTX_HOME=$T/ha $CTX init hsend >/dev/null
+CTX_HOME=$T/hb $CTX init hrecv >/dev/null
+HAK=$(CTX_HOME=$T/ha $CTX whoami | cut -f2)
+HBK=$(CTX_HOME=$T/hb $CTX whoami | cut -f2)
+CTX_HOME=$T/hb $CTX add sender "$HAK" >/dev/null 2>&1
+CTX_HOME=$T/ha $CTX add recv   "$HBK" >/dev/null 2>&1
+CTX_HOME=$T/ha $CTX route recv "$T/hb" >/dev/null 2>&1
+HOOK=$T/hook.sh
+cat > "$HOOK" <<'SH'
+#!/bin/sh
+{ echo "FIRED id=$CTX_BUNDLE_ID from=$CTX_FROM type=$CTX_TYPE grant=$CTX_GRANT"
+  echo "subject=[$CTX_SUBJECT]"
+  echo "stdin=[$(cat)]"; } >> "$HOOKLOG"
+SH
+chmod +x "$HOOK"
+
+# A benign arrival, delivered through a local route so no network is needed.
+printf 'payload\n' > "$T/ha/item.md"
+CTX_HOME=$T/ha $CTX send --to recv --subject "first" --file "$T/ha/item.md"  >/dev/null 2>&1
+
+# 1. No authority file: a VERIFIED sender still runs nothing.
+rm -f "$T/hb/authority"
+HOOKLOG=$T/hl1 CTX_HOME=$T/hb $CTX watch --once --quiet --on-arrival "$HOOK" > "$T/hw1" 2>&1
+want   "$T/hw1" "no grant covers it"
+wantno "$T/hw1" "running --on-arrival"
+if [ ! -s "$T/hl1" ]; then ok; else bad "the hook ran with no authority file"; fi
+
+# 2. With a grant, it runs -- and the bundle is STILL unread and still pending.
+printf 'allow sender share\n' > "$T/hb/authority"
+printf 'payload\n' > "$T/ha/item2.md"
+CTX_HOME=$T/ha $CTX send --to recv --subject "second" --file "$T/ha/item2.md" >/dev/null 2>&1
+HOOKLOG=$T/hl2 CTX_HOME=$T/hb $CTX watch --once --quiet --on-arrival "$HOOK" > "$T/hw2" 2>&1
+want "$T/hw2" "running --on-arrival"
+want "$T/hw2" "allow sender share"
+want "$T/hl2" "FIRED"
+want "$T/hl2" "grant=allow sender share"
+# The payload is not handed over: not on stdin, and no item text anywhere.
+want   "$T/hl2" "stdin=[]"
+wantno "$T/hl2" "payload"
+# And the gate is intact: still unread, still in pending.
+CTX_HOME=$T/hb $CTX inbox > "$T/hi2" 2>&1
+want "$T/hi2" "second"
+h2id=$(CTX_HOME=$T/hb $CTX inbox --json | sed -n 's/.*"id": "\([a-f0-9]*\)".*/\1/p' | head -1)
+if [ -d "$T/hb/inbox/pending/$h2id" ]; then ok; else bad "the hook accepted the bundle"; fi
+
+# 3. A grant for one kind does not cover another.
+printf 'payload\n' > "$T/ha/item3.md"
+CTX_HOME=$T/ha $CTX send --to recv --type question --subject "third" \
+  --file "$T/ha/item3.md" >/dev/null 2>&1
+HOOKLOG=$T/hl3 CTX_HOME=$T/hb $CTX watch --once --quiet --on-arrival "$HOOK" > "$T/hw3" 2>&1
+want   "$T/hw3" "no grant covers it"
+wantno "$T/hw3" "running --on-arrival"
+
+# 4. A sender-chosen subject reaches the hook as data, never as shell.
+printf 'payload\n' > "$T/ha/item4.md"
+CTX_HOME=$T/ha $CTX send --to recv \
+  --subject '$(touch '"$T"'/PWNED)`touch '"$T"'/PWNED2`; touch '"$T"'/PWNED3' \
+  --file "$T/ha/item4.md" >/dev/null 2>&1
+HOOKLOG=$T/hl4 CTX_HOME=$T/hb $CTX watch --once --quiet --on-arrival "$HOOK" > "$T/hw4" 2>&1
+want "$T/hl4" "FIRED"
+if [ ! -e "$T/PWNED" ] && [ ! -e "$T/PWNED2" ] && [ ! -e "$T/PWNED3" ]; then ok
+else bad "a subject executed as shell in the hook"; fi
+
+# 5. A newline in the subject cannot forge a second line in whatever the hook writes.
+printf 'payload\n' > "$T/ha/item5.md"
+CTX_HOME=$T/ha $CTX send --to recv --subject 'one
+FIRED id=forged from=admin' --file "$T/ha/item5.md" >/dev/null 2>&1
+HOOKLOG=$T/hl5 CTX_HOME=$T/hb $CTX watch --once --quiet --on-arrival "$HOOK" > "$T/hw5" 2>&1
+# Flattened, not refused: the text still appears, inside the one line the
+# hook was given. What must not happen is a SECOND line, which is what would
+# let a subject forge an arrival record in whatever the hook writes to. So the
+# check is on line structure, not on the substring -- an earlier version of
+# this check looked for the substring and failed on the quoted subject itself.
+if [ "$(grep -c . "$T/hl5")" = 3 ]; then ok; else bad "subject forged extra lines: $(wc -l < "$T/hl5")"; fi
+if grep -q '^FIRED id=forged' "$T/hl5"; then bad "a subject forged an arrival line"; else ok; fi
+
+# 6. A hook that fails is reported, not swallowed; a hook that hangs is killed.
+printf 'payload\n' > "$T/ha/item6.md"
+CTX_HOME=$T/ha $CTX send --to recv --subject "sixth" --file "$T/ha/item6.md" >/dev/null 2>&1
+CTX_HOME=$T/hb $CTX watch --once --quiet --on-arrival 'exit 3' > "$T/hw6" 2>&1
+want "$T/hw6" "the hook exited 3"
+printf 'payload\n' > "$T/ha/item7.md"
+CTX_HOME=$T/ha $CTX send --to recv --subject "seventh" --file "$T/ha/item7.md" >/dev/null 2>&1
+CTX_HOME=$T/hb $CTX watch --once --quiet --on-arrival 'sleep 30' --hook-timeout 2 > "$T/hw7" 2>&1
+want "$T/hw7" "was killed"
+
+# 7. An unlisted sender gets no hook even with a wide-open authority file.
+mkdir -p "$T/hz"; CTX_HOME=$T/hz $CTX init stranger >/dev/null
+HZK=$(CTX_HOME=$T/hz $CTX whoami | cut -f2)
+CTX_HOME=$T/hz $CTX add recv "$HBK" >/dev/null 2>&1
+CTX_HOME=$T/hz $CTX route recv "$T/hb" >/dev/null 2>&1
+printf 'allow sender any\nallow %s any\n' "$HZK" > "$T/hb/authority"
+printf 'payload\n' > "$T/hz/item.md"
+CTX_HOME=$T/hz $CTX send --to recv --subject "from a stranger" \
+  --file "$T/hz/item.md" >/dev/null 2>&1
+HOOKLOG=$T/hl8 CTX_HOME=$T/hb $CTX watch --once --quiet --on-arrival "$HOOK" > "$T/hw8" 2>&1
+# The key is granted by name in the file, but it is not on the contact list,
+# so the verdict is not SENDER VERIFIED and lookup refuses before matching.
+wantno "$T/hw8" "running --on-arrival"
+if ! grep -qF "from a stranger" "$T/hl8" 2>/dev/null; then ok
+else bad "a hook ran for a key that is not on the contact list"; fi
+
 echo "a good bundle exits 0"
 CTX_HOME=$T/b $CTX open "$T/b1" >/dev/null 2>&1; code good $? 0
 

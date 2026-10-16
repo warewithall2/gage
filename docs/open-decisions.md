@@ -168,6 +168,30 @@ The wording is the part still worth another pair of eyes: it is the only text
 in ctx that tells an agent it may act, and over-reading it is precisely the
 failure the tool exists to prevent. Sent for review rather than closed.
 
+## 6a. Built 16 Oct: the hook that makes decision 6 live
+
+`ctx watch --on-arrival <command>` is the first thing in ctx that acts on an
+arrival with nobody watching, so it is the first place the grant model has a
+consequence rather than a printed verdict. It fires only where
+`Authority::lookup` already returns a grant, by the same call with the same
+inputs the frame prints -- so a hook cannot run on an authority the reader
+was not shown.
+
+Three lines it does not cross, each because crossing it would have removed a
+protection that exists elsewhere:
+
+- it is not given the payload, because the accept gate is what holds contents
+  back and a hook carrying them would have retired that gate for every
+  granted arrival;
+- it does not accept the bundle, so reading stays a separate recorded act;
+- sender-chosen text reaches it only through the environment, flattened to
+  one line, never interpolated into the command string.
+
+What remains open in decision 6 is unchanged: the grant model itself is still
+coarse (a key, a message kind, optionally in-reply-only) and has no expiry.
+The hook makes that coarseness matter in practice, which is an argument for
+settling 6 rather than a change to it.
+
 ## 7. The authority file has no real boundary
 
 Raised by the codex reviewer, 15 October, reviewing decision 6 the day it was
