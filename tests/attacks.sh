@@ -29,18 +29,16 @@ nfiles() { ls "$1" 2>/dev/null | wc -l | tr -d '[:space:]'; }
 # wedged" -- a frightening message for a missing dependency.
 if command -v timeout >/dev/null 2>&1; then tmo() { timeout "$@"; }
 elif command -v gtimeout >/dev/null 2>&1; then tmo() { gtimeout "$@"; }
+elif command -v perl >/dev/null 2>&1; then
+  # `alarm` then `exec`, so the command keeps this shell's stdin and stdout.
+  # The obvious shell fallback -- background it and poll -- does NOT: bash
+  # redirects an asynchronous command's stdin from /dev/null when job control
+  # is off, so a `tmo` with something piped into it read nothing and returned
+  # nothing. That silently turned one check into "no Host was not refused:"
+  # with an empty reply, which looks like a server bug and is not one.
+  tmo() { local secs=$1; shift; perl -e 'alarm shift; exec @ARGV' "$secs" "$@"; }
 else
-  # Last resort, in portable shell: run it in the background and poll.
-  tmo() {
-    local secs=$1; shift
-    "$@" & local p=$!
-    local i=0
-    while kill -0 "$p" 2>/dev/null; do
-      i=$((i+1)); [ "$i" -gt $((secs*20)) ] && { kill -9 "$p" 2>/dev/null; wait "$p" 2>/dev/null; return 124; }
-      sleep 0.05
-    done
-    wait "$p"
-  }
+  tmo() { shift; "$@"; }   # no timeout available: run it and hope
 fi
 
 # `ss` is Linux-only; macOS has BSD netstat, whose listening lines read
