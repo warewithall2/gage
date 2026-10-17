@@ -2877,6 +2877,75 @@ else want "$T/chv7" "the history this chain was started over has changed"; fi
 cp "$T/ch3/journal.good" "$T/ch3/journal.jsonl"
 
 echo
+echo "--- two agents on different networks, with only a relay between them"
+# The project's whole thesis, as one path: no shared network, no local route,
+# no LAN discovery. A prompt-and-file package from one person's agent to
+# another's, a verified frame on arrival, and a reply in the same thread.
+# Until now every end-to-end check used a local route or the LAN, so the one
+# arrangement the project exists for was the one nothing exercised.
+XP=7911
+mkdir -p "$T"/{xr,xden,xvir}
+CTX_HOME=$T/xr $CTX relay --bind 127.0.0.1:$XP --store "$T/xr/store" >/dev/null 2>&1 &
+xrpid=$!
+sleep 1
+CTX_HOME=$T/xden $CTX init denver   >/dev/null 2>&1
+CTX_HOME=$T/xvir $CTX init virginia >/dev/null 2>&1
+XDK=$(CTX_HOME=$T/xden $CTX whoami | cut -f2)
+XVK=$(CTX_HOME=$T/xvir $CTX whoami | cut -f2)
+CTX_HOME=$T/xden $CTX join "127.0.0.1:$XP" >/dev/null 2>&1
+CTX_HOME=$T/xvir $CTX join "127.0.0.1:$XP" >/dev/null 2>&1
+# Keys exchanged out of band, which is the only step that needs a human and
+# the only one that does not care about networks.
+CTX_HOME=$T/xden $CTX add virginia "$XVK" >/dev/null 2>&1
+CTX_HOME=$T/xvir $CTX add denver   "$XDK" >/dev/null 2>&1
+# Neither has a route to the other: delivery CANNOT be local.
+if [ ! -f "$T/xden/routes.json" ] && [ ! -f "$T/xvir/routes.json" ]; then ok
+else bad "a local route existed, so this proves nothing about the relay path"; fi
+
+printf 'Summarise the attached spec and reply with risks.\n' > "$T/xden/prompt.md"
+printf 'spec v3: the widget must never exceed 40C\n' > "$T/xden/spec.md"
+CTX_HOME=$T/xden $CTX send --to virginia --type question --subject "spec review" \
+  --prompt "$T/xden/prompt.md" --file "$T/xden/spec.md" --out "$T/xden/out" >/dev/null 2>&1
+CTX_HOME=$T/xden $CTX push "$T/xden/out" --to virginia --yes >/dev/null 2>&1
+code xpush $? 0
+CTX_HOME=$T/xvir $CTX pull >/dev/null 2>&1
+XVID=$(CTX_HOME=$T/xvir $CTX inbox --json 2>/dev/null \
+       | python3 -c "import sys,json;r=json.load(sys.stdin);print(r[0]['id'] if r else '')")
+if [ -n "$XVID" ]; then ok; else bad "nothing arrived over the relay"; fi
+CTX_HOME=$T/xvir $CTX accept "$XVID" >/dev/null 2>&1
+CTX_HOME=$T/xvir $CTX open "$T/xvir/inbox/accepted/$XVID" > "$T/xvo" 2>&1
+# Verified across a relay that never saw the contents.
+want "$T/xvo" "SENDER VERIFIED"
+want "$T/xvo" "name confirmed against your list"
+want "$T/xvo" "the widget must never exceed 40C"
+# And still framed as data: distance does not buy a sender any authority.
+want "$T/xvo" "carries no authority"
+
+# The reply leg, in the same thread -- which is what "agents talking" needs
+# and what a one-way delivery check would have missed.
+printf 'Risk: 40C has no ambient margin. Suggest 35C.\n' > "$T/xvir/reply.md"
+CTX_HOME=$T/xvir $CTX send --to denver --type answer --reply-to "$XVID" \
+  --subject "re: spec review" --decision "$T/xvir/reply.md" --out "$T/xvir/out" >/dev/null 2>&1
+CTX_HOME=$T/xvir $CTX push "$T/xvir/out" --to denver --yes >/dev/null 2>&1
+CTX_HOME=$T/xden $CTX pull >/dev/null 2>&1
+XDID=$(CTX_HOME=$T/xden $CTX inbox --json 2>/dev/null \
+       | python3 -c "import sys,json;r=json.load(sys.stdin);print(r[0]['id'] if r else '')")
+if [ -n "$XDID" ]; then ok; else bad "the reply did not come back over the relay"; fi
+CTX_HOME=$T/xden $CTX open "$T/xden/inbox/pending/$XDID" > "$T/xdo" 2>&1
+want "$T/xdo" "SENDER VERIFIED"
+want "$T/xdo" "no ambient margin"
+
+# The relay stored sealed bytes and nothing else: it is the one party in this
+# exchange that neither side chose to trust.
+if grep -rqF "widget must never exceed" "$T/xr/store" 2>/dev/null; then
+  bad "the relay store contains the payload in the clear"
+else ok; fi
+if grep -rqF "spec review" "$T/xr/store" 2>/dev/null; then
+  bad "the relay store contains the subject in the clear"
+else ok; fi
+kill $xrpid 2>/dev/null; wait $xrpid 2>/dev/null
+
+echo
 echo "--- a relay that faces other people"
 # Everything here is about the relay being reachable by someone who is not
 # you. On a tailnet none of it mattered; the moment the port is public, all
