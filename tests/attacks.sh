@@ -2919,10 +2919,19 @@ r=subprocess.run(["curl","-s","-m","5",f"http://127.0.0.1:{p}/health"],
                  capture_output=True,text=True)
 busy = "busy" in r.stdout
 for s in held: s.close()
-time.sleep(1)
-r2=subprocess.run(["curl","-s","-m","5",f"http://127.0.0.1:{p}/health"],
-                  capture_output=True,text=True)
-sys.exit(0 if busy and '"ok":true' in r2.stdout else 1)
+# POLL for recovery rather than sleeping a fixed second. How quickly the
+# closes propagate and the held threads retire is scheduling, not a property
+# -- and asserting it after exactly one second passed on Linux and failed on
+# macOS. What is being claimed is that it recovers, not how fast.
+back = False
+for _ in range(40):
+    r2=subprocess.run(["curl","-s","-m","5",f"http://127.0.0.1:{p}/health"],
+                      capture_output=True,text=True)
+    if '"ok":true' in r2.stdout:
+        back = True
+        break
+    time.sleep(0.5)
+sys.exit(0 if busy and back else 1)
 PY4
 then ok; else bad "the relay did not refuse politely past its cap, or did not recover"; fi
 
