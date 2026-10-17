@@ -18,6 +18,42 @@ code()   { if [ "$2" = "$3" ]; then ok; else bad "exit $2, wanted $3 ($1)"; fi; 
 # suite was lying, which is the worse way round.
 nfiles() { ls "$1" 2>/dev/null | wc -l | tr -d '[:space:]'; }
 
+# Portability shims. The project claims two machines work; the suite has to
+# run on both, and until today it did not -- six checks failed on macOS, and
+# every one was a missing tool or a BSD/GNU difference rather than a defect.
+# A suite that only runs on the machine it was written on cannot tell you
+# whether the other machine is fine.
+
+# `timeout` is GNU coreutils and is not on a stock macOS. Two checks used it
+# to assert that a lock was RELEASED, so its absence read as "the lock
+# wedged" -- a frightening message for a missing dependency.
+if command -v timeout >/dev/null 2>&1; then tmo() { timeout "$@"; }
+elif command -v gtimeout >/dev/null 2>&1; then tmo() { gtimeout "$@"; }
+else
+  # Last resort, in portable shell: run it in the background and poll.
+  tmo() {
+    local secs=$1; shift
+    "$@" & local p=$!
+    local i=0
+    while kill -0 "$p" 2>/dev/null; do
+      i=$((i+1)); [ "$i" -gt $((secs*20)) ] && { kill -9 "$p" 2>/dev/null; wait "$p" 2>/dev/null; return 124; }
+      sleep 0.05
+    done
+    wait "$p"
+  }
+fi
+
+# `ss` is Linux-only; macOS has BSD netstat, whose listening lines read
+# `127.0.0.1.7891` rather than `127.0.0.1:7891`.
+listening() {
+  local host=$1 port=$2
+  if command -v ss >/dev/null 2>&1; then
+    ss -ltn 2>/dev/null | grep -q "$host:$port"
+  else
+    netstat -an -p tcp 2>/dev/null | grep -i listen | grep -q "$host\.$port"
+  fi
+}
+
 mkdir -p "$T"/{a,b,c,w}
 CTX_HOME=$T/a $CTX init alice >/dev/null
 CTX_HOME=$T/b $CTX init bob   >/dev/null
@@ -128,8 +164,8 @@ for _ in 1 2 3 4 5 6 7 8 9 10; do
   curl -s -m 1 http://127.0.0.1:7891/api/state >/dev/null 2>&1 && break
   sleep 0.3
 done
-if ss -ltn 2>/dev/null | grep -q '127.0.0.1:7891'; then ok; else bad "ui is not bound to 127.0.0.1"; fi
-if ss -ltn 2>/dev/null | grep -q '0.0.0.0:7891'; then bad "ui is listening on all interfaces"; else ok; fi
+if listening 127.0.0.1 7891; then ok; else bad "ui is not bound to 127.0.0.1"; fi
+if listening 0.0.0.0 7891; then bad "ui is listening on all interfaces"; else ok; fi
 for p in "/api/accept/../../etc" "/etc/passwd" "/api/accept/zzzz"; do
   c=$(curl -s -o /dev/null -m 2 -w '%{http_code}' -X POST -H 'X-Ctx: 1' \
         -H 'Origin: http://127.0.0.1:7891' "http://127.0.0.1:7891$p")
@@ -678,7 +714,7 @@ RPORT2=7893
 CTX_HOME=$T/e $CTX relay --bind 127.0.0.1:$RPORT2 --store "$T/rstore2" >/dev/null 2>&1 &
 rpid2=$!
 for _ in 1 2 3 4 5 6 7 8 9 10; do
-  ss -ltn 2>/dev/null | grep -q "127.0.0.1:$RPORT2" && break
+  listening 127.0.0.1 "$RPORT2" && break
   sleep 0.2
 done
 mkdir -p "$T"/{f,g}
@@ -755,10 +791,10 @@ if python3 -c "import json;json.load(open('$T/b/state.json'))" 2>/dev/null; then
 # The lock file is meant to persist: with flock it is the file DESCRIPTOR that
 # carries the lock, not the name, so there is nothing to unlink and no
 # staleness to misjudge. What matters is that nothing still holds it.
-if CTX_HOME=$T/b timeout 5 $CTX threads >/dev/null 2>&1; then ok; else bad "the state lock was still held after the writers finished"; fi
+if CTX_HOME=$T/b tmo 5 $CTX threads >/dev/null 2>&1; then ok; else bad "the state lock was still held after the writers finished"; fi
 # and the kernel really is the thing holding it: a crashed holder releases
 sh -c "CTX_HOME=$T/b $CTX threads >/dev/null 2>&1 & sleep 0.05; kill -9 \$! 2>/dev/null" 2>/dev/null
-if CTX_HOME=$T/b timeout 5 $CTX inbox --all >/dev/null 2>&1; then ok; else bad "a killed writer wedged the lock"; fi
+if CTX_HOME=$T/b tmo 5 $CTX inbox --all >/dev/null 2>&1; then ok; else bad "a killed writer wedged the lock"; fi
 
 echo "a mailbox cannot be squatted by quoting a public key"
 # Found by the muse reviewer, 2026-10-15. A box key is what you hand out in a
@@ -778,7 +814,7 @@ $CTX relay --bind 127.0.0.1:$SPORT --store "$T/sstore" >/dev/null 2>&1 &
 spid=$!
 for _ in 1 2 3 4 5 6 7 8 9 10; do
   curl -s --noproxy '*' -m 1 -o /dev/null http://127.0.0.1:$SPORT/ 2>/dev/null
-  ss -ltn 2>/dev/null | grep -q "127.0.0.1:$SPORT" && break
+  listening 127.0.0.1 "$SPORT" && break
   sleep 0.3
 done
 # mallory claims vera's mailbox. She gets a nonce sealed to vera's key, which
@@ -1462,7 +1498,7 @@ pg=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$UIP/")
 if [ "$pg" = "200" ]; then ok; else bad "the viewer page broke: HTTP $pg"; fi
 # A request with no Host at all is refused rather than allowed: HTTP/1.1
 # requires one, so the only clients without it are not browsers.
-nh=$(printf 'GET /api/state HTTP/1.0\r\n\r\n' | timeout 5 python3 -c "
+nh=$(printf 'GET /api/state HTTP/1.0\r\n\r\n' | tmo 5 python3 -c "
 import socket,sys
 s=socket.create_connection(('127.0.0.1',$UIP),5)
 s.sendall(sys.stdin.buffer.read()); s.settimeout(5)
