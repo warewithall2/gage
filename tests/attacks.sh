@@ -21,6 +21,24 @@ code()   { if [ "$2" = "$3" ]; then ok; else bad "exit $2, wanted $3 ($1)"; fi; 
 # suite was lying, which is the worse way round.
 nfiles() { ls "$1" 2>/dev/null | wc -l | tr -d '[:space:]'; }
 
+# The pending bundle with this subject, in this home.
+#
+# NOT `inbox --json | sed ... | head -1`, which takes whichever bundle the
+# directory happened to list first. Once a home holds more than one, that is
+# a coin toss decided by the filesystem's readdir order -- ext4 and APFS
+# disagree -- so a check opened the wrong bundle and failed intermittently on
+# macOS while passing every time here. Subjects in this suite are unique
+# within a home, so naming one is deterministic.
+idof() {
+  CTX_HOME=$1 $CTX inbox --json 2>/dev/null | python3 -c "
+import json,sys
+want=sys.argv[1]
+for r in json.load(sys.stdin):
+    if r.get('subject')==want:
+        print(r['id']); break
+" "$2"
+}
+
 # Portability shims. The project claims two machines work; the suite has to
 # run on both, and until today it did not -- six checks failed on macOS, and
 # every one was a missing tool or a BSD/GNU difference rather than a defect.
@@ -383,7 +401,12 @@ if grep -qE '(unlisted)|carol' "$T/w3"; then ok; else bad "sender not identified
 
 echo "reading a bundle stops it being announced"
 CTX_HOME=$T/a $CTX send --to bob --subject "read me" --decision "$T/w/ok.md" >/dev/null 2>&1
-rid=$(CTX_HOME=$T/b $CTX inbox --json | sed -n 's/.*"id": "\([a-f0-9]*\)".*/\1/p' | head -1)
+# By subject. `head -1` took whichever bundle the filesystem listed first,
+# and bob's inbox holds several by now -- so this accepted and read a
+# DIFFERENT bundle, left "read me" unannounced, and the check failed. It did
+# so only on macOS, because ext4 and APFS disagree about readdir order.
+rid=$(idof "$T/b" "read me")
+if [ -n "$rid" ]; then ok; else bad "no pending bundle with subject read me"; fi
 CTX_HOME=$T/b $CTX accept "$rid" >/dev/null 2>&1
 CTX_HOME=$T/b $CTX open "$T/b/inbox/accepted/$rid" >/dev/null 2>&1
 CTX_HOME=$T/b $CTX watch --once --quiet > "$T/w4" 2>&1
@@ -2071,7 +2094,8 @@ CTX_HOME=$T/nm2 $CTX add alice "$NM1K" >/dev/null 2>&1
 CTX_HOME=$T/nm1 $CTX route nmbob "$T/nm2" >/dev/null 2>&1
 printf 'x\n' > "$T/nm1/i.md"
 CTX_HOME=$T/nm1 $CTX send --to nmbob --subject lab --file "$T/nm1/i.md" >/dev/null 2>&1
-nmid=$(CTX_HOME=$T/nm2 $CTX inbox --json | sed -n 's/.*"id": "\([a-f0-9]*\)".*/\1/p' | head -1)
+nmid=$(idof $T/nm2 lab)
+if [ -n "$nmid" ]; then ok; else bad "no pending bundle with subject lab"; fi
 # Nobody on the list is called that: the quiet note, and no false alarm.
 CTX_HOME=$T/nm2 $CTX open "$T/nm2/inbox/pending/$nmid" > "$T/nmo1" 2>&1
 want   "$T/nmo1" "own word-label"
@@ -2207,7 +2231,8 @@ CTX_HOME=$T/mg2 $CTX add stranger "$MG3K" >/dev/null 2>&1
 CTX_HOME=$T/mg3 $CTX route mgbob "$T/mg2" >/dev/null 2>&1
 printf 'x\n' > "$T/mg3/i.md"
 CTX_HOME=$T/mg3 $CTX send --to mgbob --subject borrowed --file "$T/mg3/i.md" >/dev/null 2>&1
-bid=$(CTX_HOME=$T/mg2 $CTX inbox --json | sed -n 's/.*"id": "\([a-f0-9]*\)".*/\1/p' | head -1)
+bid=$(idof $T/mg2 borrowed)
+if [ -n "$bid" ]; then ok; else bad "no pending bundle with subject borrowed"; fi
 CTX_HOME=$T/mg2 $CTX open "$T/mg2/inbox/pending/$bid" > "$T/mgo3" 2>&1
 want   "$T/mgo3" "NAME MISMATCH"
 wantno "$T/mgo3" "own word-label"
