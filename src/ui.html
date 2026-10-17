@@ -37,6 +37,12 @@
   color-scheme:dark;
 }
 *{box-sizing:border-box;margin:0;padding:0}
+/* The UA stylesheet gives [hidden] `display:none`, and ANY author rule with a
+   `display` beats it -- `.filters{display:flex}` did, so the Chats filter bar
+   stayed on screen on the Buddies tab with its `hidden` attribute faithfully
+   set. Nothing in the API could show this and no assertion here was wrong;
+   the first headless screenshot showed it immediately. */
+[hidden]{display:none!important}
 html,body{height:100%}
 body{background:var(--bg);color:var(--fg);font-family:var(--sans);
   font-size:14px;line-height:1.55;-webkit-font-smoothing:antialiased}
@@ -269,7 +275,7 @@ textarea:focus{border-color:var(--accent);outline:none}
   <div class="left">
     <div class="brand">
       <span class="logo">ctx</span>
-      <span class="wordmark">Conversations</span>
+      <span class="wordmark" id="wordmark">Conversations</span>
       <span class="whoami" id="me"></span>
     </div>
     <div class="stale" id="stale" hidden></div>
@@ -288,6 +294,7 @@ textarea:focus{border-color:var(--accent);outline:none}
     </div>
     <div class="msgs" id="msgs"></div>
     <div class="composer" id="composer" hidden></div>
+    <div class="msgs" id="budpane" hidden></div>
   </div>
 </div>
 
@@ -456,6 +463,10 @@ function render(){
     </button>`;}).join('')
     : `<div class="empty">Nothing here yet.<br>Bundles land in <b>pending</b> first.<br>Arriving is not accepting.</div>`;
 
+  // The right-hand pane and the header belong to whichever tab is showing.
+  // This runs on every poll, so without the guard it reinstated the Chats
+  // header two and a half seconds after `setTab` set the other one.
+  if(TAB!=='chats') return;
   const t=th.find(x=>x.id===SEL);
   document.getElementById('title').textContent = t ? t.subject : 'ctx';
   document.getElementById('hstate').innerHTML = t
@@ -750,16 +761,64 @@ function tabsRender(){
 }
 function setTab(t){
   TAB=t;
+  // In the URL, so a reload keeps the tab you were on -- this page polls and
+  // re-renders constantly, and losing your place on every refresh is the
+  // kind of small thing that makes a tool feel untrustworthy.
+  hashSync();
   for(const [id,show] of [['filters',t==='chats'],['list',t==='chats'],
-                          ['lanbox',t==='chats'],['buddies',t==='buddies']]){
+                          ['lanbox',t==='chats'],['buddies',t==='buddies'],
+                          // The right-hand pane belongs to whichever tab is
+                          // showing. It used to keep the Chats empty state --
+                          // "Pick a conversation" -- next to the buddy list,
+                          // which reads as a page that half-loaded.
+                          ['msgs',t==='chats'],['budpane',t==='buddies']]){
     const el=document.getElementById(id); if(el)el.hidden=!show;
   }
+  const wm=document.getElementById('wordmark');
+  if(wm)wm.textContent = t==='buddies' ? 'Buddies' : 'Conversations';
+  if(t==='buddies'){
+    document.getElementById('title').textContent='Buddies';
+    const c=document.getElementById('composer'); if(c)c.hidden=true;
+    const se=document.getElementById('settle'); if(se)se.hidden=true;
+    document.getElementById('hstate').textContent='';
+    document.getElementById('budpane').innerHTML=`<div class="hint">
+      <h2>Who can reach you</h2>
+      <p>Your list is the trust boundary. A key on it is one you confirmed out of
+        band; a key not on it is a decision you have not taken yet. Nothing here is
+        automatic, and nothing a sender writes puts it on the list.</p>
+      <p>Approving one asks for a word-pair you have to read off the other machine.
+        That is not a formality: the pairs come from the key, so a key can quote its
+        own in a message to you, and only the other machine's screen is evidence.</p>
+      <p>Refusing records that you said no. It is not a block &mdash; nothing in ctx
+        can stop a bundle being delivered, and mail from a refused key still arrives
+        and still waits for you to accept it.</p>
+      <p><code>ctx decline &lt;key&gt;</code> and <code>ctx undecline &lt;key&gt;</code>
+        do the same from a terminal.</p></div>`;
+  }else{
+    document.getElementById('title').textContent='ctx';
+  }
   tabsRender(); budRender();
+}
+// The tab, and which decision is open, live in the URL. This page polls and
+// re-renders constantly; losing your place on a refresh is the kind of small
+// thing that makes a tool feel untrustworthy, and a decision you walked away
+// from is exactly the one worth being able to come back to.
+function hashSync(){
+  let h='';
+  if(TAB==='buddies')h = ASK ? '#buddies='+encodeURIComponent(ASK) : '#buddies';
+  try{ history.replaceState(null,'',h||location.pathname); }catch(e){}
+}
+function hashRead(){
+  const h=decodeURIComponent(location.hash||'');
+  if(!h.startsWith('#buddies'))return;
+  TAB='buddies';
+  const i=h.indexOf('=');
+  if(i>0)ASK=h.slice(i+1);
 }
 function askOpen(k){
   ASK=(ASK===k?null:k); ANAME='';ACONF='';AERR='';AOK='';
   if(!ASK||(REVEAL&&REVEAL.key!==ASK))REVEAL=null;
-  budRender();
+  hashSync(); budRender();
 }
 
 async function budReveal(k){
@@ -821,7 +880,7 @@ function budRender(){
           <span class="devtag">${q.bundles} message${q.bundles===1?'':'s'}</span>
           </div>
         <div class="bwhy" style="margin-top:5px">${esc(vShort(q.verdict))}
-          ${q.first_observed?'&middot; first seen here '+esc(q.first_observed):''}
+          ${q.first_observed?'&middot; first seen here '+esc(ago(q.first_observed)):''}
           &middot; pair 1 of its fingerprint is <b>${esc(q.label)}</b></div>
         ${shown?`<div class="devfp">${esc(shown)}</div>`:''}
         <div class="devrow">
@@ -930,7 +989,8 @@ async function budLoad(){
   tabsRender(); budRender();
 }
 budLoad();setInterval(budLoad,2500);
-tabsRender();
+hashRead();
+setTab(TAB);
 
 load();setInterval(load,2500);
 </script>

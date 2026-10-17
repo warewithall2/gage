@@ -1045,8 +1045,25 @@ in the message. See [Authority](#authority-the-one-thing-that-says-you-may-act).
 ## Tests
 
     cargo build --release && cargo test --release && bash tests/attacks.sh
+    bash tests/ui-e2e.sh      # optional: drives the viewer in a real browser
 
-618 checks plus 104 Rust unit tests. Every one is an attack that worked, or
+618 checks plus 104 Rust unit tests, and one end-to-end test that opens the
+viewer in a browser and completes a connection request.
+
+That last one exists because of a gap the other two could not see. The buddy
+panel's confirmation gate lives entirely in the page's client state, and it
+**shipped broken**: the reveal step cleared the typed pair and the add step
+resent it, so the server rejected every add and the Add button could never
+work. Every HTTP check passed throughout, because they drive the endpoint and
+not the page. A reviewer found it by reading two lines together, and then a
+headless screenshot immediately showed a second one — the Chats filter bar
+staying on screen on the Buddies tab, because `.filters{display:flex}` beats
+the `hidden` attribute. Neither was reachable from an assertion about JSON.
+
+`tests/ui-e2e.sh` needs playwright and a chromium on the machine and **skips
+rather than fails** when they are absent, so an optional dependency cannot
+turn a build red. Reinstating the dead-button bug makes it report *"the add
+never reported success -- the button is dead"*. Every one is an attack that worked, or
 nearly worked, during development: frame-boundary forgery, payload swapping
 after signing, a listed contact claiming a third party's name, an unverified
 author name on a forward, a trust label that was a substring of its own
