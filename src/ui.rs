@@ -196,17 +196,29 @@ fn may_mutate(r: &Req, port: u16) -> bool {
             return false;
         }
     }
-    if let Some(o) = &r.origin {
-        let ok = [
-            format!("http://127.0.0.1:{port}"),
-            format!("http://localhost:{port}"),
-            format!("http://[::1]:{port}"),
-        ];
-        if !ok.iter().any(|x| x == o) {
-            return false;
-        }
-    }
-    true
+    // Require the Origin, rather than only checking it when present.
+    //
+    // The previous version skipped this block entirely when the header was
+    // absent, and treated `Sec-Fetch-Site: none` as allowed, so a request
+    // carrying `X-Ctx` and no `Origin` reached the handler. A reviewer found
+    // it and was careful about the size of it: no page can produce that
+    // shape, because a browser `fetch` always sends an `Origin` on a POST,
+    // and a form cannot set `X-Ctx` at all. So this was never a hole a
+    // website could drive -- it was the guard being wider than its own
+    // stated property, which is that only this page may mutate.
+    //
+    // Closed anyway, because the value of a guard is that you can state what
+    // it refuses without a caveat, and because the next thing to send a
+    // headerless POST will be some local helper nobody audited.
+    let Some(o) = &r.origin else {
+        return false;
+    };
+    let ok = [
+        format!("http://127.0.0.1:{port}"),
+        format!("http://localhost:{port}"),
+        format!("http://[::1]:{port}"),
+    ];
+    ok.iter().any(|x| x == o)
 }
 
 pub fn serve(port: u16) -> std::io::Result<()> {

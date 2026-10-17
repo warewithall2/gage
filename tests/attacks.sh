@@ -125,7 +125,8 @@ done
 if ss -ltn 2>/dev/null | grep -q '127.0.0.1:7891'; then ok; else bad "ui is not bound to 127.0.0.1"; fi
 if ss -ltn 2>/dev/null | grep -q '0.0.0.0:7891'; then bad "ui is listening on all interfaces"; else ok; fi
 for p in "/api/accept/../../etc" "/etc/passwd" "/api/accept/zzzz"; do
-  c=$(curl -s -o /dev/null -m 2 -w '%{http_code}' -X POST -H 'X-Ctx: 1' "http://127.0.0.1:7891$p")
+  c=$(curl -s -o /dev/null -m 2 -w '%{http_code}' -X POST -H 'X-Ctx: 1' \
+        -H 'Origin: http://127.0.0.1:7891' "http://127.0.0.1:7891$p")
   case "$c" in 400|404) ok;; *) bad "ui returned $c for $p";; esac
 done
 # a POST with no custom header is what a cross-site form produces, and a form
@@ -454,17 +455,19 @@ want "$T/uth" "backoff policy"
 want "$T/uth" '"can":true'
 # ... and never the payload itself
 wantno "$T/uth" "which backoff?"
+UORIGIN="http://127.0.0.1:$UPORT"
 U="http://127.0.0.1:$UPORT/api/reply"
 B="{\"thread\":\"$rqid\",\"text\":\"Confirmed, full jitter.\"}"
 for hdr in "Origin: https://evil.example" "Sec-Fetch-Site: cross-site"; do
   c=$(curl -s -o /dev/null -m 3 -w '%{http_code}' -X POST -H 'X-Ctx: 1' \
+        -H "Origin: $UORIGIN" \
       -H 'Content-Type: application/json' -H "$hdr" -d "$B" "$U")
   if [ "$c" = "403" ]; then ok; else bad "a cross-site reply returned $c ($hdr)"; fi
 done
 c=$(curl -s -o /dev/null -m 3 -w '%{http_code}' -X POST \
     -H 'Content-Type: application/json' -d "$B" "$U")
 if [ "$c" = "403" ]; then ok; else bad "an unguarded reply returned $c"; fi
-curl -s -m 5 -X POST -H 'X-Ctx: 1' -H 'Content-Type: application/json' \
+curl -s -m 5 -X POST -H 'X-Ctx: 1' -H "Origin: $UORIGIN" -H 'Content-Type: application/json' \
      -H "Origin: http://127.0.0.1:$UPORT" -d "$B" "$U" > "$T/urep" 2>&1
 want "$T/urep" '"ok":true'
 uid=$(sed -n 's/.*"id":"\([a-f0-9]*\)".*/\1/p' "$T/urep")
@@ -472,12 +475,12 @@ CTX_HOME=$T/a $CTX thread "$rqid" > "$T/uthread" 2>&1
 if [ -n "$uid" ] && grep -qF "$uid" "$T/uthread"; then ok; else bad "the reply from the viewer did not arrive"; fi
 # the same outbound scan, on a reply typed into a browser
 BAD="{\"thread\":\"$rqid\",\"text\":\"key ghp_aAbBcCdDeEfFgGhHiIjJkKlLmMnN0123\"}"
-curl -s -m 5 -X POST -H 'X-Ctx: 1' -H 'Content-Type: application/json' -d "$BAD" "$U" > "$T/uscan" 2>&1
+curl -s -m 5 -X POST -H 'X-Ctx: 1' -H "Origin: $UORIGIN" -H 'Content-Type: application/json' -d "$BAD" "$U" > "$T/uscan" 2>&1
 want "$T/uscan" "refusing to build this bundle"
 wantno "$T/uscan" "aAbBcCdDeEfFgGhHiIjJkKlLmMnN0123"
 # a thread whose last sender is not on your list offers no reply at all
 HB="{\"thread\":\"$hid\",\"text\":\"hello\"}"
-curl -s -m 5 -X POST -H 'X-Ctx: 1' -H 'Content-Type: application/json' -d "$HB" "$U" > "$T/ucold" 2>&1
+curl -s -m 5 -X POST -H 'X-Ctx: 1' -H "Origin: $UORIGIN" -H 'Content-Type: application/json' -d "$HB" "$U" > "$T/ucold" 2>&1
 want "$T/ucold" "not on your list"
 kill $uipid2 2>/dev/null; wait $uipid2 2>/dev/null
 
@@ -1769,7 +1772,8 @@ CTX_HOME=$T/ua $CTX ui --port 7809 > "$T/uilog" 2>&1 &
 UIPID=$!
 sleep 1
 U="http://127.0.0.1:7809"
-H=(-H "Host: 127.0.0.1:7809" -H "X-Ctx: 1" -H "Content-Type: application/json")
+H=(-H "Host: 127.0.0.1:7809" -H "X-Ctx: 1" -H "Origin: http://127.0.0.1:7809" \
+   -H "Content-Type: application/json")
 blab=$(CTX_HOME=$T/ub $CTX whoami 2>/dev/null | cut -f1)
 
 # The list the page shows is the one `ctx lan` keeps. The page never
@@ -1978,6 +1982,26 @@ HOOKLOG=$T/hl8 CTX_HOME=$T/hb $CTX watch --once --quiet --on-arrival "$HOOK" > "
 wantno "$T/hw8" "running --on-arrival"
 if ! grep -qF "from a stranger" "$T/hl8" 2>/dev/null; then ok
 else bad "a hook ran for a key that is not on the contact list"; fi
+
+echo
+echo "--- the viewer refuses a mutation with no Origin at all"
+# Found by a reviewer and confirmed still live on 16 Oct: `may_mutate` checked
+# the Origin only when the header was present, and treated
+# `Sec-Fetch-Site: none` as allowed, so X-Ctx alone reached the handler. No
+# page can produce that shape, so it was the guard being wider than its
+# stated property rather than a hole a website could drive.
+mkdir -p "$T/og"; CTX_HOME=$T/og $CTX init og >/dev/null 2>&1
+CTX_HOME=$T/og $CTX ui --port 7903 >/dev/null 2>&1 &
+ogpid=$!
+sleep 1
+OG=http://127.0.0.1:7903
+ogcode() { curl -s -o /dev/null -w '%{http_code}' -X POST "$@" -d '{}' "$OG/api/reply"; }
+if [ "$(ogcode -H 'X-Ctx: 1')" = 403 ]; then ok; else bad "a POST with no Origin was not refused"; fi
+if [ "$(ogcode -H 'X-Ctx: 1' -H 'Sec-Fetch-Site: none')" = 403 ]; then ok; else bad "Sec-Fetch-Site: none was treated as allowed"; fi
+if [ "$(ogcode -H 'X-Ctx: 1' -H 'Origin: http://evil.example')" = 403 ]; then ok; else bad "a cross-site Origin was accepted"; fi
+# And the shape the page itself sends still reaches the handler.
+if [ "$(ogcode -H 'X-Ctx: 1' -H "Origin: $OG")" = 400 ]; then ok; else bad "the page's own shape was refused"; fi
+kill $ogpid 2>/dev/null; wait 2>/dev/null
 
 echo "a good bundle exits 0"
 CTX_HOME=$T/b $CTX open "$T/b1" >/dev/null 2>&1; code good $? 0
