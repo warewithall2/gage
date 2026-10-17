@@ -2019,9 +2019,15 @@ echo "--- a claimed handle cannot borrow a name by matching its own key label"
 mkdir -p "$T"/{nm1,nm2}
 CTX_HOME=$T/nm1 $CTX init >/dev/null 2>&1
 NM1K=$(CTX_HOME=$T/nm1 $CTX whoami | cut -f2)
-# NOTE: the label line goes to STDERR on purpose (so `| cut -f2` on
-# stdout cannot pick up two values), so it has to be folded in here.
-NM1LABEL=$(CTX_HOME=$T/nm1 $CTX fingerprint 2>&1 | tail -1 | cut -f2)
+# The label line goes to STDERR on purpose, so that `| cut -f2` on stdout
+# cannot pick up two different values. Read it from stderr ALONE and select
+# it by content: `2>&1 | tail -1` merges two streams into one pipe and takes
+# whatever lands last, which depends on how each stream buffers. It happened
+# to be right on Linux and wrong on macOS, where this check then failed --
+# intermittently, which is worse than failing.
+NM1LABEL=$(CTX_HOME=$T/nm1 $CTX fingerprint 2>&1 >/dev/null \
+           | grep 'the label only' | cut -f2)
+if [ -n "$NM1LABEL" ]; then ok; else bad "could not read the key's own label"; fi
 CTX_HOME=$T/nm2 $CTX init nmbob >/dev/null 2>&1
 NM2K=$(CTX_HOME=$T/nm2 $CTX whoami | cut -f2)
 CTX_HOME=$T/nm2 $CTX add alice "$NM1K" >/dev/null 2>&1
@@ -2152,7 +2158,10 @@ wantno "$T/mgo2" "  authorised :"
 # `open::label_tests::a_label_that_collides_with_another_keys_label_is_not_harmless`,
 # which fails when the fix is reverted. Said here so this block is not read as
 # the coverage it is not.
-MG2LABEL=$(CTX_HOME=$T/mg2 $CTX fingerprint 2>&1 | tail -1 | cut -f2)
+# Same stream-interleaving hazard as the block above: stderr alone, and
+# selected by content rather than by position.
+MG2LABEL=$(CTX_HOME=$T/mg2 $CTX fingerprint 2>&1 >/dev/null \
+           | grep 'the label only' | cut -f2)
 CTX_HOME=$T/mg2 $CTX add "friendly" "$MG2K" >/dev/null 2>&1
 mkdir -p "$T/mg3"
 CTX_HOME=$T/mg3 $CTX init "$MG2LABEL" >/dev/null 2>&1
