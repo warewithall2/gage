@@ -205,9 +205,12 @@ CTX_HOME=$T/a $CTX seal "$T/sb" --to bob --out "$T/env.ctxb" >/dev/null
 for n in ZEBRACROSSING GIRAFFEHOUSE secret.md; do
   if grep -qF "$n" "$T/env.ctxb"; then bad "envelope leaks '$n'"; else ok; fi
 done
-# only the recipient key, version and ciphertext are present
-fields=$(sed -n 's/.*"\(v\|to_box\|ct\)".*/y/p' "$T/env.ctxb" | head -1)
-if [ -n "$fields" ]; then ok; else bad "envelope has unexpected shape"; fi
+# only the recipient key, version and ciphertext are present.
+# `grep -E`, not `sed 's/\(a\|b\)/'`: alternation inside \( \) is a GNU
+# extension that BSD sed does not have, so that pattern matched nothing at
+# all on macOS and the check reported a malformed envelope for a perfectly
+# good one.
+if grep -Eq '"(v|to_box|ct)"' "$T/env.ctxb"; then ok; else bad "envelope has unexpected shape"; fi
 
 echo "only the recipient can open a sealed envelope"
 CTX_HOME=$T/b $CTX unseal "$T/env.ctxb" --out "$T/un" >/dev/null 2>&1; code unseal $? 0
