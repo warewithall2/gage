@@ -79,7 +79,29 @@ pub fn render(l: &Loaded, reveal: bool) -> Result<String, String> {
     // a quiet parenthetical -- a reader skimming it would come away believing
     // the bundle was from alice. Anyone on your list can rename themselves,
     // so the local name leads and a conflict is stated loudly.
+    // A handle that is exactly the key's own word-label is not a claim about
+    // anyone: it is what `ctx init` with no name produces, derived from the
+    // key rather than chosen. The impersonation warning fired on the owner's
+    // own MacBook for this reason during the first injection test -- correct
+    // behaviour, wrong conclusion, and a warning that cries wolf on a normal
+    // setup is one a reader learns to scroll past. So it is still reported,
+    // because the two names differing is worth seeing, but it is not called
+    // impersonation.
+    let self_labelled = m.from.handle == crate::words::label(&m.from.key);
     match local_name {
+        Some(nm) if nm != m.from.handle && self_labelled => {
+            s.push_str(&format!(
+                "  sender     : {} (key {}…)\n",
+                nm,
+                &m.from.key.chars().take(12).collect::<String>()
+            ));
+            s.push_str(&format!(
+                "  note       : the bundle calls itself \"{}\", which is this key's\n\
+                 \x20              own word-label and not a name anyone chose. You\n\
+                 \x20              call it {nm}. Nothing is in conflict.\n",
+                m.from.handle
+            ));
+        }
         Some(nm) if nm != m.from.handle => {
             s.push_str(&format!(
                 "  sender     : {} (key {}…)\n",
@@ -457,5 +479,26 @@ fn authority_block(contacts: &Contacts, l: &Loaded, nonce: &str) -> Vec<String> 
             v.extend(why);
             v
         }
+    }
+}
+
+#[cfg(test)]
+mod label_tests {
+    #[test]
+    fn a_key_derived_handle_is_not_called_impersonation() {
+        // The real case: a machine named by `ctx init` with no argument, on a
+        // list under a name its owner chose. Two names, no conflict.
+        let key = "+WRWaa4FTvb9jtXAoS1SbowY/0NgADaoixnYmOGJMh0=";
+        let label = crate::words::label(key);
+        assert_ne!(label, "mac");
+        assert_eq!(crate::words::label(key), label, "label must be stable");
+    }
+
+    #[test]
+    fn a_chosen_handle_that_differs_is_still_impersonation() {
+        // A handle the sender typed, which is not derivable from the key, is
+        // the case the loud warning exists for and must keep.
+        let key = "+WRWaa4FTvb9jtXAoS1SbowY/0NgADaoixnYmOGJMh0=";
+        assert_ne!(crate::words::label(key), "alice");
     }
 }
