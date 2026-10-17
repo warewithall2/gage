@@ -250,17 +250,33 @@ mod tests {
 /// happen without a human in the loop, so the shape of it is the whole
 /// security argument:
 ///
-/// 1. **It fires only where a grant already covers the message.** Not
+/// 1. **It fires only where a grant matched at the moment of the poll.** Not
 ///    "verified", which only says whose key signed it -- the authority file
 ///    is the only thing in the tool that says an agent may act, and this is
 ///    the unattended path, so it is the one caller that must not settle for
 ///    less. An unlisted sender, or a verified sender with no grant, notifies
 ///    exactly as before and runs nothing.
-/// 2. **The hook never receives the payload.** It gets the id, the sender's
-///    key, the contact name, the type and the subject, and that is all. A
-///    bundle's contents are the thing the accept gate exists to hold back; a
-///    hook that handed them over would have quietly removed the gate for
-///    every arrival that happened to match a grant.
+///
+///    Stated that precisely because a reviewer was right that the looser
+///    phrasing ("a grant already covers it") implies a freshness the lookup
+///    does not establish. It is a snapshot of local files: the grant has no
+///    expiry, it was not necessarily written recently, and any process
+///    running as this user can edit the file. What it proves is that a line
+///    the user's own machine holds names this sender and this kind -- which
+///    is the strongest thing available locally and less than "a human just
+///    approved this".
+/// 2. **The hook never receives the bundle's items.** It gets the id, the
+///    sender's key, the contact name, the type and the subject. A bundle's
+///    contents are the thing the accept gate exists to hold back; a hook that
+///    handed them over would have quietly removed the gate for every arrival
+///    that happened to match a grant.
+///
+///    Not "never receives message content", which a reviewer rightly called
+///    out: the subject is written by the sender and travels here. It is one
+///    bounded line rather than a file, and it is already in the notification
+///    the human sees, so it leaks nothing the desktop popup does not -- but
+///    it is the sender's text, and a hook that treats it as trustworthy input
+///    is a hook with a problem.
 /// 3. **It does not accept the bundle.** After the hook runs, the bundle is
 ///    still unread, still in `pending`, still needing `ctx accept`. The hook
 ///    is told that something actionable arrived; deciding to read it stays a
@@ -274,10 +290,24 @@ mod tests {
 ///    environment variable is still a newline in whatever the hook writes it
 ///    to.
 ///
+///    The limit of that, since the guarantee is easy to over-read: this keeps
+///    sender text out of the command string ctx builds. It cannot stop a hook
+///    from putting it back. `eval "$CTX_SUBJECT"`, or interpolating it into a
+///    second shell, hands the sender a shell -- and nothing here can prevent
+///    that, because the hook is the receiver's own code.
+///
 /// A non-zero exit or a timeout is reported and otherwise ignored, and the
-/// arrival is still marked announced. Retrying a failing hook forever would
-/// turn one broken command into an infinite loop against the relay, and the
-/// failure is on screen either way.
+/// arrival is still marked announced.
+///
+/// That is an **at-most-once** policy, and it is a choice rather than the
+/// only safe direction -- the first version of this comment claimed the
+/// latter and a reviewer was right to object. The real trade is between
+/// losing a hook and running one twice: marking first means a crash between
+/// the mark and the hook loses it silently, while marking after would re-fire
+/// a failing hook on every poll. There is no separate "hook completed" state
+/// that would allow at-least-once without that loop, and adding one is the
+/// honest fix if a hook ever does something that must not be skipped.
+/// Until then: at most once, stated as such.
 pub fn run_hook(cmd: &str, p: &Pending, timeout: u64) -> Result<(), String> {
     use std::process::Stdio;
     let mut child = Command::new("sh")

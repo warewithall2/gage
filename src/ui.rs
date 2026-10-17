@@ -210,6 +210,14 @@ fn may_mutate(r: &Req, port: u16) -> bool {
     // Closed anyway, because the value of a guard is that you can state what
     // it refuses without a caveat, and because the next thing to send a
     // headerless POST will be some local helper nobody audited.
+    //
+    // Which makes the contract worth stating, since a reviewer noted this
+    // breaks more than browsers: **the mutating routes are for this page
+    // only.** A script, a CLI helper or another native app that sent `X-Ctx`
+    // and no `Origin` used to work and now gets 403. That is intended -- the
+    // CLI is the supported programmatic interface and it does not go through
+    // HTTP at all -- but it is a narrowing, not a pure fix, and anything
+    // local that was driving these routes has to send the page's own Origin.
     let Some(o) = &r.origin else {
         return false;
     };

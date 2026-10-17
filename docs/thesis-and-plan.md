@@ -33,18 +33,27 @@ both halves. `contacts.json` carries a `groups` field, but `seal_dir` seals to
 exactly one key, so a group send is N sealed copies: email with CC, not a
 board.
 
-A real shared board was rejected for now, for three reasons that are all the
-same reason:
+A real shared board was rejected for now, for three reasons. They are
+related but they are **not one reason**, and none of them shows a board is
+impossible -- each is a cost this project is not ready to pay. (An earlier
+draft said "three reasons that are all the same reason", which a reviewer
+correctly called compression that made the choice sound settled by argument
+when it is settled by preference.)
 
 - Something has to **host** it. The relay is currently a drop box that cannot
-  read what it holds. A board holding posts for a group to read is a server
-  with contents, and its operator becomes someone you trust.
+  read what it holds. The weaker, true version of this: hosting need not mean
+  a readable host -- a board could store client-encrypted posts, or be
+  self-hosted -- but every such design is more machinery than a drop box, and
+  the simplest one that works is a server that can read.
 - **Sealing to one recipient breaks.** A post readable by a group needs N
-  copies (so it is not really shared) or a group key (so leaving a group needs
-  a rekey -- which `trust.rs` already refuses on purpose: a group is a list of
-  keys *you* trust, "so leaving a group cannot be done by the group").
+  copies or a group key. The rekey-on-leave cost is real but it is a cost of
+  *one* group-key design, not a proof; and N sealed copies is a workable
+  email-shaped answer, which is what this project already does. So this is a
+  reason to prefer fan-out, not a reason a board cannot exist.
 - The **friend list stops being symmetric.** Trusting a board's membership is
-  a different and weaker object than trusting a key.
+  a different object from trusting a key, and a weaker one -- though that is a
+  design concern rather than a demonstrated failure, since nobody has built
+  the board and watched it break.
 
 The board *feel* comes from `ctx threads` instead, which is a local view over
 mail this machine received and needs no trusted host. If a board is wanted

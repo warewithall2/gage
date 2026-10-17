@@ -2003,6 +2003,37 @@ if [ "$(ogcode -H 'X-Ctx: 1' -H 'Origin: http://evil.example')" = 403 ]; then ok
 if [ "$(ogcode -H 'X-Ctx: 1' -H "Origin: $OG")" = 400 ]; then ok; else bad "the page's own shape was refused"; fi
 kill $ogpid 2>/dev/null; wait 2>/dev/null
 
+echo
+echo "--- a claimed handle cannot borrow a name by matching its own key label"
+# A reviewer's finding against the fix made earlier the same day: a handle
+# equal to `words::label(key)` got a quiet note instead of the impersonation
+# warning, and a label is one word-pair -- 16 bits, grindable in about 65,000
+# tries -- so a sender can arrange its own label and then claim it. Harmless
+# until the pair it picks is a name the reader already uses.
+mkdir -p "$T"/{nm1,nm2}
+CTX_HOME=$T/nm1 $CTX init >/dev/null 2>&1
+NM1K=$(CTX_HOME=$T/nm1 $CTX whoami | cut -f2)
+# NOTE: the label line goes to STDERR on purpose (so `| cut -f2` on
+# stdout cannot pick up two values), so it has to be folded in here.
+NM1LABEL=$(CTX_HOME=$T/nm1 $CTX fingerprint 2>&1 | tail -1 | cut -f2)
+CTX_HOME=$T/nm2 $CTX init nmbob >/dev/null 2>&1
+NM2K=$(CTX_HOME=$T/nm2 $CTX whoami | cut -f2)
+CTX_HOME=$T/nm2 $CTX add alice "$NM1K" >/dev/null 2>&1
+CTX_HOME=$T/nm1 $CTX route nmbob "$T/nm2" >/dev/null 2>&1
+printf 'x\n' > "$T/nm1/i.md"
+CTX_HOME=$T/nm1 $CTX send --to nmbob --subject lab --file "$T/nm1/i.md" >/dev/null 2>&1
+nmid=$(CTX_HOME=$T/nm2 $CTX inbox --json | sed -n 's/.*"id": "\([a-f0-9]*\)".*/\1/p' | head -1)
+# Nobody on the list is called that: the quiet note, and no false alarm.
+CTX_HOME=$T/nm2 $CTX open "$T/nm2/inbox/pending/$nmid" > "$T/nmo1" 2>&1
+want   "$T/nmo1" "own word-label"
+wantno "$T/nmo1" "NAME MISMATCH"
+# Now the reader uses that very label as a name for somebody else. The quiet
+# note must give way to the loud warning, because the name is being borrowed.
+CTX_HOME=$T/nm2 $CTX add "$NM1LABEL" "$NM2K" >/dev/null 2>&1
+CTX_HOME=$T/nm2 $CTX open "$T/nm2/inbox/pending/$nmid" > "$T/nmo2" 2>&1
+want   "$T/nmo2" "NAME MISMATCH"
+wantno "$T/nmo2" "own word-label"
+
 echo "a good bundle exits 0"
 CTX_HOME=$T/b $CTX open "$T/b1" >/dev/null 2>&1; code good $? 0
 

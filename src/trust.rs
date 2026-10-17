@@ -143,6 +143,17 @@ impl Contacts {
         self.keys.contains_key(pubkey)
     }
 
+    /// Is this string a name you have given to somebody -- live or retired?
+    ///
+    /// Asked by the frame before it treats a sender's claimed handle as
+    /// harmless. Retired names count: a name you used to use is still a name
+    /// a reader recognises, and that recognition is the thing being borrowed.
+    pub fn is_a_name_you_use(&self, s: &str) -> bool {
+        self.keys.values().any(|n| n == s)
+            || self.retired.values().any(|r| r.name == s)
+            || self.groups.contains_key(s)
+    }
+
     pub fn name_for(&self, pubkey: &str) -> Option<&str> {
         self.keys.get(pubkey).map(|s| s.as_str())
     }

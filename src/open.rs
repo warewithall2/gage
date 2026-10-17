@@ -87,7 +87,26 @@ pub fn render(l: &Loaded, reveal: bool) -> Result<String, String> {
     // setup is one a reader learns to scroll past. So it is still reported,
     // because the two names differing is worth seeing, but it is not called
     // impersonation.
-    let self_labelled = m.from.handle == crate::words::label(&m.from.key);
+    // Two conditions, and the second one is the whole of it.
+    //
+    // A handle equal to the key's own label is normally harmless: it is what
+    // `ctx init` with no name produces, derived rather than chosen. But a
+    // reviewer pointed out that the inference runs the wrong way -- a string
+    // match cannot establish how the handle was *chosen*, and the handle is
+    // sender-controlled text. A label is one word-pair, 16 bits, grindable in
+    // about 65,000 tries (`words.rs` says so itself), so a sender can arrange
+    // for its own key's label to be any pair it likes and then claim it.
+    //
+    // That only matters when the pair it picks is a name the reader already
+    // uses for somebody -- which is exactly the live case here, where
+    // "humble pillar" and "nimble mitten" are both key labels AND the names
+    // two machines go by. So the quiet note is withheld whenever the claimed
+    // handle is a name on this list at all, live, retired or a group, and the
+    // loud warning stands. Being derivable from the key is not a defence
+    // against borrowing a name; not borrowing one is.
+    let contacts_for_names = crate::trust::Contacts::load();
+    let self_labelled = m.from.handle == crate::words::label(&m.from.key)
+        && !contacts_for_names.is_a_name_you_use(&m.from.handle);
     match local_name {
         Some(nm) if nm != m.from.handle && self_labelled => {
             s.push_str(&format!(
