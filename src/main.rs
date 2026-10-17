@@ -247,6 +247,13 @@ enum Cmd {
         #[arg(long)] json: bool,
         /// how many of the most recent entries to show
         #[arg(long, default_value = "40")] last: usize,
+        /// Walk the hash chain and report every break. A clean pass means no
+        /// line has been changed, removed or reordered since chaining began
+        /// -- unless whoever did it also recomputed every following link,
+        /// which anything running as you can do. Evidence against a script
+        /// quietly dropping the line that incriminates it; not proof against
+        /// a determined local process
+        #[arg(long)] verify: bool,
     },
     /// Serve the local viewer on 127.0.0.1
     Ui {
@@ -1676,7 +1683,53 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 std::thread::sleep(std::time::Duration::from_secs(every));
             }
         }
-        Cmd::Journal { bundle, json, last } => {
+        Cmd::Journal { bundle, json, last, verify } => {
+            if verify {
+                let r = journal::verify();
+                if !r.problems.is_empty() {
+                    eprintln!(
+                        "{} problem(s) in {}:",
+                        r.problems.len(),
+                        journal::path().display()
+                    );
+                    for p in &r.problems {
+                        eprintln!("  line {}: {}", p.line, p.what);
+                    }
+                    return Err("the journal does not verify".into());
+                }
+                let unchained = r.total - r.chained;
+                if r.chained == 0 {
+                    println!("{} entries, none of them chained", r.total);
+                } else {
+                    println!("{} of {} entries are chained, and all of them check out",
+                             r.chained, r.total);
+                }
+                if r.chained == 0 {
+                    // Not a pass. Saying "intact" over a file nothing has
+                    // verified would be the most misleading thing this
+                    // command could print.
+                    println!();
+                    println!("  Nothing here is chained yet, so this check verified NOTHING.");
+                    println!("  These entries predate chaining. The next one written starts");
+                    println!("  the chain and freezes everything above it as it stands.");
+                } else if unchained > 0 {
+                    println!();
+                    println!("  The {unchained} entries above the chain predate it. They are");
+                    println!("  frozen as they stood when chaining began -- which is not the");
+                    println!("  same as being trustworthy, since whoever started the chain");
+                    println!("  could have edited them first.");
+                }
+                if r.chained > 0 {
+                    println!();
+                    println!("  A clean pass means no chained line has been changed, removed");
+                    println!("  or reordered -- unless whoever did it also recomputed every");
+                    println!("  following link, which anything running as you can do. It is");
+                    println!("  evidence against a script dropping one inconvenient line, not");
+                    println!("  proof against a process that rewrites the file. No local log");
+                    println!("  can be that.");
+                }
+                return Ok(ExitCode::SUCCESS);
+            }
             let all = journal::read();
             let rows: Vec<_> = all
                 .iter()

@@ -146,6 +146,11 @@ pub struct Entry {
     /// record of what was done is already the record of how much was used.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto: Option<Auto>,
+    /// The digest of the previous line as written, which is what makes the
+    /// file a chain rather than a pile. See `link_to_previous` for what this
+    /// does and does not prove, and `verify` for the check.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prev: Option<String>,
 }
 
 /// Why an acceptance happened with nobody present.
@@ -303,6 +308,7 @@ fn append_inner(e: &Entry, budget: Option<u64>) -> std::io::Result<bool> {
     // settle.
     let _guard = crate::state::take_lock(&p)?;
     let have = read_unlocked();
+    let mut out = e.clone();
     if let Some(max) = budget {
         // A line that will not parse is a line that stops counting, so the
         // budget declines rather than counting past it. Checked inside the
@@ -323,39 +329,206 @@ fn append_inner(e: &Entry, budget: Option<u64>) -> std::io::Result<bool> {
         // And the entry's own `used` is corrected to what was true at the
         // moment of the write, so the record cannot claim a count that was
         // already stale when it was taken.
-        if let Some(a) = e.auto.as_ref() {
-            if a.used != used {
-                let mut e = e.clone();
-                if let Some(a) = e.auto.as_mut() {
-                    a.used = used;
-                }
-                return write_line(&p, &e, &have).map(|_| true);
-            }
+        out = e.clone();
+        if let Some(a) = out.auto.as_mut() {
+            // Corrected to what was true at the moment of the write, so the
+            // record cannot claim a count that was already stale when taken.
+            a.used = used;
         }
     }
-    let next = have.last().map_or(1, |l| l.n + 1);
-    let mut e = e.clone();
-    e.n = next;
-    let mut line = serde_json::to_vec(&e)?;
-    line.push(b'\n');
-    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&p)?;
-    f.write_all(&line)?;
-    // Durable before the caller is told it worked. Without this a crash can
-    // lose the line that was supposedly frozen, which is the one thing a log
-    // of decisions must not do.
-    f.sync_all()?;
+    write_line(&p, &out, &have)?;
     Ok(true)
 }
 
-/// Write one line, assuming the lock is already held and `have` is the file.
+/// Write one line. The lock must be held, and `have` is the file as it was
+/// read under that lock.
+///
+/// **The only place an entry is written.** There used to be two -- this one
+/// and an inline copy in `append_inner` -- which is a drift hazard that
+/// became obvious the moment the hash chain needed to touch every write. The
+/// index, the chain link and the fsync all live here, once.
 fn write_line(p: &std::path::Path, e: &Entry, have: &[Entry]) -> std::io::Result<()> {
     let mut e = e.clone();
     e.n = have.last().map_or(1, |l| l.n + 1);
+    e.prev = Some(link_to_previous(p));
     let mut line = serde_json::to_vec(&e)?;
     line.push(b'\n');
     let mut f = std::fs::OpenOptions::new().create(true).append(true).open(p)?;
     f.write_all(&line)?;
+    // Durable before the caller is told it worked. Without this a crash can
+    // lose the line that was supposedly frozen, which is the one thing a log
+    // of decisions must not do.
     f.sync_all()
+}
+
+/// What the next entry should carry as `prev`.
+///
+/// The digest of the previous **line as written**, so verification is a
+/// re-read of the file and nothing has to agree about canonical JSON.
+///
+/// When the file has lines but none of them is chained -- every journal
+/// written before this existed -- the first chained entry instead carries
+/// `genesis:<digest of the whole file so far>`. That is worth being exact
+/// about, because it is easy to oversell:
+///
+/// * It does **not** make the earlier history trustworthy. A forged or
+///   edited history is digested just as faithfully as an honest one, and
+///   whoever wrote the genesis link had every opportunity to edit first.
+/// * It does freeze that history **as of the moment chaining began**. After
+///   this, changing any earlier byte breaks the genesis link, which is
+///   strictly better than the alternative of leaving the old lines
+///   unreferenced, where they could be rewritten at leisure and nothing
+///   would ever disagree.
+fn link_to_previous(p: &std::path::Path) -> String {
+    let Ok(bytes) = std::fs::read(p) else {
+        return "genesis:empty".to_string();
+    };
+    let lines: Vec<&[u8]> = bytes
+        .split(|b| *b == b'\n')
+        .filter(|l| !l.iter().all(|c| c.is_ascii_whitespace()))
+        .collect();
+    let Some(last) = lines.last() else {
+        return "genesis:empty".to_string();
+    };
+    let chained = lines.iter().any(|l| {
+        serde_json::from_slice::<Entry>(l).map(|e| e.prev.is_some()).unwrap_or(false)
+    });
+    if chained {
+        crate::bundle::sha256_hex(last)
+    } else {
+        format!("genesis:{}", crate::bundle::sha256_hex(&bytes))
+    }
+}
+
+/// What a verification pass found.
+///
+/// `chained` is carried and not just the problems, because a pass over a file
+/// where **nothing is chained yet** finds no problems and that is not a
+/// clean bill of health -- it is the absence of a check. The first version
+/// printed "the journal chain is intact: 29 entries" over 29 entries written
+/// before chaining existed, none of which it had verified at all.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Report {
+    pub problems: Vec<Problem>,
+    /// Lines covered by the chain, i.e. carrying a `prev`.
+    pub chained: usize,
+    pub total: usize,
+}
+
+/// What a verification pass found wrong, in the order it found it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Problem {
+    /// 1-based line in the file, which is what a person can go and look at.
+    pub line: usize,
+    pub what: String,
+}
+
+/// Walk the chain and report every break.
+///
+/// Re-reads the raw bytes and recomputes each link, so it checks the file as
+/// it is on disk rather than anything this process remembers.
+///
+/// **What a clean pass means, exactly.** Every line from the first chained
+/// one onward is byte-identical to what was written, and none has been
+/// removed or reordered -- *unless* whoever changed it also recomputed every
+/// following link, which anything running as this user can do. This is
+/// tamper-**evidence** against careless or partial edits, not tamper-proofing
+/// against a determined local process. The module header has said so since
+/// the file was written and it stays true: a log a process can rewrite
+/// wholesale is not evidence against that process.
+///
+/// What it is genuinely good for: the realistic case of an agent or a script
+/// deleting the one line that incriminates it, which now breaks the next
+/// link and cannot be hidden without rewriting the remainder.
+pub fn verify() -> Report {
+    let mut r = Report::default();
+    let p = path();
+    let Ok(bytes) = std::fs::read(&p) else { return r };
+    let raw: Vec<&[u8]> = bytes
+        .split(|b| *b == b'\n')
+        .filter(|l| !l.iter().all(|c| c.is_ascii_whitespace()))
+        .collect();
+    r.total = raw.len();
+    let mut out = Vec::new();
+    let mut started = false;
+    let mut last_n: Option<u64> = None;
+    for (i, line) in raw.iter().enumerate() {
+        let no = i + 1;
+        let Ok(e) = serde_json::from_slice::<Entry>(line) else {
+            out.push(Problem { line: no, what: "this line will not parse".into() });
+            // The chain cannot be followed across a line that cannot be read,
+            // so say that once rather than reporting every later link as
+            // broken too.
+            started = false;
+            continue;
+        };
+        match &e.prev {
+            None => {
+                if started {
+                    out.push(Problem {
+                        line: no,
+                        what: "unchained line after the chain began -- it was \
+                               appended by something that does not chain, or \
+                               inserted by hand"
+                            .into(),
+                    });
+                }
+                // Before the chain began is not a fault. It is the honest
+                // state of every journal written before chaining existed.
+            }
+            Some(link) => {
+                let want = if let Some(g) = link.strip_prefix("genesis:") {
+                    if i == 0 && g == "empty" {
+                        None
+                    } else {
+                        // Everything before this line, as bytes, plus the
+                        // newline each one was written with.
+                        let mut before = Vec::new();
+                        for l in &raw[..i] {
+                            before.extend_from_slice(l);
+                            before.push(b'\n');
+                        }
+                        Some((
+                            format!("genesis:{}", crate::bundle::sha256_hex(&before)),
+                            "the history this chain was started over has changed",
+                        ))
+                    }
+                } else if i == 0 {
+                    Some((
+                        String::new(),
+                        "the first line links to a previous line, so lines before it \
+                         were removed",
+                    ))
+                } else {
+                    Some((
+                        crate::bundle::sha256_hex(raw[i - 1]),
+                        "does not follow the line before it -- a line was changed, \
+                         removed or reordered",
+                    ))
+                };
+                if let Some((expect, why)) = want {
+                    if *link != expect {
+                        out.push(Problem { line: no, what: why.to_string() });
+                    }
+                }
+                started = true;
+                r.chained += 1;
+            }
+        }
+        // The index is independent evidence and costs nothing to check: a
+        // deletion that someone bothered to re-link still leaves a gap here.
+        if let Some(prev_n) = last_n {
+            if e.n != prev_n + 1 {
+                out.push(Problem {
+                    line: no,
+                    what: format!("index jumps from {prev_n} to {} -- an entry is missing", e.n),
+                });
+            }
+        }
+        last_n = Some(e.n);
+    }
+    r.problems = out;
+    r
 }
 
 fn count_auto(have: &[Entry], thread: &str) -> u64 {
@@ -435,6 +608,7 @@ pub fn entry_for(
         verdict: verdict.to_string(),
         thread: clean_thread(m.thread.as_deref()),
         auto: None,
+        prev: None, // set by `write_line`, under the lock
     }
 }
 
@@ -592,6 +766,7 @@ fn observe_one(
                 verdict: "UNREADABLE (no manifest this machine could parse)".to_string(),
                 thread: None,
                 auto: None,
+                prev: None,
             };
             (key, e)
         }
@@ -673,6 +848,7 @@ mod tests {
                 used: 0,
                 max: 2,
             }),
+            prev: None,
         };
         let have = vec![mk("aa", "parent"), mk("bb", "parent"), mk("cc", "other")];
         assert_eq!(count_auto(&have, "parent"), 2);
@@ -701,6 +877,7 @@ mod tests {
             verdict: "SENDER VERIFIED".into(),
             thread: Some(Thread::Id("dd".into())),
             auto: None,
+            prev: None,
         };
         // Absent when a human did it: an ordinary accept must not be
         // countable against anyone's budget.
@@ -740,6 +917,7 @@ mod tests {
             verdict: "SENDER VERIFIED".into(),
             thread: Some(Thread::Id("dd".into())),
             auto: None,
+            prev: None,
         };
         let s = serde_json::to_string(&e).unwrap();
         // One line, so the file stays tail-able and grep-able.

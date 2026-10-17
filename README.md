@@ -882,6 +882,39 @@ different job. Each line is written and `fsync`ed under that same lock,
 because a log of decisions that loses the line it just promised is worse than
 none.
 
+### The hash chain, and exactly how far it goes
+
+    ctx journal --verify
+
+Each entry carries the digest of the previous line **as written**, so
+verifying is a re-read of the file and nothing has to agree about canonical
+JSON. Three kinds of tampering are caught: a deleted line, an edited line, and
+a line appended by something that does not chain. The index is checked
+independently, so a deletion someone bothered to re-link still leaves a gap.
+
+**What a clean pass means, and does not.** No chained line has been changed,
+removed or reordered — *unless whoever did it also recomputed every following
+link*, which anything running as you can do. That is tamper-evidence against a
+script quietly dropping the one line that incriminates it. It is not proof
+against a determined local process, and no log a process can rewrite could be.
+The suite asserts this limit directly: a re-linked edit verifies clean, and
+that check exists so the chain is never read as more than it is.
+
+**Entries written before chaining existed are not retroactively verified, and
+the command refuses to imply otherwise.** Over a journal where nothing is
+chained it prints *"none of them chained"* and *"this check verified
+NOTHING"* — the first version printed "the journal chain is intact: 29
+entries" over 29 entries it had not checked at all, which is the most
+misleading thing it could have said. When the chain does start, the first
+chained entry carries a `genesis:` digest over everything above it. That does
+not make the old history trustworthy — whoever started the chain could have
+edited it first — but it freezes it as it stood, which is strictly better than
+leaving those lines unreferenced and rewritable at leisure.
+
+Still unbuilt from `docs/open-decisions.md`: a retention policy, and anchoring
+a digest somewhere this machine does not control, which is the only thing that
+would survive the local-rewrite case.
+
 ## Key rotation
 
 A key gets replaced: a laptop dies, a secret leaks, a contact starts fresh.
@@ -1047,7 +1080,7 @@ in the message. See [Authority](#authority-the-one-thing-that-says-you-may-act).
     cargo build --release && cargo test --release && bash tests/attacks.sh
     bash tests/ui-e2e.sh      # optional: drives the viewer in a real browser
 
-622 checks plus 104 Rust unit tests, and one end-to-end test that opens the
+632 checks plus 104 Rust unit tests, and one end-to-end test that opens the
 viewer in a browser and completes a connection request.
 
 That last one exists because of a gap the other two could not see. The buddy

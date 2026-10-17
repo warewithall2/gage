@@ -186,8 +186,13 @@ of decisions.
 
 `src/journal.rs` records four events with the verdict frozen at the event, and
 auto-accept's exchange budget is counted from it rather than from a counter
-file. What is still unbuilt is everything about making it *tamper-evident*:
-the hash chain, a retention policy, external anchoring. muse's review of the
+file. The hash chain and `ctx journal --verify` landed 17 Oct, with the limit
+asserted in the suite rather than only described: a re-linked edit verifies
+clean, and a check exists to say so.
+
+Still unbuilt: a retention policy, and anchoring a digest somewhere this
+machine does not control -- which is the only one of the three that would
+survive the local-rewrite case, and therefore the one that matters most. muse's review of the
 journal is explicit that a chain added later proves only that entries have not
 changed since chaining began -- it would chain a forged pre-chain history just
 as faithfully -- so this is worth doing while the log is still short.

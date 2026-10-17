@@ -2749,6 +2749,133 @@ PY4
 then ok; else bad "a retired key was offered as a new connection request"; fi
 kill $blpid 2>/dev/null; wait 2>/dev/null
 
+echo
+echo "--- the journal's hash chain, and exactly how far it goes"
+mkdir -p "$T"/{ch1,ch2}
+CTX_HOME=$T/ch1 $CTX init ch1 >/dev/null 2>&1
+CTX_HOME=$T/ch2 $CTX init ch2 >/dev/null 2>&1
+CTX_HOME=$T/ch2 $CTX add ch1 "$(CTX_HOME=$T/ch1 $CTX whoami | cut -f2)" >/dev/null 2>&1
+CTX_HOME=$T/ch1 $CTX route ch2 "$T/ch2" >/dev/null
+for i in 1 2 3; do
+  CTX_HOME=$T/ch1 $CTX send --to ch2 --subject "chain$i" --prompt "$T/w/task.md" >/dev/null 2>&1
+done
+CTX_HOME=$T/ch2 $CTX inbox >/dev/null 2>&1
+CHJ=$T/ch2/journal.jsonl
+CTX_HOME=$T/ch2 $CTX journal --verify > "$T/chv" 2>&1
+want "$T/chv" "3 of 3 entries are chained"
+cp "$CHJ" "$CHJ.good"
+
+# Deleting a line -- the realistic case, a script dropping the one entry that
+# incriminates it -- breaks the next link AND leaves a gap in the index.
+sed '2d' "$CHJ.good" > "$CHJ"
+if CTX_HOME=$T/ch2 $CTX journal --verify > "$T/chv2" 2>&1; then
+  bad "a deleted journal line still verified"
+else want "$T/chv2" "a line was changed, removed or reordered"; fi
+want "$T/chv2" "an entry is missing"
+
+# Editing a verdict in place breaks the FOLLOWING link.
+cp "$CHJ.good" "$CHJ"
+python3 - "$CHJ" <<'PY4'
+import json,sys
+ls=[json.loads(l) for l in open(sys.argv[1])]
+before=ls[1]["verdict"]
+ls[1]["verdict"]="SENDER VERIFIED (signature valid, key is on your list)" \
+    if "NOT" in before else \
+    "SENDER NOT ON YOUR LIST (signature valid, you have never accepted this key)"
+# The edit must actually change something, or this check proves nothing --
+# the first version of it set the verdict to the value it already had and
+# "passed".
+assert ls[1]["verdict"] != before, "the edit is a no-op"
+open(sys.argv[1],"w").write("".join(
+    json.dumps(e,separators=(",",":"))+"\n" for e in ls))
+PY4
+if CTX_HOME=$T/ch2 $CTX journal --verify > "$T/chv3" 2>&1; then
+  bad "an edited verdict still verified"
+else want "$T/chv3" "does not follow the line before it"; fi
+
+# A line appended by something that does not chain is called out rather than
+# silently joining the file.
+cp "$CHJ.good" "$CHJ"
+python3 - "$CHJ" <<'PY4'
+import json,sys
+e=json.loads(open(sys.argv[1]).readlines()[-1]); e["n"]=99; e.pop("prev",None)
+open(sys.argv[1],"a").write(json.dumps(e,separators=(",",":"))+"\n")
+PY4
+if CTX_HOME=$T/ch2 $CTX journal --verify > "$T/chv4" 2>&1; then
+  bad "an unchained appended line still verified"
+else want "$T/chv4" "unchained line after the chain began"; fi
+
+# **The limit, asserted on purpose.** An attacker who edits a line and then
+# recomputes every following link verifies clean, and anything running as
+# this user can do that. This check exists so the chain is never read as more
+# than it is: if it ever starts catching this, the claim in `verify`'s doc
+# and in `ctx journal --verify`'s output is understated and should change.
+cp "$CHJ.good" "$CHJ"
+python3 - "$CHJ" <<'PY4'
+import json,sys,hashlib
+ls=[json.loads(l) for l in open(sys.argv[1])]
+before=ls[1]["verdict"]
+ls[1]["verdict"]="SENDER VERIFIED (signature valid, key is on your list)" \
+    if "NOT" in before else \
+    "SENDER NOT ON YOUR LIST (signature valid, you have never accepted this key)"
+assert ls[1]["verdict"] != before, "the edit is a no-op"
+out=[]
+for i,e in enumerate(ls):
+    if i: e["prev"]=hashlib.sha256(out[-1].encode()).hexdigest()
+    out.append(json.dumps(e,separators=(",",":")))
+open(sys.argv[1],"w").write("\n".join(out)+"\n")
+PY4
+if CTX_HOME=$T/ch2 $CTX journal --verify >/dev/null 2>&1; then ok
+else bad "a re-linked edit was caught -- good news, but the documented claim is now wrong"; fi
+cp "$CHJ.good" "$CHJ"
+
+# And a journal written before chaining existed must not be reported as
+# verified. A pass over a file nothing has checked is the most misleading
+# thing this command could print.
+mkdir -p "$T/ch3"
+CTX_HOME=$T/ch3 $CTX init ch3 >/dev/null 2>&1
+python3 - "$T/ch3/journal.jsonl" "$CHJ.good" <<'PY4'
+import json,sys
+ls=[json.loads(l) for l in open(sys.argv[2])]
+for e in ls: e.pop("prev",None)
+open(sys.argv[1],"w").write("".join(
+    json.dumps(e,separators=(",",":"))+"\n" for e in ls))
+PY4
+CTX_HOME=$T/ch3 $CTX journal --verify > "$T/chv5" 2>&1
+want "$T/chv5" "none of them chained"
+want "$T/chv5" "verified NOTHING"
+
+# Now start the chain over that old history: the next entry written carries a
+# genesis link over everything above it. That does NOT make the old lines
+# trustworthy -- whoever started the chain could have edited them first -- but
+# it does freeze them as they stood, so a later edit is detectable. Without
+# the genesis digest the old lines would sit unreferenced and could be
+# rewritten at leisure with nothing ever disagreeing.
+CTX_HOME=$T/ch3 $CTX add ch1 "$(CTX_HOME=$T/ch1 $CTX whoami | cut -f2)" >/dev/null 2>&1
+CTX_HOME=$T/ch1 $CTX route ch3 "$T/ch3" >/dev/null
+CTX_HOME=$T/ch1 $CTX send --to ch3 --subject "starts the chain" \
+  --prompt "$T/w/task.md" >/dev/null 2>&1
+CTX_HOME=$T/ch3 $CTX inbox >/dev/null 2>&1
+CTX_HOME=$T/ch3 $CTX journal --verify > "$T/chv6" 2>&1
+want "$T/chv6" "predate it"
+cp "$T/ch3/journal.jsonl" "$T/ch3/journal.good"
+# Edit a line from BEFORE the chain began.
+python3 - "$T/ch3/journal.jsonl" <<'PY4'
+import json,sys
+ls=[json.loads(l) for l in open(sys.argv[1])]
+before=ls[0]["verdict"]
+ls[0]["verdict"]="SENDER VERIFIED (signature valid, key is on your list)" \
+    if "NOT" in before else \
+    "SENDER NOT ON YOUR LIST (signature valid, you have never accepted this key)"
+assert ls[0]["verdict"] != before, "the edit is a no-op"
+open(sys.argv[1],"w").write("".join(
+    json.dumps(e,separators=(",",":"))+"\n" for e in ls))
+PY4
+if CTX_HOME=$T/ch3 $CTX journal --verify > "$T/chv7" 2>&1; then
+  bad "an edit to pre-chain history was not caught by the genesis link"
+else want "$T/chv7" "the history this chain was started over has changed"; fi
+cp "$T/ch3/journal.good" "$T/ch3/journal.jsonl"
+
 echo "a good bundle exits 0"
 CTX_HOME=$T/b $CTX open "$T/b1" >/dev/null 2>&1; code good $? 0
 
