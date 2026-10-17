@@ -584,8 +584,14 @@ A **Buddies** tab beside Chats, which is the shape the project was asked for:
 a list you control, where a key asking to be on it is a decision you take and
 can refuse. Three sections, because a key is in one of three states.
 
-**Asking to connect.** Any verified-signature key that has sent you something
-and is not on your list, not refused and not retired. There is no "please add
+**Not on your list.** Any key that has sent you something whose signature
+checks out, and that is not on your list, not refused and not retired. A
+reviewer was right that my first heading — "asking to connect" — put words in
+the sender's mouth: an ordinary note from a stranger is not a request for
+anything, and the panel should not imply it was. A bundle whose signature does
+*not* check mints no entry at all; the first version recorded verification as
+a side tag beside an Add button, so a forged bundle produced a card for a key
+its sender does not hold. There is no "please add
 me" message type and deliberately so: a kind whose purpose is to ask for
 trust would be the one thing a sender must not be able to ask for in a way
 that looks different from ordinary mail. So a request *is* ordinary mail from
@@ -601,12 +607,28 @@ right one back, because that turns the step into a two-try copying exercise
 and teaches you the words do not matter.
 
 My first attempt printed the whole fingerprint on the card *and* asked you to
-type a pair from it. The answer was on screen, so typing it proved nothing. It
-is worth being precise about what the current version does prove: that you
-read the pair off something other than this screen. Not *which* something. It
-is a prompt to compare, the remaining three pairs are revealed for exactly
-that, and one matching pair is 16 bits — grindable — which the page says where
-it says it.
+type a pair from it. The answer was on screen, so typing it was copying.
+
+Being precise about what the current version proves, because a reviewer was
+right that my first wording claimed more: a correct answer shows you read the
+pair off something other than the request card. Not *which* something — and
+there is one source that matters. **A key knows its own word-pairs, because
+they come from that key.** So a sender can write the asked-for pair into the
+very message that created the request, and the server cannot tell that source
+from the other machine's screen. The page says so, in the gate, where the
+decision is made:
+
+> If this pair came from the message itself, or from anything this key sent
+> you, it proves nothing — a key knows its own word-pairs and can quote them.
+> It only means something if it came from the other machine.
+
+That is the honest limit of any out-of-band check: ctx cannot see your other
+channel, so it cannot verify you used one. What it can do is withhold the
+answer, name the trap, and reveal the other three pairs so the comparison you
+do make is the full one. One matching pair is 16 bits, and grindable, which
+the page also says. The refused list carries no fingerprints either, for the
+same reason — a key can be un-refused back into a request, and printing its
+pairs two sections down would leave the answer on screen by another route.
 
 A contact added this way is **verify-only**. A manifest does not carry the
 sender's encryption key and should not: a sender seals *to* you with the key
@@ -617,12 +639,25 @@ sealing that silently fails.
 
 **Your list.** Each contact with its four pairs — so you can re-check one
 after a machine behaves oddly — what is unread from them, whether they are
-sealable, and reachability per path: `on this machine` (a local route, which
-is certain), `on this network` (announced itself within the last minute), `by
-relay` (mail can be left; whether they collect it is not known). That last
-distinction is load-bearing. **This is not a presence roster**, which this
-project has now refused three times: nothing here polls anything to ask who
-is alive.
+sealable, and three flags, each labelled with what it is evidence *of*:
+
+- `routed under this name` — a local route is filed under this name. Keyed by
+  name, which is what sending resolves too, and named that way because a
+  reviewer pointed out that attributing it to a *key* would be a different
+  claim: rename a contact and the answer changes. Verifying it against the key
+  would mean opening another agent's `identity.key` to learn a public half,
+  which this viewer should not do to render a dot.
+- `on this network now` — this key is announcing itself, which it chose to do
+  by running `ctx lan`.
+- `mail can be left` — **your** setup, not them: you are joined to a relay and
+  hold an encryption key for them. Whether they ever collect it is not
+  something this machine can know.
+
+My first version sent a per-contact age — "announced itself 3s ago" — on a
+list that refreshes every 2.5 seconds, with a comment asserting this was not a
+presence roster. A reviewer was blunt and correct: that is a presence roster
+whatever the comment says. The recency gradient is the part that makes it one,
+so there isn't one. Three booleans, no ages, and nothing here polls anybody.
 
 **Refused.** The third state, and the one that was missing: a list that can
 say yes and "not asked yet" cannot say **no**, so the only way to stop being
@@ -630,13 +665,25 @@ offered the same decision was to accept it. `ctx decline <key>` and the
 Refuse button record it; `ctx undecline` and Un-refuse take it back without
 adding anything.
 
-What a refusal is not is a block, and both the page and the frame say so
-rather than letting you believe otherwise: **nothing in ctx can stop a bundle
-being delivered.** A refused key's mail still arrives and still sits behind
-the accept gate — the list shows "still arriving" when it does. What the
-record buys is that the frame reads `SENDER REFUSED BEFORE` with the date
-instead of offering the decision again as though it were new, and that an
-agent reading it is told the state is a record rather than a wall.
+What a refusal is not is a block, and the page, the frame and the CLI all say
+so rather than letting you believe otherwise: **nothing in ctx can stop a
+bundle being delivered.** A refused key's mail still arrives and still sits
+behind the accept gate. What the record buys is that the frame reads `SENDER
+REFUSED BEFORE` with the date instead of offering the decision again as though
+it were new, and that an agent reading it is told the state is a record rather
+than a wall.
+
+Two corrections a reviewer extracted here. The Refuse button used to explain
+itself only in the message *after* the click, so the explanation now sits under
+the button. And the list used to tag a refused key "still arriving", which went
+false once everything from it was read — implying delivery had stopped, the
+exact misreading the surrounding text exists to prevent. It is a count of what
+is held right now, and the general fact is stated unconditionally instead.
+
+A key being on the list is still only ever an explicit act: `ctx add` over a
+declined key reverses the decline and says so. So the claim is not that a
+declined key can *never* reach a grant — it is that it cannot while declined,
+and that undoing it takes a deliberate add rather than anything a sender does.
 
 A push through a *relay* is still terminal-only behind `ctx push --yes`.
 Handing a bundle to a machine on your own wifi is allowed from the page
@@ -999,7 +1046,7 @@ in the message. See [Authority](#authority-the-one-thing-that-says-you-may-act).
 
     cargo build --release && cargo test --release && bash tests/attacks.sh
 
-612 checks plus 102 Rust unit tests. Every one is an attack that worked, or
+618 checks plus 104 Rust unit tests. Every one is an attack that worked, or
 nearly worked, during development: frame-boundary forgery, payload swapping
 after signing, a listed contact claiming a third party's name, an unverified
 author name on a forward, a trust label that was a substring of its own

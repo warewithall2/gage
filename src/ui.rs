@@ -464,6 +464,20 @@ fn nearby_json() -> String {
     .to_string()
 }
 
+/// When this machine first *observed* a bundle from this key.
+///
+/// Out of the journal, which is the only record of this machine's own
+/// observations. The alternative the first version used was
+/// `manifest.created` -- a field the sender writes -- rendered to the person
+/// as "first seen". This is what the journal was built for.
+fn first_observed(key: &str) -> Option<String> {
+    crate::journal::read()
+        .into_iter()
+        .filter(|e| e.event == crate::journal::Event::Observed && e.from_key == key)
+        .map(|e| e.at)
+        .min()
+}
+
 /// The buddy list: who is on it, who is asking, and who was refused.
 ///
 /// One endpoint rather than three, because the three are one question -- "who
@@ -492,11 +506,12 @@ fn buddies_json() -> String {
     let relay = crate::remote::relay_addr();
     let now = crate::lan::now();
 
-    // Fresh LAN announcements, keyed by signing key.
-    let near: std::collections::BTreeMap<String, u64> = crate::lan::read_nearby()
+    // Fresh LAN announcements, as a set of keys. Deliberately not the ages:
+    // see `reach`.
+    let near: std::collections::BTreeSet<String> = crate::lan::read_nearby()
         .into_iter()
         .filter(|e| now.saturating_sub(e.at) <= 60)
-        .map(|e| (e.sign, now.saturating_sub(e.at)))
+        .map(|e| e.sign)
         .collect();
 
     // What is sitting in the inbox, per sender key. Built once: counting
@@ -504,7 +519,7 @@ fn buddies_json() -> String {
     // doing it twice is how the two end up disagreeing.
     let mut unread: std::collections::BTreeMap<String, u64> = Default::default();
     let mut waiting: std::collections::BTreeMap<String, u64> = Default::default();
-    let mut askers: std::collections::BTreeMap<String, (String, u64, bool)> = Default::default();
+    let mut askers: std::collections::BTreeMap<String, u64> = Default::default();
     for (stage, dir) in [
         ("pending", crate::routes::pending_dir(&home)),
         ("accepted", crate::routes::accepted_dir(&home)),
@@ -518,12 +533,28 @@ fn buddies_json() -> String {
             if !st.is_read(&m.id) {
                 *unread.entry(k.clone()).or_default() += 1;
             }
-            // An unlisted, unrefused key that has sent something IS the
-            // connection request. There is no separate request message type
-            // and deliberately so: a dedicated "please add me" bundle would
-            // be a kind whose whole purpose is to ask for trust, which is
-            // the one thing a sender must not be able to ask for in a way
-            // that looks different from ordinary mail.
+            // An unlisted, unrefused key that has sent something is what
+            // the list offers a decision about. There is no separate request
+            // message type and deliberately so: a dedicated "please add me"
+            // bundle would be a kind whose whole purpose is to ask for
+            // trust, which is the one thing a sender must not be able to ask
+            // for in a way that looks different from ordinary mail.
+            //
+            // **A bundle whose signature did not check mints nothing.** The
+            // first version inserted the entry unconditionally and recorded
+            // verification as a side flag the page rendered as a tag, so a
+            // forged or tampered bundle produced a card -- label, asked pair,
+            // verdict -- for a key its sender does not hold. A reviewer was
+            // right that this is the whole premise: without a valid
+            // signature the key is not even a claim by whoever sent it, so
+            // there is nothing to decide about. `new_arrivals` has always
+            // skipped these; this did not.
+            if matches!(l.trust, crate::trust::Trust::Unverified)
+                || !l.tampered.is_empty()
+                || !is_a_key(&k)
+            {
+                continue;
+            }
             // Retired keys are excluded as well as declined ones. A retired
             // key is also a decision already taken, and offering "add this
             // contact?" for a key the person deliberately took out of
@@ -534,25 +565,43 @@ fn buddies_json() -> String {
                 && !contacts.declined.contains_key(&k)
                 && !contacts.retired.contains_key(&k)
             {
-                let e = askers.entry(k).or_insert((m.created.clone(), 0, false));
-                e.1 += 1;
-                // Only that the signature checked out. Anything less and the
-                // key is not even a claim.
-                if !matches!(l.trust, crate::trust::Trust::Unverified) && l.tampered.is_empty() {
-                    e.2 = true;
-                }
-                if m.created < e.0 {
-                    e.0 = m.created.clone();
-                }
+                *askers.entry(k).or_insert(0) += 1;
             }
         }
     }
 
     let reach = |key: &str, name: &str| -> serde_json::Value {
         serde_json::json!({
-            "routed": routes.local.contains_key(name),
-            "lan": near.get(key).copied(),
-            "relay": relay.is_some() && contacts.box_keys.contains_key(key),
+            // Keyed by NAME, deliberately, and the page says so: "a local
+            // route under this name".
+            //
+            // A reviewer asked for this to be verified against the key, on
+            // the grounds that renaming a contact changes the answer for the
+            // same key. The observation is right and the fix is declined,
+            // for two reasons. Confirming a home's key means opening its
+            // `identity.key` -- another agent's PRIVATE key material -- to
+            // learn a public half, which is not a thing this viewer should
+            // do to render a dot. And delivery itself routes by name:
+            // `--to <name>` resolves through this same map, so the flag
+            // faithfully describes what sending will do. A route filed under
+            // a name that leads somewhere unexpected is a real hazard, and
+            // it is a property of routes rather than something this flag
+            // invents -- naming the flag honestly is the fix available here.
+            "routed_by_name": routes.local.contains_key(name),
+            // A boolean, not an age. The first version sent "announced
+            // itself 3s ago" per named contact and the page refreshed every
+            // 2.5 seconds, which -- whatever the comment said -- is a
+            // presence roster for the LAN path, the thing this project has
+            // refused three times. A recency gradient is the part that makes
+            // it one, so there isn't one: reachable on this network now, or
+            // not, from announcements those machines chose to broadcast.
+            "lan_now": near.contains(key),
+            // **Local capability, not reachability**, and named so. It is
+            // true when this machine is joined to a relay and holds an
+            // encryption key for them -- i.e. that mail CAN be left. It is
+            // not evidence about them at all, and the first version listed
+            // it beside two flags that are.
+            "can_leave_mail": relay.is_some() && contacts.box_keys.contains_key(key),
         })
     };
 
@@ -577,7 +626,7 @@ fn buddies_json() -> String {
 
     let requests: Vec<serde_json::Value> = askers
         .iter()
-        .map(|(k, (first, count, verified))| {
+        .map(|(k, count)| {
             serde_json::json!({
                 "key": k,
                 // **No fingerprint.** It is withheld until the person types
@@ -588,9 +637,14 @@ fn buddies_json() -> String {
                 // Which pair the person is asked to type. Sent so the page
                 // and the handler cannot disagree about the question.
                 "ask_pair": asked_pair(k) + 1,
-                "first_seen": first,
+                // This machine's own first observation, from the journal --
+                // **not** `manifest.created`, which is a date the sender
+                // writes and which the first version rendered as "first
+                // seen". A reviewer caught it: a sender could claim any date
+                // it liked for how long it had been asking. Absent rather
+                // than guessed when the journal has no entry.
+                "first_observed": first_observed(k),
                 "bundles": count,
-                "signature_ok": verified,
                 // A request key is by construction neither listed, declined
                 // nor retired, so the witness argument cannot change the
                 // answer. Passed as None rather than looked up, so this
@@ -603,16 +657,27 @@ fn buddies_json() -> String {
     let refused: Vec<serde_json::Value> = contacts
         .declined
         .iter()
+        .filter(|(k, _)| is_a_key(k))
         .map(|(k, d)| {
             serde_json::json!({
                 "key": k,
                 "label": crate::words::label(k),
-                "fingerprint": crate::words::fingerprint(k),
+                // **No fingerprint here either**, and a reviewer found why it
+                // mattered: the refused list used to carry the full
+                // fingerprint, and a key can be un-refused back into a
+                // request. Withholding it from the request card while
+                // printing it two sections down, for the same key, left the
+                // answer on the screen by another route.
                 "at": d.at,
-                // Still arriving, which is the point a refusal must not be
-                // allowed to obscure. A person who thinks a decline blocks
-                // delivery has the wrong model of what ctx can do.
-                "still_arriving": waiting.contains_key(k) || unread.contains_key(k),
+                // How many of its bundles this machine is holding right now.
+                // The first version sent a `still_arriving` boolean, which
+                // went false once everything was read -- implying delivery
+                // had stopped, which is the exact misreading the surrounding
+                // text exists to prevent. A count answers "what is here" and
+                // claims nothing about the future; the page states the
+                // general fact unconditionally instead.
+                "holding": waiting.get(k).copied().unwrap_or(0)
+                    + unread.get(k).copied().unwrap_or(0),
             })
         })
         .collect();
@@ -818,6 +883,32 @@ fn pair_from_ui(body: &str) -> Result<Vec<String>, (&'static str, String)> {
 /// not show *which* something. It is a prompt to compare, and the remaining
 /// three pairs are revealed for exactly that. A button labelled "they match"
 /// collects the same claim with none of the looking.
+/// Is this string an ed25519 public key as this tool writes one?
+///
+/// Checked on the **read** path and not only in the mutation handlers, which
+/// is where a reviewer found the gap. Three things depend on it:
+///
+/// * `decline_from_ui` persists this string as a map key in `contacts.json`.
+///   `b64_decode_ok` alone accepted any base64-shaped value of any length, so
+///   a megabyte of base64 could be written into the contacts file.
+/// * The page interpolates it into a JavaScript string literal inside an HTML
+///   attribute -- `onclick="askOpen('...')"`. The page's `esc` turns `'` into
+///   `&#39;`, which the HTML parser decodes *before* the inline handler's
+///   JavaScript is parsed, so an apostrophe would break out of the literal.
+///   Base64 cannot contain one, which makes that safe -- but only if
+///   something enforces base64, and until now nothing on this path did.
+/// * A verdict and a word-label are rendered for it.
+///
+/// So the grammar is enforced here rather than assumed from upstream.
+pub fn is_a_key(s: &str) -> bool {
+    // 32 raw bytes is 44 base64 characters with one '=' of padding. Bounded
+    // rather than exact-matched on length alone so a future key type is a
+    // refusal to render, not a panic.
+    (43..=64).contains(&s.len())
+        && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '=')
+        && crate::bundle::b64_decode_ok(s)
+}
+
 pub fn asked_pair(sign: &str) -> usize {
     let h = crate::bundle::sha256_hex(format!("which-pair:{sign}").as_bytes());
     1 + usize::from_str_radix(&h[..2], 16).unwrap_or(0) % 3
@@ -1282,6 +1373,83 @@ mod tests {
                 "the page has a row for {k:?}, which no verdict starts with"
             );
         }
+    }
+
+    #[test]
+    fn a_key_the_page_will_render_has_to_be_shaped_like_one() {
+        // `is_a_key` guards three things in `buddies_json`: what
+        // `decline_from_ui` persists as a map key in contacts.json, what the
+        // page interpolates into a JS string inside an HTML attribute, and
+        // what a word-label is computed for.
+        //
+        // Honest about the coverage: removing the filter from
+        // `buddies_json` breaks **nothing** in the shell suite, because
+        // every key the CLI can produce is already well formed and reaching
+        // the filter needs a hand-written manifest the CLI cannot build.
+        // This covers the predicate, not its use, and that gap is real.
+        for good in [
+            "XUkMcjZCz3cGTtxbGGzItqbc1Cwjr3KZyZ4BFzeUeSU=",
+            "bpGwtgSzi/6+0rqP4gPiwixfBfHPkPwP6RBErpaQn5o=",
+        ] {
+            assert!(is_a_key(good), "rejected a real key: {good}");
+        }
+        for bad in [
+            "",
+            "short",
+            // The one that matters for the attribute context: an apostrophe
+            // survives `esc` as `&#39;`, which the HTML parser decodes
+            // before the inline handler's JavaScript is parsed.
+            "XUkMcjZCz3cGTtxbGGzItqbc1Cwjr3KZyZ4BFzeU'SU=",
+            "XUkMcjZCz3cGTtxbGGzItqbc1Cwjr3KZyZ4BFzeU<SU=",
+            // Length, which `b64_decode_ok` alone did not bound -- this is
+            // what used to be persistable into contacts.json.
+            &"A".repeat(4096),
+        ] {
+            assert!(!is_a_key(bad), "accepted something that is not a key: {bad:?}");
+        }
+    }
+
+    #[test]
+    fn the_add_call_resends_the_pair_the_reveal_confirmed() {
+        // A regression pin, and an honest one: this is a grep, not coverage.
+        //
+        // The page's client state had no tests at all, and the bug it let
+        // through was that `budReveal` cleared `ACONF` on success while
+        // `budConnect` sent `ACONF`, so the server's own check rejected every
+        // add and the button was dead. Neither the API checks (which drive
+        // the endpoint directly) nor the shell suite could see it; a reviewer
+        // found it by reading the two lines together.
+        //
+        // Properly covering page state needs a headless browser, which this
+        // project does not have. Until it does, this asserts the one shape
+        // the fix depends on: the confirmed pair survives the reveal and the
+        // add call reads it from there.
+        // Both halves are scoped to the function they are about, which the
+        // first version of this test was not -- and my own mutation run
+        // caught it. It asserted `INDEX.contains("pair:ACONF")` against the
+        // whole page, and `budConnect`'s ternary, written without spaces as
+        // `?REVEAL.pair:ACONF`, contains that exact substring. So the
+        // assertion was satisfied by the line it was not about, and breaking
+        // the line it WAS about changed nothing. Same class as a check that
+        // once passed because the newest id happened to sort last.
+        let body_of = |name: &str| -> String {
+            let after = INDEX
+                .split(&format!("function {name}"))
+                .nth(1)
+                .unwrap_or_else(|| panic!("{name} exists"));
+            let end = after.find("\n}").unwrap_or(after.len());
+            after[..end].to_string()
+        };
+        let reveal = body_of("budReveal");
+        assert!(
+            reveal.contains("pair:ACONF") || reveal.contains("pair: ACONF"),
+            "budReveal does not keep the confirmed pair: {reveal}"
+        );
+        let connect = body_of("budConnect");
+        assert!(
+            connect.contains("REVEAL.pair"),
+            "budConnect does not resend the confirmed pair: {connect}"
+        );
     }
 
     #[test]

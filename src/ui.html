@@ -730,6 +730,15 @@ const ASKWHY='The word-pairs come from the key itself, so nobody picks their own
   +'OTHER machine (ctx fingerprint, or its own window). Get it right and the rest '
   +'are shown, so you can check all four before adding anything.';
 
+// The limit, said where the decision is made rather than in a help page.
+// A sender knows all four pairs of its own key, because they come from that
+// key -- so it can write the asked-for pair into the message it sends you,
+// and typing it from there satisfies this box and tells you nothing. A
+// reviewer put it exactly: the server cannot tell the two sources apart.
+const ASKTRAP='If this pair came from the message itself, or from anything this '
+  +'key sent you, it proves nothing -- a key knows its own word-pairs and can '
+  +'quote them. It only means something if it came from the other machine.';
+
 function tabsRender(){
   const el=document.getElementById('tabs');
   if(!el)return;
@@ -761,7 +770,12 @@ async function budReveal(k){
       body:JSON.stringify({key:k,name:'',confirm:ACONF})});
     const j=await r.json().catch(()=>({}));
     if(!r.ok)throw new Error(j.error||('HTTP '+r.status));
-    REVEAL={key:k,fp:(j.lines||[])[1]||''};
+    // The confirmed pair is KEPT, in REVEAL, because the add call has to
+    // resend it. The first version cleared ACONF here and then sent ACONF on
+    // add, so the add always failed the server's check and the button was
+    // dead. The API tests passed because they drove the endpoint directly;
+    // only reading the page found it.
+    REVEAL={key:k,fp:(j.lines||[])[1]||'',pair:ACONF};
     ACONF='';
   }catch(e){ AERR=(e&&e.message)?e.message:String(e); }
   ABUSY=false; budRender();
@@ -771,11 +785,20 @@ function reachRow(r){
   // Each path says what it knows and no more. `relay` especially: mail can be
   // left there, which is not the same as anybody collecting it, and this
   // panel must not become the presence roster the project has twice refused.
+  // No per-contact recency, on purpose: a named list with an "Xs ago" that
+  // refreshes is a presence roster whatever it is called, and this project
+  // has refused one three times. Each label says what it is evidence of.
   const bits=[
-    ['on this machine', r.routed, 'a local ctx home -- certain'],
-    ['on this network', r.lan!==null&&r.lan!==undefined,
-     r.lan!==null&&r.lan!==undefined ? `announced itself ${r.lan}s ago` : 'not announcing now'],
-    ['by relay', r.relay, 'mail can be left for them; whether they collect it is not known'],
+    ['routed under this name', r.routed_by_name,
+     'A local route is filed under this name, which is the name sending resolves too. '
+     +'It is your label, not their identity.'],
+    ['on this network now', r.lan_now,
+     'This key is announcing itself on this network, which it chose to do by running '
+     +'ctx lan. Nothing here polls anybody.'],
+    ['mail can be left', r.can_leave_mail,
+     'You are joined to a relay and hold an encryption key for them, so mail CAN be '
+     +'left. This is about your setup, not about them -- whether they ever collect it '
+     +'is not something this machine can know.'],
   ];
   return `<div class="bdots">`+bits.map(([t,on,title])=>
     `<span class="breach${on?' on':''}" title="${esc(title)}"><i></i>${t}</span>`).join('')+`</div>`;
@@ -786,24 +809,32 @@ function budRender(){
   if(!box||TAB!=='buddies')return;
   let h='';
   if(BUD.requests.length){
-    h+=`<div class="bsec">Asking to connect<span class="bnum">${BUD.requests.length}</span></div>`;
+    h+=`<div class="bsec">Not on your list<span class="bnum">${BUD.requests.length}</span></div>`
+     +`<div class="lansub" style="margin-bottom:8px">Keys that have sent you something and
+       are not on your list. A message is not a request for anything &mdash; deciding is
+       yours, and doing nothing is a decision the list will keep offering.</div>`;
     for(const q of BUD.requests){
       const open=ASK===q.key;
       const shown=(REVEAL&&REVEAL.key===q.key)?REVEAL.fp:null;
       h+=`<div class="dev ask">
         <div class="devtop"><span class="devname">${esc(q.label)}</span>
           <span class="devtag">${q.bundles} message${q.bundles===1?'':'s'}</span>
-          ${q.signature_ok?'':'<span class="devtag">signature did not check</span>'}</div>
-        <div class="bwhy" style="margin-top:5px">${esc(vShort(q.verdict))} &middot; first seen ${esc(q.first_seen)}
+          </div>
+        <div class="bwhy" style="margin-top:5px">${esc(vShort(q.verdict))}
+          ${q.first_observed?'&middot; first seen here '+esc(q.first_observed):''}
           &middot; pair 1 of its fingerprint is <b>${esc(q.label)}</b></div>
         ${shown?`<div class="devfp">${esc(shown)}</div>`:''}
         <div class="devrow">
           <button class="devbtn" onclick="askOpen('${esc(q.key)}')">${open?'Cancel':'Add to my list'}</button>
-          <button class="devbtn" onclick="budDecline('${esc(q.key)}',false)" ${ABUSY?'disabled':''}>Refuse</button>
-        </div>`;
+          <button class="devbtn" onclick="budDecline('${esc(q.key)}',false)" ${ABUSY?'disabled':''}
+            title="Records that you said no. It does not block anything: mail from this key still arrives and still waits for you to accept it.">Refuse</button>
+        </div>
+        <div class="bwhy">Refusing records the decision so you are not asked again. It does
+          not stop anything arriving.</div>`;
       if(open&&!shown){
         h+=`<div class="bgate">
           <div class="bwhy">${esc(ASKWHY)}</div>
+          <div class="bwhy" style="color:var(--warn)">${esc(ASKTRAP)}</div>
           <div class="bwhy">Type pair <b>${q.ask_pair}</b> of four, as the other machine shows it.</div>
           <input class="lanin" placeholder="pair ${q.ask_pair}, e.g. two words" value="${esc(ACONF)}"
             oninput="ACONF=this.value" onkeydown="if(event.key==='Enter')budReveal('${esc(q.key)}')"
@@ -847,14 +878,15 @@ function budRender(){
       style="color:inherit">Refused (${BUD.refused.length}) ${SHOWREF?'&#9662;':'&#9656;'}</a></div>`;
     if(SHOWREF){
       h+=`<div class="lansub" style="margin-bottom:8px">Refusing records a decision. It does
-        not block anything &mdash; nothing in ctx can stop a bundle being delivered. What it
-        buys is that you are not asked about these again.</div>`;
+        not block anything &mdash; nothing in ctx can stop a bundle being delivered, and
+        mail from these keys still arrives and still waits for you to accept it. What it
+        buys is that you are not asked about these again. Their word-pairs are not shown
+        here, so that un-refusing one puts you back in front of the same check.</div>`;
       for(const r of BUD.refused){
         h+=`<div class="dev">
           <div class="devtop"><span class="devname">${esc(r.label)}</span>
             <span class="devtag">refused ${esc(r.at)}</span>
-            ${r.still_arriving?'<span class="devtag">still arriving</span>':''}</div>
-          <div class="devfp">${esc(r.fingerprint)}</div>
+            ${r.holding?`<span class="devtag">${r.holding} here now</span>`:''}</div>
           <div class="devrow">
             <button class="devbtn" onclick="budDecline('${esc(r.key)}',true)" ${ABUSY?'disabled':''}>
               Un-refuse</button>
@@ -879,7 +911,10 @@ async function budPost(path,body){
   }catch(e){ AERR=(e&&e.message)?e.message:String(e); }
   ABUSY=false; await budLoad(); load();
 }
-function budConnect(k){ budPost('/api/connect',{key:k,name:ANAME,confirm:ACONF}); }
+function budConnect(k){
+  const p = (REVEAL && REVEAL.key===k) ? REVEAL.pair : ACONF;
+  budPost('/api/connect',{key:k,name:ANAME,confirm:p});
+}
 function budDecline(k,undo){ budPost('/api/decline',{key:k,undo:!!undo}); }
 
 async function budLoad(){

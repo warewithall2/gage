@@ -2552,9 +2552,15 @@ if python3 - "$T/bl8" "$D2S" <<'PY4'
 import json,sys
 d=json.load(open(sys.argv[1])); k=sys.argv[2]
 r=[x for x in d["refused"] if x["key"]==k]
-# Refused, gone from requests, and STILL ARRIVING -- the one thing a
-# refusal must not be allowed to obscure.
-sys.exit(0 if len(r)==1 and r[0]["still_arriving"] and not d["requests"] else 1)
+# Refused, gone from requests, and its mail still HELD here -- the one
+# thing a refusal must not be allowed to obscure. A count rather than a
+# "still arriving" boolean, which went false once everything was read and
+# so implied delivery had stopped.
+if len(r)!=1 or d["requests"]: sys.exit(1)
+# And the refused entry carries no fingerprint: a key can be un-refused
+# back into a request, so printing its pairs here leaves the answer to the
+# confirmation check on screen by another route.
+sys.exit(0 if r[0]["holding"] >= 1 and "fingerprint" not in r[0] else 1)
 PY4
 then ok; else bad "a refusal did not move the key out of requests and say it still arrives"; fi
 # Un-refusing brings the decision back without adding anything.
@@ -2567,6 +2573,90 @@ sys.exit(0 if not d["refused"] and any(q["key"]==k for q in d["requests"])
          and all(b["key"]!=k for b in d["buddies"]) else 1)
 PY4
 then ok; else bad "un-refusing did not restore the request without adding it"; fi
+# A bundle whose signature does not check mints NO request.
+#
+# The first version inserted the entry unconditionally and recorded
+# verification as a side flag that the page rendered as a tag, so a forged or
+# tampered bundle produced a full card -- label, asked pair, verdict -- for a
+# key its sender does not hold. Without a valid signature the key is not even
+# a claim by whoever sent it, so there is nothing to decide about.
+# A key whose ONLY bundle is the forged one, so the assertion cannot be
+# satisfied by some other, valid bundle from the same sender -- which is what
+# the first version of this check did, against dc2.
+mkdir -p "$T/fg"
+CTX_HOME=$T/fg $CTX init fg >/dev/null 2>&1
+FGK=$(CTX_HOME=$T/fg $CTX whoami | cut -f2); FGS=${FGK%%.*}
+CTX_HOME=$T/fg $CTX add bl "$BLK" >/dev/null 2>&1
+CTX_HOME=$T/fg $CTX route bl "$T/bl" >/dev/null
+CTX_HOME=$T/fg $CTX send --to bl --subject forged --prompt "$T/w/task.md" >/dev/null 2>&1
+FGD=""
+for d in "$T/bl/inbox/pending/"*; do
+  if grep -q forged "$d/manifest.json" 2>/dev/null; then FGD=$d; fi
+done
+if [ -n "$FGD" ]; then ok; else bad "could not find the bundle to corrupt"; fi
+# It IS a request while the signature is good, so the assertion below is
+# about the signature and not about some unrelated filter.
+blget > "$T/blc0"
+if grep -qF "$FGS" "$T/blc0"; then ok; else bad "the valid bundle was not a request to begin with"; fi
+# Break the signature, leaving the manifest's claimed key intact.
+printf 'not a signature' > "$FGD/manifest.sig"
+blget > "$T/blc"
+if python3 - "$T/blc" "$FGS" <<'PY4'
+import json,sys
+d=json.load(open(sys.argv[1]))
+# The key appears in NO request, and in particular not with a "signature did
+# not check" tag beside an Add button.
+sys.exit(0 if all(q["key"]!=sys.argv[2] for q in d["requests"]) else 1)
+PY4
+then ok; else bad "a bundle with a broken signature minted a connection request"; fi
+rm -rf "$FGD"
+
+# Nor does the list render a key that is not shaped like one.
+#
+# This block asserts the SHAPE of what comes out and does not cover the filter
+# that enforces it: removing `is_a_key` from `buddies_json` leaves all of this
+# green, because every key the CLI can produce is already well formed and
+# reaching the filter needs a hand-written manifest no command here can build.
+# The predicate's own coverage is `ui::tests::a_key_the_page_will_render_has_
+# to_be_shaped_like_one`. What this does buy is that the invariant the page's
+# escaping depends on actually holds in practice.
+if python3 - "$T/blc" <<'PY4'
+import json,sys,base64
+d=json.load(open(sys.argv[1]))
+ks=[x["key"] for x in d["requests"]+d["refused"]]+[b["key"] for b in d["buddies"]]
+for k in ks:
+    if not (43 <= len(k) <= 64): sys.exit(1)
+    if any(c in k for c in "'\"<>&\\"): sys.exit(1)
+    try: base64.b64decode(k, validate=True)
+    except Exception: sys.exit(1)
+sys.exit(0)
+PY4
+then ok; else bad "the list rendered a key that is not base64 of a sane length"; fi
+
+# The first-seen date is THIS machine's observation, not the sender's
+# `created` field -- which the first version rendered, letting a sender claim
+# any date it liked for how long it had been asking.
+blget > "$T/bld"
+if python3 - "$T/bld" <<'PY4'
+import json,sys
+d=json.load(open(sys.argv[1]))
+sys.exit(0 if all("first_seen" not in q for q in d["requests"]) else 1)
+PY4
+then ok; else bad "a request still carried the sender's own created date as first_seen"; fi
+
+# Reachability carries no recency gradient. A named list with an "Xs ago"
+# that refreshes is a presence roster whatever the comment calls it.
+if python3 - "$T/bld" <<'PY4'
+import json,sys
+d=json.load(open(sys.argv[1]))
+for b in d["buddies"]:
+    r=b["reach"]
+    if set(r) != {"routed_by_name","lan_now","can_leave_mail"}: sys.exit(1)
+    if not all(isinstance(v,bool) for v in r.values()): sys.exit(1)
+sys.exit(0)
+PY4
+then ok; else bad "reachability reported something other than three booleans"; fi
+
 # A retired key is not a stranger asking. Offering "add this?" for a key the
 # person took out of service invites undoing a rotation by clicking.
 CTX_HOME=$T/bl $CTX retire three >/dev/null 2>&1
