@@ -194,10 +194,16 @@ pub fn serve_with(bind: &str, root: PathBuf, limits: Limits) -> std::io::Result<
         let _ = s.set_write_timeout(Some(IO_TIMEOUT));
         let n = live.load(std::sync::atomic::Ordering::SeqCst);
         if n >= MAX_INFLIGHT {
-            // Refusing is the honest answer and costs one short write. The
-            // alternative -- queueing behind a sequential loop -- is how one
-            // slow client became everybody's outage.
-            let _ = reply(s, "503 Service Unavailable", r#"{"error":"relay busy, retry"}"#);
+            // Refusing is the honest answer -- but it happens on its own
+            // thread, not in the accept loop. `reply` drains the client's
+            // unread request before closing (see there for why), and doing
+            // that inline cost up to 200ms per refusal, serially, which
+            // stalled accepting for everyone and is the exact disease this
+            // cap was meant to cure. The refusal thread is short-lived and
+            // deliberately not counted against the cap.
+            std::thread::spawn(move || {
+                let _ = reply(s, "503 Service Unavailable", r#"{"error":"relay busy, retry"}"#);
+            });
             continue;
         }
         live.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -220,7 +226,25 @@ fn reply(mut s: TcpStream, status: &str, body: &str) -> std::io::Result<()> {
     );
     s.write_all(h.as_bytes())?;
     s.write_all(body.as_bytes())?;
-    s.flush()
+    s.flush()?;
+    // Drain whatever the client sent that nothing read, before closing.
+    //
+    // Closing a socket that still has unread data in its receive buffer
+    // makes BSD send RST rather than FIN, and the RST **discards the reply
+    // just written** -- the client sees "connection reset by peer" instead
+    // of the 503. The busy path is exactly that shape: it refuses before
+    // reading the request at all. Linux delivers the reply anyway, which is
+    // why this only showed up when the suite was finally run on macOS.
+    let _ = s.set_read_timeout(Some(std::time::Duration::from_millis(50)));
+    let mut sink = [0u8; 4096];
+    for _ in 0..16 {
+        match s.read(&mut sink) {
+            Ok(0) | Err(_) => break,
+            Ok(_) => {}
+        }
+    }
+    let _ = s.shutdown(std::net::Shutdown::Both);
+    Ok(())
 }
 
 /// Has this address used up its allowance for the current minute?
