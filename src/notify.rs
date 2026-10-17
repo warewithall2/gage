@@ -100,15 +100,20 @@ pub fn new_arrivals() -> Vec<Pending> {
         if st.is_read(&m.id) || seen.iter().any(|x| *x == m.id) {
             continue;
         }
-        // The same lookup the frame prints, from the same inputs, so a hook
-        // can never fire on an authority the reader was not shown.
+        // The same lookup `ctx open` performs, on the same inputs. A
+        // reviewer was right that the old comment here -- "a hook can never
+        // fire on an authority the reader was not shown" -- claimed more
+        // than the code does: this is a fresh snapshot taken at poll time,
+        // and contacts or the authority file can change before anyone reads
+        // the frame. What is true is that the two call the one function, so
+        // they cannot disagree about the same inputs.
         let grant = authority
             .lookup(
                 &contacts,
                 l.trust,
                 &m.from.key,
                 m.msg_type,
-                m.in_reply_to.is_some(),
+                crate::authority::answers_something_i_sent(&home, m),
             )
             .ok()
             .map(|g| g.to_string());
@@ -344,7 +349,12 @@ mod tests {
 /// that would allow at-least-once without that loop, and adding one is the
 /// honest fix if a hook ever does something that must not be skipped.
 /// Until then: at most once, stated as such.
-pub fn run_hook(cmd: &str, p: &Pending, timeout: u64) -> Result<(), String> {
+pub fn run_hook(
+    cmd: &str,
+    p: &Pending,
+    timeout: u64,
+    auto_accepted: bool,
+) -> Result<(), String> {
     use std::process::Stdio;
     let mut child = Command::new("sh")
         .arg("-c")
@@ -356,6 +366,11 @@ pub fn run_hook(cmd: &str, p: &Pending, timeout: u64) -> Result<(), String> {
         .env("CTX_SUBJECT", one_line(&p.subject, 200))
         .env("CTX_EXPECTS_REPLY", if p.expects_reply { "1" } else { "0" })
         .env("CTX_GRANT", p.grant.clone().unwrap_or_default())
+        // So a hook does not have to guess where the bundle is, or race the
+        // watcher for it. "1" means it is already in `accepted` and `ctx
+        // accept` would now fail; "0" means it is still pending and a hook
+        // that accepts it is spending nothing a grant counted.
+        .env("CTX_AUTO_ACCEPTED", if auto_accepted { "1" } else { "0" })
         // No payload on stdin either: a hook that read stdin expecting the
         // bundle would get EOF, which is the right answer to that question.
         .stdin(Stdio::null())
@@ -410,7 +425,7 @@ mod hook_tests {
         // A subject that would run a command if it were ever pasted into the
         // command string instead of handed over in the environment.
         hostile.subject = format!("$(touch {})", out.display());
-        run_hook("printf '%s' \"$CTX_SUBJECT\" > /dev/null", &hostile, 10).unwrap();
+        run_hook("printf '%s' \"$CTX_SUBJECT\" > /dev/null", &hostile, 10, false).unwrap();
         assert!(!out.exists(), "a subject executed as shell");
     }
 
@@ -425,13 +440,13 @@ mod hook_tests {
 
     #[test]
     fn a_hook_that_hangs_is_killed_rather_than_stalling_the_watcher() {
-        let err = run_hook("sleep 30", &p(), 1).unwrap_err();
+        let err = run_hook("sleep 30", &p(), 1, false).unwrap_err();
         assert!(err.contains("was killed"), "{err}");
     }
 
     #[test]
     fn a_failing_hook_is_reported_with_its_code() {
-        let err = run_hook("exit 7", &p(), 10).unwrap_err();
+        let err = run_hook("exit 7", &p(), 10, false).unwrap_err();
         assert!(err.contains("exited 7"), "{err}");
     }
 }

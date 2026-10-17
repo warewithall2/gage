@@ -2234,6 +2234,126 @@ then ok; else bad "the journal index is not strictly increasing"; fi
 if CTX_HOME=$T/jd2 $CTX journal --json 2>/dev/null | grep -q 'nonhex:\|unreadable:'; then ok
 else bad "no validated id appeared where one was expected"; fi
 
+echo "auto-accept: the unattended path, and what bounds it"
+# Two homes that can deliver to each other locally, so no relay is involved.
+mkdir -p "$T"/{aa,as}
+CTX_HOME=$T/aa $CTX init recv >/dev/null 2>&1
+CTX_HOME=$T/as $CTX init sndr >/dev/null 2>&1
+AAK=$(CTX_HOME=$T/aa $CTX whoami | cut -f2)
+ASK=$(CTX_HOME=$T/as $CTX whoami | cut -f2)
+CTX_HOME=$T/aa $CTX add sndr "$ASK" >/dev/null
+CTX_HOME=$T/as $CTX add recv "$AAK" >/dev/null
+CTX_HOME=$T/aa $CTX route sndr "$T/as" >/dev/null
+CTX_HOME=$T/as $CTX route recv "$T/aa" >/dev/null
+printf 'question\n' > "$T/w/q.md"
+
+# The receiver opens a thread. This is what makes a reply possible at all:
+# `auto-accept` implies `in-reply-only`, and that is checked against the
+# receiver's own `sent/`, not against anything the sender writes.
+CTX_HOME=$T/aa $CTX send --to sndr --type question --subject q --prompt "$T/w/q.md" >/dev/null 2>&1
+QID=$(ls "$T/aa/sent" | head -1)
+if [ -n "$QID" ]; then ok; else bad "the receiver did not record a sent bundle"; fi
+
+# No grant yet: nothing is accepted, and the reason is named.
+CTX_HOME=$T/as $CTX send --to recv --type answer --reply-to "$QID" --subject a1 \
+  --prompt "$T/w/q.md" >/dev/null 2>&1
+CTX_HOME=$T/aa $CTX watch --once --quiet --auto-accept > "$T/aw0" 2>&1
+want "$T/aw0" "no grant covers it, so it stays pending"
+n=$(CTX_HOME=$T/aa $CTX inbox 2>/dev/null | grep -c . || true)
+if [ -d "$T/aa/inbox/accepted" ] && [ "$(ls "$T/aa/inbox/accepted" | wc -l)" = 0 ]; then ok
+elif [ ! -d "$T/aa/inbox/accepted" ]; then ok
+else bad "a bundle was accepted with no grant at all"; fi
+
+# A grant that does NOT say auto-accept is a separate, named refusal: it means
+# the human considered this sender and declined exactly this.
+printf 'allow sndr answer\n' > "$T/aa/authority"
+rm -f "$T/aa/announced.json"
+CTX_HOME=$T/aa $CTX watch --once --quiet --auto-accept > "$T/aw1" 2>&1
+want "$T/aw1" "does not say auto-accept"
+
+# `auto-accept` with no bound voids the file rather than reading as unbounded.
+printf 'allow sndr answer auto-accept\n' > "$T/aa/authority"
+CTX_HOME=$T/aa $CTX authority > "$T/aw2" 2>&1 || true
+want "$T/aw2" "max-exchanges"
+rm -f "$T/aa/announced.json"
+CTX_HOME=$T/aa $CTX watch --once --quiet --auto-accept > "$T/aw3" 2>&1
+if [ "$(ls "$T/aa/inbox/accepted" 2>/dev/null | wc -l)" = 0 ]; then ok
+else bad "an unbounded auto-accept grant accepted a bundle"; fi
+
+# Nor against `any`: the kind has to be named.
+printf 'allow sndr any auto-accept max-exchanges 4\n' > "$T/aa/authority"
+CTX_HOME=$T/aa $CTX authority 2>&1 | grep -q "name the one kind" && ok \
+  || bad "auto-accept against \`any\` was not refused"
+
+# The real grant. Budget 1, so the second message in the thread must stop.
+printf 'allow sndr answer auto-accept max-exchanges 1\n' > "$T/aa/authority"
+rm -f "$T/aa/announced.json"
+CTX_HOME=$T/aa $CTX watch --once --quiet --auto-accept > "$T/aw4" 2>&1
+want "$T/aw4" "accepted unattended, 1 of 1"
+if [ "$(ls "$T/aa/inbox/accepted" 2>/dev/null | wc -l)" = 1 ]; then ok
+else bad "the grant did not accept the reply"; fi
+
+# The journal is the budget. The entry names the grant and the count.
+CTX_HOME=$T/aa $CTX journal --json 2>/dev/null > "$T/ajl"
+if python3 - "$T/ajl" <<'PY3'
+import json,sys
+es=[json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+a=[e for e in es if e.get("auto")]
+if len(a)!=1: sys.exit(1)
+x=a[0]["auto"]
+sys.exit(0 if x["max"]==1 and x["used"]==0 and x["grant"].startswith("allow sndr answer")
+         and "in-reply-only" in x["grant"] and a[0]["event"]=="accepted" else 1)
+PY3
+then ok; else bad "the auto-accept entry does not record the grant and the count"; fi
+
+# A second reply in the SAME thread is refused: the budget is spent.
+CTX_HOME=$T/as $CTX send --to recv --type answer --reply-to "$QID" --subject a2 \
+  --prompt "$T/w/q.md" >/dev/null 2>&1
+rm -f "$T/aa/announced.json"
+CTX_HOME=$T/aa $CTX watch --once --quiet --auto-accept > "$T/aw5" 2>&1
+want "$T/aw5" "used 1 of 1"
+if [ "$(ls "$T/aa/inbox/accepted" 2>/dev/null | wc -l)" = 1 ]; then ok
+else bad "the budget did not stop the second message"; fi
+
+# THE one that matters. A thread id is sender-chosen, so a sender could try to
+# refill its budget by inventing a new thread. It cannot, because a reply has
+# to name a parent this machine SENT -- and the sender does not get to open
+# threads here. A forged thread with a forged parent reaches nothing.
+rm -rf "$T/as/sent"
+CTX_HOME=$T/as $CTX send --to recv --type answer --reply-to deadbeefdeadbeef --subject a3 \
+  --prompt "$T/w/q.md" >/dev/null 2>&1
+rm -f "$T/aa/announced.json"
+CTX_HOME=$T/aa $CTX watch --once --quiet --auto-accept > "$T/aw6" 2>&1
+want "$T/aw6" "no grant covers it"
+if [ "$(ls "$T/aa/inbox/accepted" 2>/dev/null | wc -l)" = 1 ]; then ok
+else bad "a sender refilled its budget by naming a parent this machine never sent"; fi
+
+# And `in_reply_to` is a sender-written field about to become a path. A grant
+# restricted to replies used to be satisfied by any string at all.
+CTX_HOME=$T/as $CTX send --to recv --type answer --reply-to "../../../../etc" --subject a4 \
+  --prompt "$T/w/q.md" >/dev/null 2>&1
+rm -f "$T/aa/announced.json"
+CTX_HOME=$T/aa $CTX watch --once --quiet --auto-accept > "$T/aw7" 2>&1
+if [ "$(ls "$T/aa/inbox/accepted" 2>/dev/null | wc -l)" = 1 ]; then ok
+else bad "a path-shaped in_reply_to satisfied an in-reply-only grant"; fi
+
+# Without the flag, the grant alone does nothing. The file says what the human
+# permits; the flag says this process is the unattended one.
+printf 'allow sndr answer auto-accept max-exchanges 9\n' > "$T/aa/authority"
+rm -f "$T/aa/announced.json"
+CTX_HOME=$T/aa $CTX watch --once --quiet > "$T/aw8" 2>&1
+before=$(ls "$T/aa/inbox/accepted" 2>/dev/null | wc -l)
+if [ "$before" = 1 ]; then ok
+else bad "watch accepted something without --auto-accept"; fi
+wantno "$T/aw8" "accepted unattended"
+
+# An auto-accept is an accept, not an open. The bundle is readable and
+# nothing has read it: acceptance is not permission to act.
+if CTX_HOME=$T/aa $CTX inbox --all 2>/dev/null | grep -qi "unread"; then ok
+else ok; fi
+CTX_HOME=$T/aa $CTX journal --json 2>/dev/null | grep -q '"event":"opened"' \
+  && bad "an auto-accept opened the bundle" || ok
+
 echo "a good bundle exits 0"
 CTX_HOME=$T/b $CTX open "$T/b1" >/dev/null 2>&1; code good $? 0
 

@@ -7,6 +7,7 @@
 //! the instant-messenger model that does not transfer.
 
 mod authority;
+mod autoaccept;
 mod journal;
 mod lan;
 mod words;
@@ -222,6 +223,12 @@ enum Cmd {
         #[arg(long)] on_arrival: Option<String>,
         /// seconds before a hook that has not finished is killed
         #[arg(long, default_value = "300")] hook_timeout: u64,
+        /// Accept arrivals that a grant says may be accepted unattended,
+        /// within that grant's max-exchanges for the thread. Only grants
+        /// written `auto-accept` qualify, and only replies to something this
+        /// machine sent. Every such acceptance records which grant allowed
+        /// it. Acceptance moves the bundle; it never opens or runs anything
+        #[arg(long)] auto_accept: bool,
     },
     /// What this machine did with what arrived: one line per event
     Journal {
@@ -1506,7 +1513,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             println!("thread {thread} marked closed locally");
             println!("  (your view only -- the other side decides their own)");
         }
-        Cmd::Watch { every, once, quiet, on_arrival, hook_timeout } => {
+        Cmd::Watch { every, once, quiet, on_arrival, hook_timeout, auto_accept } => {
             // The interval is a trade: shorter means you hear sooner, and it
             // also tells the relay operator more precisely when you are
             // active, since fetch timing is metadata they can see. Two
@@ -1520,6 +1527,15 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                         eprintln!("ctx watch: pull failed: {e}");
                     }
                 }
+                // Date the arrivals before anything acts on them. Without
+                // this, a watcher that auto-accepts wrote an `accepted`
+                // entry with no `observed` entry before it -- the unattended
+                // path, which is the one the journal exists for, was the one
+                // leaving the thinnest record. `ctx inbox` has always done
+                // this; `watch` never did, because until now it only looked.
+                if let Err(e) = routes::observe_inbox() {
+                    eprintln!("ctx watch: could not record arrivals: {e}");
+                }
                 let arrivals = notify::new_arrivals();
                 if !arrivals.is_empty() {
                     let (title, body) = notify::summarise(&arrivals);
@@ -1532,6 +1548,43 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     // next run re-fires it against the same broken command.
                     let ids: Vec<String> = arrivals.iter().map(|a| a.id.clone()).collect();
                     notify::mark_announced(&ids);
+                    // Before the hook, and after the announcement. After,
+                    // because a human hears about an unattended acceptance
+                    // either way; before, because a hook written for an
+                    // unattended loop wants to find the bundle accepted
+                    // rather than race the watcher for it.
+                    let mut accepted: std::collections::BTreeSet<String> =
+                        std::collections::BTreeSet::new();
+                    if auto_accept {
+                        let home = identity::home();
+                        let contacts = trust::Contacts::load();
+                        let auth = authority::Authority::load();
+                        for a in &arrivals {
+                            let dir = routes::pending_dir(&home).join(&a.id);
+                            let Ok(l) = bundle::load(&dir) else { continue };
+                            let d = autoaccept::consider(&home, &contacts, &auth, &l);
+                            let short = &a.id[..8.min(a.id.len())];
+                            match autoaccept::perform(&home, &a.id, &d) {
+                                Ok(_) => {
+                                    accepted.insert(a.id.clone());
+                                    println!("  {short}: {}", d.explain());
+                                }
+                                Err(_) if !matches!(d, autoaccept::Decision::Yes { .. }) => {
+                                    // Not an error: `perform` refuses
+                                    // anything but `Yes`, which is how most
+                                    // arrivals leave this loop.
+                                    println!("  {short}: {}", d.explain());
+                                }
+                                Err(e) => {
+                                    // The move or the journal write failed.
+                                    // The entry IS the budget, so an
+                                    // acceptance that could not be recorded
+                                    // must not be treated as having happened.
+                                    eprintln!("  {short}: could not auto-accept: {e}");
+                                }
+                            }
+                        }
+                    }
                     if let Some(cmd) = &on_arrival {
                         for a in &arrivals {
                             // No grant, no hook. The notification above already
@@ -1549,7 +1602,9 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                                 "  running --on-arrival for {} ({g})",
                                 &a.id[..8.min(a.id.len())]
                             );
-                            if let Err(e) = notify::run_hook(cmd, a, hook_timeout) {
+                            if let Err(e) =
+                                notify::run_hook(cmd, a, hook_timeout, accepted.contains(&a.id))
+                            {
                                 eprintln!("  --on-arrival: {e}");
                             }
                         }

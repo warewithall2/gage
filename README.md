@@ -188,6 +188,73 @@ No expiry yet, on purpose — it cannot use a clock, for the same reason
 and "expires after N observed messages" is a strange thing to ask a person to
 write. A file you edit is already revocable by editing it.
 
+### Accepting without a human, and the budget that bounds it
+
+`accept` has always meant a person looked at a frame and moved a bundle. For
+an unattended loop that is the step nothing can do, so what people build
+instead is a hook that runs `ctx accept` itself — which makes every grant
+unbounded and leaves ctx unable to tell, afterwards, which acceptances a
+human performed. So it is in the tool, where it can be counted:
+
+    allow sndr answer auto-accept max-exchanges 4
+
+    $ ctx watch --auto-accept
+      7382e954: accepted unattended, 1 of 4 in this thread (allow sndr answer
+                in-reply-only auto-accept max-exchanges 4)
+      aa3e2665: this thread has used 4 of 4 auto-accepts (…), so it stays pending
+
+Four conditions, all required:
+
+- **The watcher was started with `--auto-accept`.** The file says what the
+  human permits; the flag says *this process* is the unattended one. An
+  interactive `ctx watch` must not move things a reader is about to look for.
+- **A grant says `auto-accept`.** Which cannot be written without
+  `max-exchanges N` and cannot be written against `any`. Both are refusals,
+  not defaults: a half-written grant must not read as an unbounded one, and
+  every default here would be a guess at what a person meant.
+- **It answers something this machine sent.** `auto-accept` implies
+  `in-reply-only`, and the grant you are shown prints the implied modifier so
+  the rendered line is what is actually in force.
+- **The thread's budget is not spent**, counted from the journal.
+
+**The budget cannot be refilled by a sender, and that is the whole reason
+`in-reply-only` is implied.** It is per thread, and a thread id is a field the
+*sender* writes — so without the implication a sender gets a fresh budget by
+inventing a fresh thread. A reply has to name a parent found in this machine's
+own `sent/` and signed by this machine's own key, so opening a thread is the
+receiver's act. A sender naming a parent that was never sent gets nothing.
+
+That check is also what made `in-reply-only` mean anything at all. Until this
+feature needed it, it tested `in_reply_to.is_some()` — asking the sender
+whether the sender is replying. Any sender satisfied it by writing any string
+into the field, and a grant written `in-reply-only` was no narrower than one
+without it. The string also became a path component, so `../../../../etc` was
+reaching out of `sent/` on a `stat`; ids are validated now, by the same
+function that exists because [the same hole was found once before](src/manifest.rs),
+on `pull`.
+
+**The journal entry is the budget.** There is no counter file: a second place
+to keep a count is a second place for it to be wrong, and the record of what
+was done is already the record of how much was used. Each unattended accept
+writes which grant allowed it, which line of the file that was, and where the
+count stood. A write that fails is an accept that did not happen — unlike every
+other journal site, where a failed write is reported and ignored.
+
+**What it is not:** permission to act. Acceptance moves a directory and marks
+it readable. It does not open the bundle, hand it to a model, or run anything,
+and `ctx open`'s `authorised :` block is still the only thing that says what
+may be done with what is inside. Nor is the bound a defence against a
+determined verified sender — that sender can still reply to everything you
+send, within the budget, indefinitely. What it buys is that a *runaway*
+exchange — two agents answering each other, a loop, a sender that got stuck —
+stops at a number a human chose rather than at whatever the disk runs out of
+first.
+
+`ctx watch` now also dates arrivals in the journal before anything acts on
+them. It did not before, which meant the unattended path — the one the journal
+exists for — was leaving the thinnest record: an `accepted` entry with no
+`observed` entry in front of it.
+
 ## Use
 
     ctx init owen                      # make your keypair
@@ -840,7 +907,7 @@ in the message. See [Authority](#authority-the-one-thing-that-says-you-may-act).
 
     cargo build --release && cargo test --release && bash tests/attacks.sh
 
-565 checks plus 87 Rust unit tests. Every one is an attack that worked, or
+584 checks plus 96 Rust unit tests. Every one is an attack that worked, or
 nearly worked, during development: frame-boundary forgery, payload swapping
 after signing, a listed contact claiming a third party's name, an unverified
 author name on a forward, a trust label that was a substring of its own

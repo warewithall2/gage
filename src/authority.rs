@@ -55,7 +55,22 @@ pub struct Grant {
     pub msg_type: Option<MsgType>,
     /// Only applies to a message that answers something, so a grant cannot
     /// be used to open an unsolicited conversation.
+    ///
+    /// What counts as "answers something" is the part that was wrong until
+    /// auto-accept needed it to be right. It used to be
+    /// `m.in_reply_to.is_some()` -- a field the *sender* writes, so any sender
+    /// could set it to any string and satisfy the modifier. It is now
+    /// `answers_something_i_sent`, which requires the parent to be a bundle
+    /// this machine holds in `sent/` and signed itself.
     pub in_reply_only: bool,
+    /// May be accepted without a human, within `max_exchanges`.
+    ///
+    /// Implies `in_reply_only`, and is not valid without `max_exchanges`.
+    /// Both are explained on `parse`.
+    pub auto_accept: bool,
+    /// How many messages in one thread may be auto-accepted. Counted by the
+    /// receiver from its own journal, never from anything in a bundle.
+    pub max_exchanges: Option<u64>,
     /// 1-based, so the frame can tell a reader exactly which line to go read.
     pub line: usize,
 }
@@ -69,6 +84,14 @@ impl fmt::Display for Grant {
         write!(f, "allow {who} {}", self.msg_type.map_or("any", |t| t.label()))?;
         if self.in_reply_only {
             write!(f, " in-reply-only")?;
+        }
+        if self.auto_accept {
+            write!(f, " auto-accept")?;
+        }
+        // Printed even though it is implied, so the rendered grant says what
+        // is actually in force rather than what the human happened to type.
+        if let Some(n) = self.max_exchanges {
+            write!(f, " max-exchanges {n}")?;
         }
         Ok(())
     }
@@ -156,6 +179,44 @@ impl Authority {
     }
 }
 
+/// Does this message answer something *this machine sent*?
+///
+/// The predicate behind `in-reply-only`, and the reason that modifier is now
+/// worth more than it was. The old test was `m.in_reply_to.is_some()`, which
+/// asks the sender whether the sender is replying. A sender that wanted a
+/// grant restricted to replies simply wrote a value into the field; nothing
+/// looked at it. Three things are checked here instead, none of them
+/// answerable by the sender alone:
+///
+/// 1. The parent id is a safe id. It is about to become a path component --
+///    `in_reply_to: "../../../../etc"` would otherwise reach out of `sent/`
+///    on a `stat`. `manifest::id_is_safe` exists because the same hole was
+///    found once before, on `pull`.
+/// 2. `sent/<parent>/manifest.json` is here. The sender has to name a bundle
+///    this machine actually produced, which it can only know by having been
+///    sent it.
+/// 3. That manifest's `from.key` is this machine's own signing key. Without
+///    it, a bundle *received* and stored under an id would do, and a sender
+///    that could guess any id this machine holds would qualify.
+///
+/// What it still does not establish: that the reply came from the party the
+/// parent was addressed *to*. A second contact who learned the id could reply
+/// to a message intended for someone else. The grant's subject is what bounds
+/// that -- this predicate bounds the conversation, not the participant.
+pub fn answers_something_i_sent(home: &std::path::Path, m: &crate::manifest::Manifest) -> bool {
+    let Some(parent) = m.in_reply_to.as_deref() else { return false };
+    if !crate::manifest::id_is_safe(parent) {
+        return false;
+    }
+    let p = crate::routes::sent_dir(home).join(parent).join("manifest.json");
+    let Ok(bytes) = std::fs::read(&p) else { return false };
+    let Ok(parent_m) = serde_json::from_slice::<crate::manifest::Manifest>(&bytes) else {
+        return false;
+    };
+    let Ok(me) = crate::identity::Identity::load() else { return false };
+    parent_m.from.key == me.public_b64()
+}
+
 /// A key as `ctx whoami` prints it, versus a handle you chose. Keys are long
 /// and base64; handles are short words. Guessing between them is only a
 /// convenience, so the test is deliberately crude and the failure is benign:
@@ -196,11 +257,48 @@ pub fn parse(text: &str) -> Result<Vec<Grant>, String> {
             }
         };
         let mut in_reply_only = false;
-        for extra in tok {
+        let mut auto_accept = false;
+        let mut max_exchanges = None;
+        while let Some(extra) = tok.next() {
             match extra {
                 "in-reply-only" => in_reply_only = true,
+                "auto-accept" => auto_accept = true,
+                "max-exchanges" => {
+                    let Some(n) = tok.next() else {
+                        return bad("`max-exchanges` needs a number");
+                    };
+                    match n.parse::<u64>() {
+                        // Zero is refused rather than read as "never". A line
+                        // that grants nothing should be deleted or commented
+                        // out, not written as a grant with a hole in it.
+                        Ok(0) => return bad("`max-exchanges 0` grants nothing; delete the line"),
+                        Ok(v) => max_exchanges = Some(v),
+                        Err(_) => return bad(&format!("`max-exchanges {n}` is not a number")),
+                    }
+                }
                 other => return bad(&format!("unknown modifier `{other}`")),
             }
+        }
+        // Three rules about `auto-accept`, each a refusal rather than a
+        // default, because this is the only modifier that lets a machine act
+        // with nobody watching and every default here would be a guess at
+        // what a human meant.
+        if auto_accept {
+            if max_exchanges.is_none() {
+                return bad(
+                    "`auto-accept` needs `max-exchanges N`: unbounded unattended \
+                     acceptance is not something to grant by omission",
+                );
+            }
+            if msg_type.is_none() {
+                return bad("`auto-accept` cannot be combined with `any`: name the one kind");
+            }
+            // Implied rather than required, and `Display` prints it, so the
+            // grant a reader is shown says what is in force. The budget is
+            // per thread and a thread id is sender-chosen, so without this a
+            // sender could mint a fresh thread for a fresh budget. Requiring
+            // a reply means the thread has to be one this machine opened.
+            in_reply_only = true;
         }
         out.push(Grant {
             subject: if looks_like_a_key(who) {
@@ -210,6 +308,8 @@ pub fn parse(text: &str) -> Result<Vec<Grant>, String> {
             },
             msg_type,
             in_reply_only,
+            auto_accept,
+            max_exchanges,
             line,
         });
     }

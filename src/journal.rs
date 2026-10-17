@@ -37,8 +37,10 @@
 //! whatever reads the log next, which would make the audit trail an attack
 //! surface -- the precise inversion of its job.
 //!
-//! The one sender-chosen value that earns its place is the thread id, because
-//! "what else had this agent been told that made this look normal" needs it.
+//! Of the sender-chosen values that do earn a place -- the thread id, the
+//! manifest id, the keys -- the thread id is the one kept for its own sake,
+//! because "what else had this agent been told that made this look normal"
+//! needs it. Each is validated on the way in; none is quoted text.
 //! It is admitted only if it looks like an id (hex, bounded); anything else
 //! is recorded as the fact that it was unparseable, which is itself worth
 //! knowing and cannot carry a payload.
@@ -134,6 +136,33 @@ pub struct Entry {
     pub verdict: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thread: Option<Thread>,
+    /// Present only on an acceptance **no human performed**: which grant
+    /// authorised it, and where the thread's budget stood at that moment.
+    ///
+    /// This is the field that makes the budget auditable rather than merely
+    /// enforced, and it is also the budget's storage: `auto_accepts_in_thread`
+    /// counts these lines. There is deliberately no counter file. A second
+    /// place to keep the count is a second place for it to be wrong, and the
+    /// record of what was done is already the record of how much was used.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto: Option<Auto>,
+}
+
+/// Why an acceptance happened with nobody present.
+///
+/// Every field is local. `grant` is a line out of the receiver's own
+/// authority file as `Display` renders it, not anything off the wire, which
+/// is what lets it be text at all in a file whose rule is hashes and
+/// verdicts only.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Auto {
+    pub grant: String,
+    /// The line in the authority file, so an auditor can go read the grant
+    /// as it is *now* and compare it with what was in force then.
+    pub line: usize,
+    /// How many auto-accepts this thread had already had. 0 on the first.
+    pub used: u64,
+    pub max: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -174,9 +203,10 @@ pub enum Thread {
 
 /// Admit a thread id only if it is one.
 ///
-/// `thread` is sender-controlled, and this is the single sender-chosen value
-/// in an entry, so it is the only place a payload could try to reach a future
-/// reader of the log. Hex and bounded, or it does not travel.
+/// `thread` is sender-controlled. It is not the *only* such value -- `bundle`,
+/// `from_key` and `author_key` come off the wire too, and `safe_id` below says
+/// so -- but it is the one whose purpose is to be read later by a human asking
+/// what else this agent had been told. Hex and bounded, or it does not travel.
 pub fn clean_thread(t: Option<&str>) -> Option<Thread> {
     let t = t?;
     let ok = !t.is_empty()
@@ -276,14 +306,6 @@ pub fn read() -> Vec<Entry> {
     read_unlocked()
 }
 
-/// Has this bundle already got an entry for this event?
-///
-/// Used to keep `record_arrivals` idempotent: it runs on every inbox scan,
-/// and an arrival must be dated once rather than re-dated on each poll.
-pub fn has(bundle: &str, event: Event) -> bool {
-    read().iter().any(|e| e.bundle == bundle && e.event == event)
-}
-
 /// Build an entry from a loaded bundle, taking the verdict as given.
 ///
 /// The verdict is passed in rather than recomputed, for the same reason
@@ -316,7 +338,27 @@ pub fn entry_for(
         author_key: author_key.map(|a| safe_key(&a)),
         verdict: verdict.to_string(),
         thread: clean_thread(m.thread.as_deref()),
+        auto: None,
     }
+}
+
+/// How many messages in this thread this machine has already auto-accepted.
+///
+/// The budget's only reader, and the reason it cannot be reset by anything in
+/// a bundle: it counts lines this machine wrote. A sender that wants a fresh
+/// budget needs a fresh thread, and `auto-accept` implies `in-reply-only`
+/// against `sent/`, so a fresh thread is one *this* machine has to open.
+///
+/// Unparseable thread ids are counted as their own bucket on purpose, not
+/// ignored: `Thread::Other` is a single bucket, so every bundle that sends
+/// garbage in the field shares one budget rather than each getting a new one.
+pub fn auto_accepts_in_thread(thread: Option<&Thread>) -> u64 {
+    read()
+        .iter()
+        .filter(|e| {
+            e.event == Event::Accepted && e.auto.is_some() && e.thread.as_ref() == thread
+        })
+        .count() as u64
 }
 
 /// Record one event against a bundle on disk.
@@ -327,11 +369,26 @@ pub fn entry_for(
 /// bytes rather than taken from a field, because a field is something a
 /// sender writes.
 pub fn record(event: Event, dir: &std::path::Path) -> std::io::Result<()> {
+    record_with_auto(event, dir, None)
+}
+
+/// As `record`, carrying the reason an acceptance needed no human.
+///
+/// A separate entry point rather than a parameter on `record`, so that the
+/// four ordinary sites cannot acquire an `Auto` by accident: every acceptance
+/// that passes `Some` here is one `autoaccept::perform` made.
+pub fn record_with_auto(
+    event: Event,
+    dir: &std::path::Path,
+    auto: Option<Auto>,
+) -> std::io::Result<()> {
     let bytes = std::fs::read(dir.join("manifest.json"))?;
     let l = crate::bundle::load(dir)?;
     let witness = crate::bundle::witness_of(&l.manifest.from.key, &bytes);
     let seq = crate::state::LocalState::load().seq;
-    append(&entry_for(event, &l.manifest, &witness, l.trust.label(), seq))
+    let mut e = entry_for(event, &l.manifest, &witness, l.trust.label(), seq);
+    e.auto = auto;
+    append(&e)
 }
 
 /// Record a first observation for every bundle in the inbox not yet recorded.
@@ -431,6 +488,7 @@ fn observe_one(
                 author_key: None,
                 verdict: "UNREADABLE (no manifest this machine could parse)".to_string(),
                 thread: None,
+                auto: None,
             };
             (key, e)
         }
@@ -486,6 +544,42 @@ mod tests {
     }
 
     #[test]
+    fn an_auto_accept_record_round_trips_and_is_absent_otherwise() {
+        // `auto` is both the audit record and the budget, so a version that
+        // dropped it on reserialisation would silently refill every budget.
+        let mut e = Entry {
+            n: 1,
+            seq: 1,
+            at: "2026-10-17T00:00:00Z".into(),
+            event: Event::Accepted,
+            backfilled: false,
+            bundle: "ab".into(),
+            witness: "w".into(),
+            from_key: "k".into(),
+            author_key: None,
+            verdict: "SENDER VERIFIED".into(),
+            thread: Some(Thread::Id("dd".into())),
+            auto: None,
+        };
+        // Absent when a human did it: an ordinary accept must not be
+        // countable against anyone's budget.
+        assert!(!serde_json::to_string(&e).unwrap().contains("auto"));
+        e.auto = Some(Auto {
+            grant: "allow codex question in-reply-only auto-accept max-exchanges 4".into(),
+            line: 2,
+            used: 1,
+            max: 4,
+        });
+        let s = serde_json::to_string(&e).unwrap();
+        let back: Entry = serde_json::from_str(&s).unwrap();
+        let a = back.auto.expect("auto survived the round trip");
+        assert_eq!((a.used, a.max, a.line), (1, 4, 2));
+        // The grant is local text out of the receiver's own file. It is the
+        // only prose in an entry, and that is why it may be there.
+        assert!(a.grant.starts_with("allow "));
+    }
+
+    #[test]
     fn an_entry_round_trips_and_carries_no_sender_prose() {
         let e = Entry {
             n: 3,
@@ -499,6 +593,7 @@ mod tests {
             author_key: None,
             verdict: "SENDER VERIFIED".into(),
             thread: Some(Thread::Id("dd".into())),
+            auto: None,
         };
         let s = serde_json::to_string(&e).unwrap();
         // One line, so the file stays tail-able and grep-able.

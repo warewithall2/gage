@@ -98,17 +98,33 @@ This comes first because auto-accept ships the dangerous capability, and an
 agent acting unattended on a hostile payload is precisely the failure this
 project exists to prevent.
 
-### 2. Auto-accept under a grant, with a budget
+### 2. Auto-accept under a grant, with a budget — **built 17 Oct**
 
 One change to the grant grammar rather than two migrations, because the budget
 is the safety belt for the auto-accept:
 
-    allow mac question max-exchanges 4 auto-accept
+    allow mac question auto-accept max-exchanges 4
 
-Three properties: a hook may accept only within a grant that says so; every
-accept records which grant and at which `seq`; and the exchange count is kept
-by the receiver, per thread, so nothing a sender puts in a bundle can reset
-it.
+Two things in the plan as written turned out to be wrong, and the shipped
+version differs:
+
+- **"A hook may accept only within a grant that says so"** is not enforceable.
+  A hook runs `ctx accept` as a separate process; ctx cannot tell a hook's
+  invocation from a human's. So the acceptance is in the tool, in `ctx watch
+  --auto-accept`, where the grant is consulted by the code that does the move.
+  The hook is told `CTX_AUTO_ACCEPTED` and never needs to accept anything.
+- **"The exchange count is kept by the receiver, per thread, so nothing a
+  sender puts in a bundle can reset it"** had a hole in it: a thread id *is*
+  something a sender puts in a bundle. Per-thread counting on its own means a
+  fresh thread is a fresh budget. The fix is that `auto-accept` implies
+  `in-reply-only`, checked against this machine's own `sent/`, so a thread can
+  only be opened by the receiver. Writing that check also revealed that
+  `in-reply-only` had never meant anything: it tested the sender's own
+  `in_reply_to` field, so any string satisfied it.
+
+The count lives in the journal rather than a counter file — the record of what
+was done is already the record of how much was used — which is the payoff for
+having built capture first.
 
 Why it is needed: `ctx accept` currently moves a directory and records nothing
 about *how* it happened. The moment anything accepts without a human, "did a
