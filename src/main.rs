@@ -7,6 +7,7 @@
 //! the instant-messenger model that does not transfer.
 
 mod authority;
+mod journal;
 mod lan;
 mod words;
 mod bundle;
@@ -221,6 +222,15 @@ enum Cmd {
         #[arg(long)] on_arrival: Option<String>,
         /// seconds before a hook that has not finished is killed
         #[arg(long, default_value = "300")] hook_timeout: u64,
+    },
+    /// What this machine did with what arrived: one line per event
+    Journal {
+        /// only this bundle
+        #[arg(long)] bundle: Option<String>,
+        /// the raw JSONL, for a tool rather than a person
+        #[arg(long)] json: bool,
+        /// how many of the most recent entries to show
+        #[arg(long, default_value = "40")] last: usize,
     },
     /// Serve the local viewer on 127.0.0.1
     Ui {
@@ -1137,6 +1147,13 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             if let Err(e) = state::LocalState::load().mark_read(&l.manifest.id) {
                 eprintln!("ctx: could not record this as read: {e}");
             }
+            // Opening is the event that matters most to an auditor, because
+            // it is the moment the contents entered an agent's context. Same
+            // rule as above: bookkeeping must not turn a successful read into
+            // a failure after the content has already been printed.
+            if let Err(e) = journal::record(journal::Event::Opened, &l.dir) {
+                eprintln!("ctx: could not journal this read: {e}");
+            }
             // Non-zero when the content could not be attributed, so a script
             // or agent harness can branch on it instead of parsing prose.
             // `Revoked` is in here and `Retired` is not. A retired key with
@@ -1254,6 +1271,12 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             std::fs::create_dir_all(&to_dir)?;
             let dest = to_dir.join(&id);
             routes::restage(&from, &dest)?;
+            // After the move, against the new location, and never fatal: a
+            // machine that would not accept a bundle because it could not
+            // write a log line has turned an audit feature into an outage.
+            if let Err(e) = journal::record(journal::Event::Accepted, &dest) {
+                eprintln!("ctx: could not journal this acceptance: {e}");
+            }
             println!("accepted {id}");
             println!("  ctx open {}", dest.display());
         }
@@ -1261,6 +1284,15 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             let p = routes::pending_dir(&identity::home()).join(&id);
             if !p.is_dir() {
                 return Err(format!("no pending bundle {id}").into());
+            }
+            // Before the delete, because the manifest is what the entry is
+            // built from and in a moment there will not be one. This is the
+            // event that most needs recording: a rejection destroys the
+            // bundle, so without a line here the only trace that it ever
+            // existed is gone, and deletion becomes indistinguishable from
+            // never having arrived.
+            if let Err(e) = journal::record(journal::Event::Rejected, &p) {
+                eprintln!("ctx: could not journal this rejection: {e}");
             }
             std::fs::remove_dir_all(&p)?;
             println!("rejected {id}, deleted unread");
@@ -1529,6 +1561,52 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     break;
                 }
                 std::thread::sleep(std::time::Duration::from_secs(every));
+            }
+        }
+        Cmd::Journal { bundle, json, last } => {
+            let all = journal::read();
+            let rows: Vec<_> = all
+                .iter()
+                .filter(|e| bundle.as_deref().is_none_or(|b| e.bundle.starts_with(b)))
+                .collect();
+            let shown = rows.len().saturating_sub(last);
+            if json {
+                for e in &rows[shown..] {
+                    println!("{}", serde_json::to_string(e)?);
+                }
+            } else if rows.is_empty() {
+                println!("nothing recorded yet.");
+                println!("  {} is written as bundles arrive, are accepted,", journal::path().display());
+                println!("  rejected or opened. It holds hashes and verdicts, never contents.");
+            } else {
+                for e in &rows[shown..] {
+                    println!(
+                        "{}\t{:<8}\t{}\t{}",
+                        e.at,
+                        e.event.label(),
+                        &e.bundle[..8.min(e.bundle.len())],
+                        e.verdict
+                    );
+                    // The verdict is the frozen one, so say which key it was
+                    // about: a later entry for the same bundle may carry a
+                    // different verdict, and that difference is the record of
+                    // a key having changed underneath.
+                    println!(
+                        "  seq {}  from {}…{}",
+                        e.seq,
+                        &e.from_key[..12.min(e.from_key.len())],
+                        e.author_key
+                            .as_ref()
+                            .map(|a| format!("  authored by {}…", &a[..12.min(a.len())]))
+                            .unwrap_or_default()
+                    );
+                }
+                println!();
+                println!("{} entr{}", rows.len(), if rows.len() == 1 { "y" } else { "ies" });
+                println!("  hashes and verdicts only -- never a subject, a filename or a payload,");
+                println!("  because a field a sender can fill is an injection against whatever");
+                println!("  reads this next. Append-only by convention, not tamper-proof: a");
+                println!("  process running as you can rewrite it.");
             }
         }
         Cmd::Ui { port } => {

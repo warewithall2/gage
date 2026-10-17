@@ -71,7 +71,7 @@ pub struct LocalState {
 /// detect, nothing to break, and no unlink to race. The lock file is created
 /// once and left in place; it is the descriptor that carries the lock, not
 /// the name.
-struct Lock(fs::File);
+pub struct Lock(fs::File);
 
 #[cfg(unix)]
 mod flock {
@@ -99,7 +99,7 @@ impl Drop for Lock {
 }
 
 #[cfg(unix)]
-fn take_lock(target: &Path) -> io::Result<Lock> {
+pub fn take_lock(target: &Path) -> io::Result<Lock> {
     use std::os::unix::io::AsRawFd;
     let lp = target.with_extension("json.lock");
     if let Some(d) = lp.parent() {
@@ -125,7 +125,7 @@ fn take_lock(target: &Path) -> io::Result<Lock> {
 }
 
 #[cfg(not(unix))]
-fn take_lock(_target: &Path) -> io::Result<Lock> {
+pub fn take_lock(_target: &Path) -> io::Result<Lock> {
     Err(io::Error::new(io::ErrorKind::Unsupported, "state locking needs a unix host"))
 }
 

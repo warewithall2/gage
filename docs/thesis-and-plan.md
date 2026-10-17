@@ -50,14 +50,25 @@ when it is settled by preference.)
   *one* group-key design, not a proof; and N sealed copies is a workable
   email-shaped answer, which is what this project already does. So this is a
   reason to prefer fan-out, not a reason a board cannot exist.
-- The **friend list stops being symmetric.** Trusting a board's membership is
-  a different object from trusting a key, and a weaker one -- though that is a
-  design concern rather than a demonstrated failure, since nobody has built
-  the board and watched it break.
+- The **unit of trust changes.** Trusting a board's membership is a different
+  object from trusting a key, and a weaker one. An earlier draft called this
+  "the friend list stops being symmetric", which a reviewer pointed out is not
+  a loss at all: ctx's contact lists are *already* local and pairwise
+  asymmetric -- my listing you implies nothing about your listing me -- so a
+  board would break no symmetry that exists. The real cost is narrower: a
+  board's membership is one object many parties share, and a key is an object
+  each party holds an opinion about. This is the weakest of the three.
 
 The board *feel* comes from `ctx threads` instead, which is a local view over
-mail this machine received and needs no trusted host. If a board is wanted
-later, that local view is the honest version of it.
+mail this machine received and needs no trusted host.
+
+That is a **different product, not a cheaper board**, and an earlier draft
+called it "the honest version" of one, which a reviewer was right to reject as
+substituting the thing that was built for the thing that was declined. A board
+has shared membership, shared ordering and shared visibility; `ctx threads`
+has none of those -- it shows what this machine happens to hold, in the order
+this machine observed it. If a shared board is ever wanted, it has to be
+built, and these three costs are what it will cost.
 
 ## Explicitly still refused
 

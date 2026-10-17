@@ -550,24 +550,38 @@ verified sender with no grant, or a grant for a different message kind,
 notifies exactly as before and runs nothing. The run prints which grant
 matched, so the line in the file and the action taken can be read together.
 
-**The hook never receives the payload.** It gets the id, the sender's key,
-the contact name, the type, the subject and the matched grant, in the
+**The hook never receives the bundle's items.** It gets the id, the sender's
+key, the contact name, the type, the subject and the matched grant, in the
 environment -- `CTX_BUNDLE_ID`, `CTX_FROM`, `CTX_FROM_KEY`, `CTX_TYPE`,
 `CTX_SUBJECT`, `CTX_EXPECTS_REPLY`, `CTX_GRANT`. Nothing on stdin, nothing on
 the command line. A bundle's contents are the thing the accept gate exists to
 hold back; a hook that handed them over would have quietly removed that gate
 for every arrival matching a grant.
 
-**It does not accept the bundle.** Afterwards the bundle is still unread,
-still in `pending`, still needing `ctx accept`. The hook is told something
-actionable arrived; deciding to read it stays a separate, recorded act.
+Not "never receives message content": the subject is text the *sender* wrote
+and it travels here. One bounded line, already in the notification you see,
+so it leaks nothing the popup does not -- but a hook that treats it as
+trustworthy input is a hook with a problem.
 
-**Sender-chosen text is data, never command.** The subject is written by
-whoever sent it. Interpolated into a shell line it would be command injection
-with extra steps, so the command you wrote goes to `sh -c` untouched and
-every sender-chosen value arrives as an environment variable, flattened to
-one bounded line first -- a newline in `CTX_SUBJECT` is still a newline in
+**ctx does not accept the bundle.** When the hook returns, ctx has moved
+nothing: still unread, still in `pending`. The hook itself is handed
+`CTX_BUNDLE_ID` and can of course run `ctx accept && ctx open` -- and for an
+agent loop that is the point. What ctx guarantees is that *it* never crosses
+the gate for you, so crossing it stays an act your own hook performs, with a
+journal entry to show it.
+
+**ctx does not interpolate sender text into your command.** The subject is
+written by whoever sent it; in a shell line it would be command injection with
+extra steps. So the command you wrote goes to `sh -c` untouched and every
+sender-chosen value arrives as an environment variable, flattened to one
+bounded line first -- a newline in `CTX_SUBJECT` is still a newline in
 whatever the hook writes it to, and could forge an arrival record there.
+
+That is one link, not the chain. `"$CTX_SUBJECT"` quoted is data; `eval`, an
+unquoted expansion inviting word-splitting and globbing, or a value passed
+where a command expects an option, each hand the sender a shell -- and the
+hook is your code, so nothing here can stop it. Environment values are also
+inherited by the hook's children and readable by anything running as you.
 
 A hook that exits non-zero is reported; one that outlives
 `--hook-timeout` (default 300s) is killed. Either way the arrival stays
@@ -582,6 +596,85 @@ As a background service:
 differently from a manual pull would announce bundles you could then not find.
 The watcher suppresses its nothing-to-do line; a line per poll turns a journal
 into noise that hides the one entry that mattered.
+
+## The journal
+
+    ctx journal                  # what this machine did with what arrived
+    ctx journal --bundle <id>    # one bundle's history
+    ctx journal --json           # the raw JSONL
+
+Every other record in ctx is an artifact -- a bundle in `pending`, a copy in
+`sent`, a witness in `state.json`. Artifacts say *what was said*. None of them
+says *what this machine decided*, and the moment anything happens while nobody
+is watching, that is the only question worth asking.
+
+One line per event: `observed`, `accepted`, `rejected`, `opened`.
+
+**`observed`, not `arrived`.** `at` is when a scan happened to run, not when
+anything was placed anywhere -- a bundle can even be placed and removed between
+scans and never be seen at all. First local observation is the only arrival ctx
+can honestly assert from its own knowledge, so that is what the event is
+called. A bundle already accepted when first seen is marked `backfilled`,
+because its verdict was computed after acceptance and calling that an arrival
+verdict would be a lie.
+
+**The verdict is written down, not derived.** This is the whole reason the file
+exists. A key rotation, a `ctx add`, a retirement -- any of them changes what
+`Contacts::verdict` returns for a bundle that arrived before it, so a verdict
+recomputed on read is a different answer wearing the same name. Retire a
+contact's key and the journal still shows the bundle observed as
+`SENDER VERIFIED`, with the later lines saying `RETIRED`; recomputation would
+have erased that.
+
+What a difference between two lines is *not* is proof of a key change. It
+could also be a backfilled first entry, a verdict computed after acceptance, a
+contact edited by hand, local tampering, or a ctx upgrade changing what a
+verdict means. An entry freezes an **outcome**, not the evidence that produced
+it: it does not hold the contacts revision, the key's status inputs or the code
+version. A difference is a question, not an answer.
+
+**Hashes and verdicts, never contents.** No subject, no filenames, no payload,
+no handle. And every field that *does* come off the wire is validated rather
+than copied -- the manifest id is a value the signer chooses, so it has to be
+hex and bounded or it is replaced by a hash of itself; the same for the keys.
+A decoded id can otherwise carry a terminal escape or a confusable into
+whatever reads the log next. Partly because the retained bundle already answers "which exact
+bytes". Mostly because all of those are text the *sender* wrote, and a log is
+read later by a human skimming or a model summarising -- so a field an attacker
+can fill is a stored injection against whatever reads the log next, which would
+make the audit trail an attack surface. The one sender-chosen value admitted is
+the thread id, and only if it looks like one: hex and bounded, or it is
+recorded as the fact that it was unparseable.
+
+**A rejection is the entry that matters most.** `ctx reject` destroys the
+bundle unread, so without a line written before the delete, deletion is
+indistinguishable from never having arrived.
+
+What it cannot tell you, said here so nobody reads it as more: ctx's knowledge
+stops at the bundle boundary. It cannot say what an agent did after `ctx open`,
+nor whether a human was actually looking -- `accept` records an act, not an
+intention. It cannot prove the record is complete. And it is append-only by
+convention, not tamper-proof: a process running as you can rewrite it, keys
+and all. Claiming otherwise would be theatre. What it defends against is the
+realistic case -- an agent or a script quietly dropping the line that
+incriminates it, and ordinary loss.
+
+Built before the thing that needs it, deliberately. Capture is the part that
+cannot be retrofitted: a verdict never recorded when it was computed is gone,
+and a retention policy can be argued about next month.
+
+One thing that ordering does not buy: a hash chain added later proves only
+that entries have not changed *since chaining began*. It cannot tell a genuine
+pre-chain history from one edited, reordered or fabricated beforehand -- it
+would chain a forgery just as faithfully. Capture-first buys evidence about
+verdicts, not retroactive tamper evidence.
+
+**The index orders the file, not `seq`.** `n` is allocated while holding the
+journal lock, so two processes cannot claim one position; `seq` is the
+observation counter that relates an entry to a retirement cut, which is a
+different job. Each line is written and `fsync`ed under that same lock,
+because a log of decisions that loses the line it just promised is worse than
+none.
 
 ## Key rotation
 
@@ -747,7 +840,7 @@ in the message. See [Authority](#authority-the-one-thing-that-says-you-may-act).
 
     cargo build --release && cargo test --release && bash tests/attacks.sh
 
-527 checks plus 75 Rust unit tests. Every one is an attack that worked, or
+565 checks plus 87 Rust unit tests. Every one is an attack that worked, or
 nearly worked, during development: frame-boundary forgery, payload swapping
 after signing, a listed contact claiming a third party's name, an unverified
 author name on a forward, a trust label that was a substring of its own

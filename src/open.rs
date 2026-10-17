@@ -106,7 +106,7 @@ pub fn render(l: &Loaded, reveal: bool) -> Result<String, String> {
     // against borrowing a name; not borrowing one is.
     let contacts_for_names = crate::trust::Contacts::load();
     let self_labelled = m.from.handle == crate::words::label(&m.from.key)
-        && !contacts_for_names.is_a_name_you_use(&m.from.handle);
+        && !contacts_for_names.is_a_name_you_use(&m.from.handle, &m.from.key);
     match local_name {
         Some(nm) if nm != m.from.handle && self_labelled => {
             s.push_str(&format!(
@@ -271,11 +271,26 @@ pub fn render(l: &Loaded, reveal: bool) -> Result<String, String> {
         }
         // And then whether they have, which is the question the block above
         // raises and the only thing in this frame that can answer it.
+        for line in authority_block(&contacts, l, &n) {
+            s.push_str(&line);
+            s.push('\n');
+        }
+    } else if authority_matched(&contacts, l) {
+        // A grant matched on a kind that asks for nothing.
         //
-        // Printed for request kinds only. On a `share` there is nothing to
-        // authorise, and an `authorised : NO` line against a message that
-        // asked for nothing invites a reader to think authority is what
-        // gates *reading* rather than *acting*.
+        // The block used to be printed for request kinds only, and the reason
+        // was good for half the cases: an `authorised : NO` against a message
+        // that asked for nothing invites a reader to think authority gates
+        // *reading* rather than *acting*. That reasoning does not extend to a
+        // grant that matched.
+        //
+        // A reviewer found the consequence. `ctx watch --on-arrival` fires on
+        // any grant, `allow mac share` included, and the claim written beside
+        // it was that a hook can never fire on an authority the reader was not
+        // shown. With the block suppressed on shares, that was simply false --
+        // the grant was acting, invisibly, on exactly the kind where the frame
+        // said nothing. So a matched grant is now always shown, whatever the
+        // kind, and only the NO stays suppressed.
         for line in authority_block(&contacts, l, &n) {
             s.push_str(&line);
             s.push('\n');
@@ -401,6 +416,25 @@ pub fn render(l: &Loaded, reveal: bool) -> Result<String, String> {
 /// the *sender* granted something, which is the thing the whole tool exists
 /// to prevent. So the word "sender" appears in the granted branch only to be
 /// excluded.
+/// Did a grant match, without rendering anything?
+///
+/// Exists so the caller can decide whether to print the block on a kind that
+/// asks for nothing, using the same `lookup` and the same inputs as the block
+/// itself -- rather than a second, differently-shaped test that could reach a
+/// different answer from the thing printed two lines later.
+fn authority_matched(contacts: &Contacts, l: &Loaded) -> bool {
+    let m = &l.manifest;
+    crate::authority::Authority::load()
+        .lookup(
+            contacts,
+            l.trust,
+            &m.from.key,
+            m.msg_type,
+            m.in_reply_to.is_some(),
+        )
+        .is_ok()
+}
+
 fn authority_block(contacts: &Contacts, l: &Loaded, nonce: &str) -> Vec<String> {
     use crate::authority::Denied;
     let m = &l.manifest;
@@ -503,21 +537,72 @@ fn authority_block(contacts: &Contacts, l: &Loaded, nonce: &str) -> Vec<String> 
 
 #[cfg(test)]
 mod label_tests {
-    #[test]
-    fn a_key_derived_handle_is_not_called_impersonation() {
-        // The real case: a machine named by `ctx init` with no argument, on a
-        // list under a name its owner chose. Two names, no conflict.
-        let key = "+WRWaa4FTvb9jtXAoS1SbowY/0NgADaoixnYmOGJMh0=";
-        let label = crate::words::label(key);
-        assert_ne!(label, "mac");
-        assert_eq!(crate::words::label(key), label, "label must be stable");
+    use crate::trust::Contacts;
+
+    // A reviewer's note on the first version of these tests: they asserted
+    // `label(key) != "mac"` and nothing else, so they exercised neither the
+    // decision nor `is_a_name_you_use`, while the comment claimed they
+    // "pinned the distinction". These call the real predicate.
+
+    const K1: &str = "+WRWaa4FTvb9jtXAoS1SbowY/0NgADaoixnYmOGJMh0=";
+    const K2: &str = "zesqIl61W7CAdzsRjY9mxAvUTuHQjiMZmE1cMQvsLJY=";
+
+    fn with(entries: &[(&str, &str)]) -> Contacts {
+        let mut c = Contacts::default();
+        for (k, n) in entries {
+            c.keys.insert((*k).to_string(), (*n).to_string());
+        }
+        c
     }
 
     #[test]
-    fn a_chosen_handle_that_differs_is_still_impersonation() {
-        // A handle the sender typed, which is not derivable from the key, is
-        // the case the loud warning exists for and must keep.
-        let key = "+WRWaa4FTvb9jtXAoS1SbowY/0NgADaoixnYmOGJMh0=";
-        assert_ne!(crate::words::label(key), "alice");
+    fn a_label_nobody_uses_as_a_name_is_harmless() {
+        let c = with(&[(K1, "mac")]);
+        let label = crate::words::label(K1);
+        assert!(!c.is_a_name_you_use(&label, K1), "{label} tripped on itself");
+    }
+
+    #[test]
+    fn a_label_that_is_someone_elses_name_is_not_harmless() {
+        let c = with(&[(K1, "mac"), (K2, "codex")]);
+        assert!(c.is_a_name_you_use("codex", K1));
+        // Case is not a defence: the recognition being borrowed is a human's.
+        assert!(c.is_a_name_you_use("CODEX", K1));
+        assert!(c.is_a_name_you_use("  codex  ", K1));
+    }
+
+    #[test]
+    fn a_label_that_collides_with_another_keys_label_is_not_harmless() {
+        // The case a reviewer had to point out. A label is 16 bits, so a
+        // sender can grind its own key's label to equal one the reader
+        // already recognises -- and checking only chosen names missed it.
+        let c = with(&[(K1, "mac"), (K2, "codex")]);
+        let other = crate::words::label(K2);
+        assert!(
+            c.is_a_name_you_use(&other, K1),
+            "another key's label {other} was treated as harmless"
+        );
+        // ...but a key's own label must not trip against itself, or every
+        // default-named machine gets a false impersonation warning, which is
+        // the bug this whole branch was added to fix.
+        let own = crate::words::label(K1);
+        assert!(!c.is_a_name_you_use(&own, K1));
+    }
+
+    #[test]
+    fn a_retired_name_still_counts_because_a_reader_still_recognises_it() {
+        let mut c = with(&[(K1, "mac")]);
+        c.retired.insert(
+            K2.to_string(),
+            crate::trust::Retired {
+                name: "oldcodex".into(),
+                retired_at: "2026-01-01T00:00:00Z".into(),
+                retired_seq: 1,
+                replaced_by: None,
+                claimed_at: None,
+                compromised: false,
+            },
+        );
+        assert!(c.is_a_name_you_use("oldcodex", K1));
     }
 }

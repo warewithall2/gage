@@ -143,15 +143,41 @@ impl Contacts {
         self.keys.contains_key(pubkey)
     }
 
-    /// Is this string a name you have given to somebody -- live or retired?
+    /// Is this string something a reader of yours would recognise as naming
+    /// somebody -- other than the key it arrived with?
     ///
     /// Asked by the frame before it treats a sender's claimed handle as
-    /// harmless. Retired names count: a name you used to use is still a name
-    /// a reader recognises, and that recognition is the thing being borrowed.
-    pub fn is_a_name_you_use(&self, s: &str) -> bool {
-        self.keys.values().any(|n| n == s)
-            || self.retired.values().any(|r| r.name == s)
-            || self.groups.contains_key(s)
+    /// harmless. Four sources, and the fourth is the one a reviewer had to
+    /// point out:
+    ///
+    /// - a live contact name, and
+    /// - a retired one, because a name you used to use is still a name a
+    ///   reader recognises, and recognition is the thing being borrowed, and
+    /// - a group name, for the same reason, and
+    /// - **the key-derived label of any OTHER key on this list.** A label is
+    ///   one word-pair, 16 bits, grindable in about 65,000 tries, so a sender
+    ///   can arrange its own label to collide with the label of a key you
+    ///   already hold. Checking only chosen names missed that entirely --
+    ///   which is live on a two-machine setup, where machines routinely go by
+    ///   their labels and a reader learns to recognise them.
+    ///
+    /// Compared case-insensitively, because the recognition being exploited
+    /// is a human's and a human does not read case.
+    ///
+    /// `except` is the key the handle arrived with, so its own label does not
+    /// count against it.
+    pub fn is_a_name_you_use(&self, s: &str, except: &str) -> bool {
+        let s = s.trim().to_lowercase();
+        let hit = |n: &str| n.trim().to_lowercase() == s;
+        self.keys.values().any(|n| hit(n))
+            || self.retired.values().any(|r| hit(&r.name))
+            || self.groups.keys().any(|n| hit(n))
+            || self
+                .keys
+                .keys()
+                .chain(self.retired.keys())
+                .filter(|k| k.as_str() != except)
+                .any(|k| hit(&crate::words::label(k)))
     }
 
     pub fn name_for(&self, pubkey: &str) -> Option<&str> {

@@ -212,12 +212,21 @@ fn may_mutate(r: &Req, port: u16) -> bool {
     // headerless POST will be some local helper nobody audited.
     //
     // Which makes the contract worth stating, since a reviewer noted this
-    // breaks more than browsers: **the mutating routes are for this page
-    // only.** A script, a CLI helper or another native app that sent `X-Ctx`
-    // and no `Origin` used to work and now gets 403. That is intended -- the
-    // CLI is the supported programmatic interface and it does not go through
-    // HTTP at all -- but it is a narrowing, not a pure fix, and anything
-    // local that was driving these routes has to send the page's own Origin.
+    // breaks more than browsers: a script, a CLI helper or another native app
+    // that sent `X-Ctx` and no `Origin` used to work and now gets 403. That is
+    // intended -- the CLI is the supported programmatic interface and does not
+    // go through HTTP at all -- but it is a compatibility narrowing as much as
+    // a fix, and anything local that was driving these routes must now send
+    // the page's own Origin.
+    //
+    // And the property is exactly this and no more: **no cross-site page can
+    // reach these routes.** A second reviewer was right that "for this page
+    // only" overstates it -- there is no per-page secret, so any local process
+    // can send both `X-Ctx: 1` and the correct `Origin` and be
+    // indistinguishable from the page. Against a local process this is not a
+    // boundary at all, and it was never meant to be: such a process already
+    // has the ctx home and the signing key, so there is nothing here for it
+    // to gain.
     let Some(o) = &r.origin else {
         return false;
     };

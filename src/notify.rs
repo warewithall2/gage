@@ -23,18 +23,41 @@ fn announced_path() -> std::path::PathBuf {
     crate::identity::home().join("announced.json")
 }
 
-fn load_announced() -> BTreeSet<String> {
-    std::fs::read_to_string(announced_path())
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
+/// Announced ids, **oldest first**.
+///
+/// It used to be a `BTreeSet`, and a reviewer found what that cost. A set has
+/// no arrival order, so trimming it to a bound kept the lexicographically
+/// largest ids rather than the newest -- and bundle ids are hex, so the ids
+/// dropped first were the ones beginning `0`, `1`, `2`. Dropped from this
+/// file, a bundle is announced again on the next poll, and with
+/// `--on-arrival` it is *acted on* again. The comment said "the oldest ids
+/// stop mattering once collected", which was true of the intent and false of
+/// the code.
+///
+/// A list in insertion order trims the end that the comment always meant.
+/// The old format still loads: a set of ids read back as a list is in sorted
+/// rather than arrival order, which is wrong but harmless, because every id
+/// in it has already been announced and the only cost is trimming the wrong
+/// one once more before the file turns over.
+fn load_announced() -> Vec<String> {
+    let Ok(text) = std::fs::read_to_string(announced_path()) else {
+        return Vec::new();
+    };
+    if let Ok(v) = serde_json::from_str::<Vec<String>>(&text) {
+        return v;
+    }
+    serde_json::from_str::<BTreeSet<String>>(&text)
+        .map(|s| s.into_iter().collect())
         .unwrap_or_default()
 }
 
-fn save_announced(s: &BTreeSet<String>) {
-    // Keep it bounded; the oldest ids stop mattering once collected.
-    let trimmed: BTreeSet<String> = s.iter().rev().take(2000).cloned().collect();
-    if let Ok(v) = serde_json::to_vec(&trimmed) {
-        let _ = std::fs::write(announced_path(), v);
+fn save_announced(v: &[String]) {
+    // Trim the FRONT, which is the old end. 2000 is a bound on the file, not
+    // a policy about what matters: every id in here has been announced, and
+    // the only thing dropping one costs is announcing that bundle twice.
+    let start = v.len().saturating_sub(2000);
+    if let Ok(bytes) = serde_json::to_vec(&v[start..]) {
+        let _ = std::fs::write(announced_path(), bytes);
     }
 }
 
@@ -74,7 +97,7 @@ pub fn new_arrivals() -> Vec<Pending> {
         if !l.tampered.is_empty() || matches!(l.trust, crate::trust::Trust::Unverified) {
             continue;
         }
-        if st.is_read(&m.id) || seen.contains(&m.id) {
+        if st.is_read(&m.id) || seen.iter().any(|x| *x == m.id) {
             continue;
         }
         // The same lookup the frame prints, from the same inputs, so a hook
@@ -109,11 +132,13 @@ pub fn new_arrivals() -> Vec<Pending> {
 }
 
 pub fn mark_announced(ids: &[String]) {
-    let mut s = load_announced();
+    let mut v = load_announced();
     for i in ids {
-        s.insert(i.clone());
+        if !v.iter().any(|x| x == i) {
+            v.push(i.clone());
+        }
     }
-    save_announced(&s);
+    save_announced(&v);
 }
 
 /// Flatten sender-controlled text to a single bounded line.
@@ -277,12 +302,18 @@ mod tests {
 ///    the human sees, so it leaks nothing the desktop popup does not -- but
 ///    it is the sender's text, and a hook that treats it as trustworthy input
 ///    is a hook with a problem.
-/// 3. **It does not accept the bundle.** After the hook runs, the bundle is
-///    still unread, still in `pending`, still needing `ctx accept`. The hook
-///    is told that something actionable arrived; deciding to read it stays a
-///    separate, recorded act.
-/// 4. **Sender-controlled text goes in the environment, never into the
-///    command string.** The subject is written by whoever sent it. Pasted
+/// 3. **This code does not accept the bundle.** After `run_hook` returns, ctx
+///    has moved nothing: the bundle is still unread, still in `pending`.
+///
+///    Stated about this code rather than about the world, because a reviewer
+///    was right that the stronger phrasing was false. The hook is handed
+///    `CTX_BUNDLE_ID` and can perfectly well run `ctx accept && ctx open`
+///    itself -- and for an agent loop, that is the point. What ctx guarantees
+///    is that *nothing here* crosses the gate, so crossing it remains an act
+///    the receiver's own hook performs, under its own name, with a journal
+///    entry to show it. The gate is not removed; it is left where it is, for
+///    the hook to walk through deliberately.
+/// 4. **ctx does not interpolate sender text into the command string.** The subject is written by whoever sent it. Pasted
 ///    into a shell line it would be a command injection with extra steps, so
 ///    the command the receiver wrote is passed to `sh -c` untouched and every
 ///    sender-chosen value arrives as `$CTX_SUBJECT` and friends -- already
@@ -290,11 +321,16 @@ mod tests {
 ///    environment variable is still a newline in whatever the hook writes it
 ///    to.
 ///
-///    The limit of that, since the guarantee is easy to over-read: this keeps
-///    sender text out of the command string ctx builds. It cannot stop a hook
-///    from putting it back. `eval "$CTX_SUBJECT"`, or interpolating it into a
-///    second shell, hands the sender a shell -- and nothing here can prevent
-///    that, because the hook is the receiver's own code.
+///    Phrased as what ctx does rather than "sender text is data, never
+///    command", which a reviewer rightly called hook-dependent. `"$CTX_SUBJECT"`
+///    quoted is data. `eval "$CTX_SUBJECT"`, an unquoted expansion inviting
+///    word-splitting and globbing, a value used where a command expects an
+///    option, or a second shell string built from it -- each hands the sender
+///    a shell, and nothing here can prevent any of them, because the hook is
+///    the receiver's own code. Environment values are also inherited by the
+///    hook's children and readable from the process environment by anything
+///    running as this user. The guarantee is one link in the chain, not the
+///    chain.
 ///
 /// A non-zero exit or a timeout is reported and otherwise ignored, and the
 /// arrival is still marked announced.

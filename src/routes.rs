@@ -52,7 +52,17 @@ impl Routes {
 /// the end of the listing, so the first time a bundle was displayed it was
 /// judged without its own witness.
 pub fn observe_inbox() -> std::io::Result<crate::state::LocalState> {
-    crate::state::LocalState::observe(&scan_inbox())
+    let st = crate::state::LocalState::observe(&scan_inbox())?;
+    // Dated here because this is where the inbox is noticed, and noticing is
+    // the only arrival ctx can honestly claim -- nothing tells this machine
+    // when a bundle was placed in its inbox. After `observe`, so the entry
+    // carries the sequence number the witness was recorded at rather than the
+    // one before it.
+    let failed = crate::journal::record_arrivals();
+    if failed > 0 {
+        eprintln!("ctx: could not journal {failed} arrival(s)");
+    }
+    Ok(st)
 }
 
 /// Witnesses for every sound bundle currently in the inbox.
