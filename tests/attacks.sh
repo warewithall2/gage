@@ -8,8 +8,11 @@ trap 'rm -rf "$T"' EXIT
 pass=0; fail=0
 ok()   { pass=$((pass+1)); }
 bad()  { fail=$((fail+1)); echo "  FAIL: $1"; }
-want()   { if grep -qF -e "$2" "$1"; then ok; else bad "expected to find: $2"; fi; }
-wantno() { if grep -qF -e "$2" "$1"; then bad "should NOT contain: $2"; else ok; fi; }
+# The file is named in the failure. Without it, "expected to find: NAME
+# MISMATCH" could be any of four checks in four different blocks, and
+# chasing an intermittent one meant guessing which.
+want()   { if grep -qF -e "$2" "$1"; then ok; else bad "expected to find: $2  (in ${1##*/})"; fi; }
+wantno() { if grep -qF -e "$2" "$1"; then bad "should NOT contain: $2  (in ${1##*/})"; else ok; fi; }
 code()   { if [ "$2" = "$3" ]; then ok; else bad "exit $2, wanted $3 ($1)"; fi; }
 # How many entries in a directory. NOT `ls | wc -l`: BSD `wc` pads its output
 # to a field width, so on macOS that yields "       0" and every `= 0`
