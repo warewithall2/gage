@@ -11,6 +11,12 @@ bad()  { fail=$((fail+1)); echo "  FAIL: $1"; }
 want()   { if grep -qF -e "$2" "$1"; then ok; else bad "expected to find: $2"; fi; }
 wantno() { if grep -qF -e "$2" "$1"; then bad "should NOT contain: $2"; else ok; fi; }
 code()   { if [ "$2" = "$3" ]; then ok; else bad "exit $2, wanted $3 ($1)"; fi; }
+# How many entries in a directory. NOT `ls | wc -l`: BSD `wc` pads its output
+# to a field width, so on macOS that yields "       0" and every `= 0`
+# comparison against it is false. Six checks in the auto-accept block failed
+# on the Mac for this reason and for no other -- the code was right and the
+# suite was lying, which is the worse way round.
+nfiles() { ls "$1" 2>/dev/null | wc -l | tr -d '[:space:]'; }
 
 mkdir -p "$T"/{a,b,c,w}
 CTX_HOME=$T/a $CTX init alice >/dev/null
@@ -1179,7 +1185,7 @@ if cut -c16- "$T/frw" | grep -q '[^ ]  '; then
   bad "doubled whitespace in the request block: $(cut -c16- "$T/frw" | grep -n '[^ ]  ' | head -1)"
 else ok; fi
 # ...and it really is wrapped text, not one run-on line.
-if [ "$(wc -l < "$T/frw")" -ge 6 ]; then ok; else bad "the request block collapsed to $(wc -l < "$T/frw") lines"; fi
+if [ "$(wc -l < "$T/frw" | tr -d '[:space:]')" -ge 6 ]; then ok; else bad "the request block collapsed to $(wc -l < "$T/frw") lines"; fi
 
 echo "receiver-side authority: a grant comes from your file, never from a sender"
 # The one feature in ctx that tells an agent it MAY act, so every way of
@@ -1513,7 +1519,7 @@ echo "a key can be said out loud, and the same key says the same thing everywher
 # a line with no delimiter through unchanged, so printing the words on stdout
 # turned `whoami | cut -f2` into a command that returned a paragraph.
 CTX_HOME=$T/a $CTX whoami 2>/dev/null > "$T/who"
-if [ "$(wc -l < "$T/who")" -eq 1 ]; then ok; else bad "whoami stdout is $(wc -l < "$T/who") lines"; fi
+if [ "$(wc -l < "$T/who" | tr -d '[:space:]')" -eq 1 ]; then ok; else bad "whoami stdout is $(wc -l < "$T/who") lines"; fi
 k=$(cut -f2 "$T/who")
 case "$k" in *$'\n'*) bad "whoami | cut -f2 returned more than a key";; *) ok;; esac
 if [ "$k" = "$AK" ]; then ok; else bad "whoami no longer yields alice's key"; fi
@@ -1539,7 +1545,7 @@ if [ "$pairs" -eq 4 ]; then ok; else bad "a fingerprint is $pairs pairs, wanted 
 # fingerprint x | cut -f2` is the obvious thing to write, and cut passes a
 # second line straight through, so two lines on stdout turn one value into
 # two. Caught by writing exactly that in the LAN pairing test.
-lines=$(CTX_HOME=$T/a $CTX fingerprint 2>/dev/null | wc -l)
+lines=$(CTX_HOME=$T/a $CTX fingerprint 2>/dev/null | wc -l | tr -d '[:space:]')
 if [ "$lines" -eq 1 ]; then ok; else bad "fingerprint put $lines lines on stdout, wanted 1"; fi
 alab=$(CTX_HOME=$T/a $CTX fingerprint 2>&1 >/dev/null | cut -f2)
 case "$afp" in "$alab"*) ok;; *) bad "the label '$alab' is not a prefix of '$afp'";; esac
@@ -2260,7 +2266,7 @@ CTX_HOME=$T/as $CTX send --to recv --type answer --reply-to "$QID" --subject a1 
 CTX_HOME=$T/aa $CTX watch --once --quiet --auto-accept > "$T/aw0" 2>&1
 want "$T/aw0" "no grant covers it, so it stays pending"
 n=$(CTX_HOME=$T/aa $CTX inbox 2>/dev/null | grep -c . || true)
-if [ -d "$T/aa/inbox/accepted" ] && [ "$(ls "$T/aa/inbox/accepted" | wc -l)" = 0 ]; then ok
+if [ -d "$T/aa/inbox/accepted" ] && [ "$(nfiles "$T/aa/inbox/accepted")" = 0 ]; then ok
 elif [ ! -d "$T/aa/inbox/accepted" ]; then ok
 else bad "a bundle was accepted with no grant at all"; fi
 
@@ -2277,7 +2283,7 @@ CTX_HOME=$T/aa $CTX authority > "$T/aw2" 2>&1 || true
 want "$T/aw2" "max-exchanges"
 rm -f "$T/aa/announced.json"
 CTX_HOME=$T/aa $CTX watch --once --quiet --auto-accept > "$T/aw3" 2>&1
-if [ "$(ls "$T/aa/inbox/accepted" 2>/dev/null | wc -l)" = 0 ]; then ok
+if [ "$(nfiles "$T/aa/inbox/accepted")" = 0 ]; then ok
 else bad "an unbounded auto-accept grant accepted a bundle"; fi
 
 # Nor against `any`: the kind has to be named.
@@ -2290,7 +2296,7 @@ printf 'allow sndr answer auto-accept max-exchanges 1\n' > "$T/aa/authority"
 rm -f "$T/aa/announced.json"
 CTX_HOME=$T/aa $CTX watch --once --quiet --auto-accept > "$T/aw4" 2>&1
 want "$T/aw4" "accepted unattended, 1 of 1"
-if [ "$(ls "$T/aa/inbox/accepted" 2>/dev/null | wc -l)" = 1 ]; then ok
+if [ "$(nfiles "$T/aa/inbox/accepted")" = 1 ]; then ok
 else bad "the grant did not accept the reply"; fi
 
 # The journal is the budget. The entry names the grant and the count.
@@ -2312,7 +2318,7 @@ CTX_HOME=$T/as $CTX send --to recv --type answer --reply-to "$QID" --subject a2 
 rm -f "$T/aa/announced.json"
 CTX_HOME=$T/aa $CTX watch --once --quiet --auto-accept > "$T/aw5" 2>&1
 want "$T/aw5" "used 1 of 1"
-if [ "$(ls "$T/aa/inbox/accepted" 2>/dev/null | wc -l)" = 1 ]; then ok
+if [ "$(nfiles "$T/aa/inbox/accepted")" = 1 ]; then ok
 else bad "the budget did not stop the second message"; fi
 
 # THE one that matters. A thread id is sender-chosen, so a sender could try to
@@ -2325,7 +2331,7 @@ CTX_HOME=$T/as $CTX send --to recv --type answer --reply-to deadbeefdeadbeef --s
 rm -f "$T/aa/announced.json"
 CTX_HOME=$T/aa $CTX watch --once --quiet --auto-accept > "$T/aw6" 2>&1
 want "$T/aw6" "no grant covers it"
-if [ "$(ls "$T/aa/inbox/accepted" 2>/dev/null | wc -l)" = 1 ]; then ok
+if [ "$(nfiles "$T/aa/inbox/accepted")" = 1 ]; then ok
 else bad "a sender refilled its budget by naming a parent this machine never sent"; fi
 
 # Several replies to one parent, against a budget of one.
@@ -2372,7 +2378,7 @@ CTX_HOME=$T/as $CTX send --to recv --type answer --reply-to "../../../../etc" --
   --prompt "$T/w/q.md" >/dev/null 2>&1
 rm -f "$T/aa/announced.json"
 CTX_HOME=$T/aa $CTX watch --once --quiet --auto-accept > "$T/aw7" 2>&1
-if [ "$(ls "$T/aa/inbox/accepted" 2>/dev/null | wc -l)" = 1 ]; then ok
+if [ "$(nfiles "$T/aa/inbox/accepted")" = 1 ]; then ok
 else bad "a path-shaped in_reply_to satisfied an in-reply-only grant"; fi
 
 # Without the flag, the grant alone does nothing. The file says what the human
@@ -2380,7 +2386,7 @@ else bad "a path-shaped in_reply_to satisfied an in-reply-only grant"; fi
 printf 'allow sndr answer auto-accept max-exchanges 9\n' > "$T/aa/authority"
 rm -f "$T/aa/announced.json"
 CTX_HOME=$T/aa $CTX watch --once --quiet > "$T/aw8" 2>&1
-before=$(ls "$T/aa/inbox/accepted" 2>/dev/null | wc -l)
+before=$(nfiles "$T/aa/inbox/accepted")
 if [ "$before" = 1 ]; then ok
 else bad "watch accepted something without --auto-accept"; fi
 wantno "$T/aw8" "accepted unattended"
