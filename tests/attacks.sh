@@ -2915,7 +2915,7 @@ try:
     for _ in range(90):
         held.append(socket.create_connection(("127.0.0.1",p)))
 except Exception: pass
-r=subprocess.run(["curl","-s","-m","5",f"http://127.0.0.1:{p}/health"],
+r=subprocess.run(["curl","-sS","-m","5",f"http://127.0.0.1:{p}/health"],
                  capture_output=True,text=True)
 busy = "busy" in r.stdout
 for s in held: s.close()
@@ -2935,7 +2935,8 @@ if not (busy and back):
     # Say what was actually observed. A check that only reports "did not
     # refuse politely, or did not recover" sends you guessing between two
     # different failures on a machine you are not sitting at.
-    print(f"  (opened={len(held)} busy={busy} recovered={back} first={r.stdout[:40]!r})")
+    print(f"  (opened={len(held)} busy={busy} recovered={back} "
+          f"rc={r.returncode} out={r.stdout[:40]!r} err={r.stderr[:80]!r})")
 sys.exit(0 if busy and back else 1)
 PY4
 then ok; else bad "the relay did not refuse politely past its cap, or did not recover"; fi
