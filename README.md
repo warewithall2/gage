@@ -1047,7 +1047,7 @@ in the message. See [Authority](#authority-the-one-thing-that-says-you-may-act).
     cargo build --release && cargo test --release && bash tests/attacks.sh
     bash tests/ui-e2e.sh      # optional: drives the viewer in a real browser
 
-618 checks plus 104 Rust unit tests, and one end-to-end test that opens the
+622 checks plus 104 Rust unit tests, and one end-to-end test that opens the
 viewer in a browser and completes a connection request.
 
 That last one exists because of a gap the other two could not see. The buddy
@@ -1063,7 +1063,36 @@ the `hidden` attribute. Neither was reachable from an assertion about JSON.
 `tests/ui-e2e.sh` needs playwright and a chromium on the machine and **skips
 rather than fails** when they are absent, so an optional dependency cannot
 turn a build red. Reinstating the dead-button bug makes it report *"the add
-never reported success -- the button is dead"*. Every one is an attack that worked, or
+never reported success -- the button is dead"*.
+
+### It passes on both machines now
+
+It did not before, and nobody had checked. Run on the MacBook for the first
+time on 17 October, the suite reported six failures — including *"a killed
+writer wedged the lock"*, which would be alarming if it were true. None of
+them was a defect in ctx:
+
+- `timeout` is GNU coreutils and is not on a stock macOS, so the two checks
+  that used it to assert a lock had been **released** failed on its absence.
+  The shim uses perl's `alarm`+`exec`, because the obvious shell fallback —
+  background it and poll — silently loses stdin: bash redirects an
+  asynchronous command's stdin from `/dev/null` when job control is off.
+- `ss` is Linux-only, and BSD `netstat` prints `127.0.0.1.7891`.
+- BSD `wc` pads its output to a field width, so `ls | wc -l` yields
+  `"       0"` and every `= 0` comparison against it was false. That reported
+  *"an unbounded auto-accept grant accepted a bundle"* — the suite lying about
+  a security property, which is the worse way round.
+- BSD `sed` has no `\|` alternation, so a check matched nothing and called a
+  perfectly good envelope malformed.
+- Two checks read a label with `2>&1 | tail -1`, which merges two streams into
+  one pipe and takes whatever lands last — correct here, wrong there, and
+  intermittent.
+- **Three checks picked a bundle with `inbox --json | head -1`.** Once a home
+  holds more than one, that is whichever the filesystem lists first; ext4 and
+  APFS disagree, so those checks accepted and opened a different bundle than
+  the one they were about. That is a real test bug which passed here every
+  time by luck, and the only reason it ever surfaced is that the suite was
+  finally run somewhere else. Every one is an attack that worked, or
 nearly worked, during development: frame-boundary forgery, payload swapping
 after signing, a listed contact claiming a third party's name, an unverified
 author name on a forward, a trust label that was a substring of its own
