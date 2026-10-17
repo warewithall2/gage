@@ -1065,6 +1065,29 @@ rather than fails** when they are absent, so an optional dependency cannot
 turn a build red. Reinstating the dead-button bug makes it report *"the add
 never reported success -- the button is dead"*.
 
+### Running it, and knowing when it breaks
+
+    tests/selfcheck.sh                                  # is this machine good?
+    tests/selfcheck-status.sh owens-macbook-air         # is every machine good?
+
+`selfcheck.sh` builds, runs all three suites, writes one status line and exits
+non-zero with a specific reason. It is scheduled daily on both machines — a
+systemd user timer on Linux, a launchd agent on macOS — and notifies the
+person at the machine when it fails. Neither pulls: each reports the commit it
+tested, so a machine that is behind says so rather than quietly updating
+itself. `selfcheck-status.sh` reads each machine's last result, and reports a
+host it cannot reach as **unreachable** rather than as passing — silence is
+not evidence of health, which is the whole mistake this exists to stop.
+
+It preflights the ports the suite binds, because a stray `ctx ui` once caused
+28 failures that looked like real defects. Both failure paths were verified by
+causing them: an occupied port, and a deliberately broken verdict label.
+
+To stop it:
+
+    systemctl --user disable --now ctx-selfcheck.timer         # Linux
+    launchctl bootout gui/$UID/com.owenware.ctx-selfcheck      # macOS
+
 ### It passes on both machines now
 
 It did not before, and nobody had checked. Run on the MacBook for the first
