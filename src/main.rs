@@ -73,6 +73,15 @@ enum Cmd {
     },
     /// Add someone's key to your buddy list (the signpub.boxpub token)
     Add { name: String, key: String },
+    /// Refuse a key, so it stops being offered as a new connection. The
+    /// opposite of `add`, and the third state: a list can say yes and an
+    /// absence says "not asked yet", but neither can say no. A declined key's
+    /// bundles still arrive -- nothing can stop delivery -- and still sit
+    /// behind the accept gate; what changes is that the frame and the viewer
+    /// say you already refused it rather than offering the decision again
+    Decline { key: String },
+    /// Take back a decline, without adding the key
+    Undecline { key: String },
     /// Say a key out loud: the four word-pairs to confirm when pairing
     Fingerprint {
         /// A contact's name, or nothing for your own key
@@ -968,6 +977,34 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         Cmd::Add { name, key } => {
             for l in trust::add_contact(&name, &key)? {
                 println!("{l}");
+            }
+        }
+        Cmd::Decline { key } => {
+            let (sign, _) = identity::split_key(&key);
+            let mut c = trust::Contacts::load();
+            let seq = state::LocalState::load().seq;
+            match c.decline(&sign, seq)? {
+                true => {
+                    c.save()?;
+                    println!("declined {}", words::label(&sign));
+                    println!("  {sign}");
+                    println!("  its bundles still arrive and still need accepting; what");
+                    println!("  changes is that you are not offered this decision again.");
+                    println!("  ctx undecline <key> takes it back.");
+                }
+                false => println!("already declined"),
+            }
+        }
+        Cmd::Undecline { key } => {
+            let (sign, _) = identity::split_key(&key);
+            let mut c = trust::Contacts::load();
+            match c.declined.remove(&sign) {
+                Some(d) => {
+                    c.save()?;
+                    println!("undeclined {} (was declined {})", words::label(&sign), d.at);
+                    println!("  it is NOT on your list. ctx add <name> <key> does that.");
+                }
+                None => println!("that key is not declined"),
             }
         }
         Cmd::Seal { dir, to, out } => {

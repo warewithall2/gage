@@ -2392,6 +2392,193 @@ else ok; fi
 CTX_HOME=$T/aa $CTX journal --json 2>/dev/null | grep -q '"event":"opened"' \
   && bad "an auto-accept opened the bundle" || ok
 
+echo
+echo "--- declining a key: the third state, and what it does not do"
+# A list that can only say yes and "not asked yet" cannot say no, so the way
+# to stop being offered the same decision was to accept it.
+mkdir -p "$T"/{dc1,dc2,dc3}
+CTX_HOME=$T/dc1 $CTX init dc1 >/dev/null 2>&1
+CTX_HOME=$T/dc2 $CTX init dc2 >/dev/null 2>&1
+CTX_HOME=$T/dc3 $CTX init dc3 >/dev/null 2>&1
+D1K=$(CTX_HOME=$T/dc1 $CTX whoami | cut -f2)
+D2K=$(CTX_HOME=$T/dc2 $CTX whoami | cut -f2)
+D3K=$(CTX_HOME=$T/dc3 $CTX whoami | cut -f2)
+for h in dc2 dc3; do
+  CTX_HOME=$T/$h $CTX add dc1 "$D1K" >/dev/null 2>&1
+  CTX_HOME=$T/$h $CTX route dc1 "$T/dc1" >/dev/null
+  CTX_HOME=$T/$h $CTX send --to dc1 --type question --subject "let me in" \
+    --prompt "$T/w/task.md" >/dev/null 2>&1
+done
+D2S=${D2K%%.*}
+CTX_HOME=$T/dc1 $CTX decline "$D2K" > "$T/dco" 2>&1
+want "$T/dco" "declined"
+# The verdict changes, and the frame says when and what it means.
+DCB=$(ls "$T/dc1/inbox/pending" | head -1)
+for d in "$T/dc1/inbox/pending/"*; do
+  if grep -q "$D2S" "$d/manifest.json"; then DCD=$d; fi
+done
+CTX_HOME=$T/dc1 $CTX open "$DCD" > "$T/dcf" 2>&1
+want "$T/dcf" "SENDER REFUSED BEFORE"
+want "$T/dcf" "DECLINED by you on"
+# And says plainly that it is not a block, because nothing in ctx can stop a
+# bundle being delivered and a person who believes otherwise is wrong in a
+# way that matters.
+want "$T/dcf" "decision is a record here, not a block"
+
+# A declined key reaches no grant. `lookup` already requires SENDER VERIFIED,
+# so this is the belt on top of the braces -- asserted because the cost of
+# being wrong is an agent acting on a sender its human refused.
+printf 'allow %s any\n' "$D2S" > "$T/dc1/authority"
+CTX_HOME=$T/dc1 $CTX open "$DCD" > "$T/dcg" 2>&1
+# Asserting the absence of "authorised :" would be wrong: a DENIAL prints
+# `authorised : NO.`, so the substring legitimately appears. The claim is
+# about the grant, not the block.
+wantno "$T/dcg" "authorised : YES"
+want "$T/dcg" "authorised : NO"
+rm -f "$T/dc1/authority"
+
+# Declining something already on your list is refused rather than doing both.
+CTX_HOME=$T/dc1 $CTX add dc3 "$D3K" >/dev/null 2>&1
+if CTX_HOME=$T/dc1 $CTX decline "$D3K" > "$T/dch" 2>&1; then
+  bad "declining a contact was allowed"
+else want "$T/dch" "already on your list"; fi
+# and that message has no doubled whitespace, which a wrapped literal has now
+# shipped three times.
+if grep -q "  " "$T/dch"; then bad "doubled whitespace in the decline refusal"; else ok; fi
+
+# Adding over a decline reverses it, and says so: being asked twice by
+# something that wants in is the ordinary reason you would.
+CTX_HOME=$T/dc1 $CTX add dc2 "$D2K" > "$T/dci" 2>&1
+want "$T/dci" "you declined this key on"
+if grep -q '"declined": *{}' "$T/dc1/contacts.json" \
+   || ! grep -q "$D2S" <(python3 -c "
+import json;print(' '.join(json.load(open('$T/dc1/contacts.json')).get('declined',{})))"); then ok
+else bad "adding a declined key left the decline in place"; fi
+
+echo
+echo "--- the buddy list: a request, its gate, and a refusal"
+mkdir -p "$T/bl"
+CTX_HOME=$T/bl $CTX init bl >/dev/null 2>&1
+BLK=$(CTX_HOME=$T/bl $CTX whoami | cut -f2)
+CTX_HOME=$T/dc3 $CTX add bl "$BLK" >/dev/null 2>&1
+CTX_HOME=$T/dc3 $CTX route bl "$T/bl" >/dev/null
+CTX_HOME=$T/dc3 $CTX send --to bl --subject knock --prompt "$T/w/task.md" >/dev/null 2>&1
+CTX_HOME=$T/bl $CTX ui --port 7905 >/dev/null 2>&1 &
+blpid=$!
+sleep 1
+BL=http://127.0.0.1:7905
+blget() { curl -s -H "Origin: $BL" -H 'X-Ctx: 1' "$BL/api/buddies"; }
+blpost() { curl -s -H "Origin: $BL" -H 'X-Ctx: 1' -H 'Content-Type: application/json' \
+  -d "$2" "$BL$1"; }
+D3S=${D3K%%.*}
+blget > "$T/bl1"
+# The request is there.
+want "$T/bl1" '"requests"'
+if python3 - "$T/bl1" "$D3S" <<'PY4'
+import json,sys
+d=json.load(open(sys.argv[1])); q=[x for x in d["requests"] if x["key"]==sys.argv[2]]
+sys.exit(0 if len(q)==1 else 1)
+PY4
+then ok; else bad "the sender did not show up as a connection request"; fi
+# **The fingerprint is not in the payload.** A page that already holds the
+# answer turns confirming it into copying, which is what the first version of
+# this did while printing the whole fingerprint on the same card.
+if python3 - "$T/bl1" <<'PY4'
+import json,sys
+d=json.load(open(sys.argv[1]))
+sys.exit(0 if all("fingerprint" not in q for q in d["requests"]) else 1)
+PY4
+then ok; else bad "a connection request carried the fingerprint the person must type"; fi
+# And the asked pair is never pair 1, which is the label shown beside it.
+if python3 - "$T/bl1" <<'PY4'
+import json,sys
+d=json.load(open(sys.argv[1]))
+sys.exit(0 if all(2 <= q["ask_pair"] <= 4 for q in d["requests"]) else 1)
+PY4
+then ok; else bad "the asked pair was the one the label gives away"; fi
+
+# The gate. Pair 1 is on screen, so offering it must not work.
+BLFP=$(CTX_HOME=$T/dc3 $CTX fingerprint 2>/dev/null | head -1 | cut -f2)
+BLLAB=$(printf '%s' "$BLFP" | awk -F' · ' '{print $1}')
+BLASK=$(python3 -c "
+import json;print(json.load(open('$T/bl1'))['requests'][0]['ask_pair'])")
+BLWANT=$(printf '%s' "$BLFP" | awk -F' · ' -v n="$BLASK" '{print $n}')
+blpost /api/connect "{\"key\":\"$D3S\",\"name\":\"\",\"confirm\":\"$BLLAB\"}" > "$T/bl2"
+want "$T/bl2" "not pair"
+# A wrong answer does NOT echo the right one back. That would turn the step
+# into a two-try copying exercise and teach the person the words do not matter.
+if python3 - "$T/bl2" "$BLWANT" <<'PY4'
+import sys
+sys.exit(0 if sys.argv[2] not in open(sys.argv[1]).read() else 1)
+PY4
+then ok; else bad "a wrong answer echoed the expected pair back"; fi
+# Adding is refused on a wrong pair too, not only revealing.
+blpost /api/connect "{\"key\":\"$D3S\",\"name\":\"three\",\"confirm\":\"$BLLAB\"}" > "$T/bl3"
+want "$T/bl3" "not pair"
+if python3 -c "
+import json;d=json.load(open('$T/bl1'))" && ! grep -q "$D3S" <(python3 -c "
+import json;print(' '.join(json.load(open('$T/bl/contacts.json')).get('keys',{})))" 2>/dev/null); then ok
+else bad "a wrong pair still added the contact"; fi
+# The right pair reveals the rest, and then adds.
+blpost /api/connect "{\"key\":\"$D3S\",\"name\":\"\",\"confirm\":\"$BLWANT\"}" > "$T/bl4"
+want "$T/bl4" "$BLFP"
+blpost /api/connect "{\"key\":\"$D3S\",\"name\":\"three\",\"confirm\":\"$BLWANT\"}" > "$T/bl5"
+want "$T/bl5" '"ok":true'
+blget > "$T/bl6"
+if python3 - "$T/bl6" <<'PY4'
+import json,sys
+d=json.load(open(sys.argv[1]))
+sys.exit(0 if not d["requests"] and len(d["buddies"])==1
+         and d["buddies"][0]["name"]=="three" else 1)
+PY4
+then ok; else bad "the approved request did not become a buddy"; fi
+# A contact added from a message is verify-only: a manifest does not carry
+# its sender's encryption key, and saying otherwise would promise sealing
+# that silently fails.
+if python3 - "$T/bl6" <<'PY4'
+import json,sys
+sys.exit(0 if json.load(open(sys.argv[1]))["buddies"][0]["sealable"] is False else 1)
+PY4
+then ok; else bad "a contact added from a bundle claimed to be sealable"; fi
+
+# Refusing from the page, and what the page must keep saying afterwards.
+CTX_HOME=$T/dc2 $CTX add bl "$BLK" >/dev/null 2>&1
+CTX_HOME=$T/dc2 $CTX route bl "$T/bl" >/dev/null
+CTX_HOME=$T/dc2 $CTX send --to bl --subject knock2 --prompt "$T/w/task.md" >/dev/null 2>&1
+blpost /api/decline "{\"key\":\"$D2S\"}" > "$T/bl7"
+want "$T/bl7" '"ok":true'
+blget > "$T/bl8"
+if python3 - "$T/bl8" "$D2S" <<'PY4'
+import json,sys
+d=json.load(open(sys.argv[1])); k=sys.argv[2]
+r=[x for x in d["refused"] if x["key"]==k]
+# Refused, gone from requests, and STILL ARRIVING -- the one thing a
+# refusal must not be allowed to obscure.
+sys.exit(0 if len(r)==1 and r[0]["still_arriving"] and not d["requests"] else 1)
+PY4
+then ok; else bad "a refusal did not move the key out of requests and say it still arrives"; fi
+# Un-refusing brings the decision back without adding anything.
+blpost /api/decline "{\"key\":\"$D2S\",\"undo\":true}" > "$T/bl9"
+blget > "$T/bla"
+if python3 - "$T/bla" "$D2S" <<'PY4'
+import json,sys
+d=json.load(open(sys.argv[1])); k=sys.argv[2]
+sys.exit(0 if not d["refused"] and any(q["key"]==k for q in d["requests"])
+         and all(b["key"]!=k for b in d["buddies"]) else 1)
+PY4
+then ok; else bad "un-refusing did not restore the request without adding it"; fi
+# A retired key is not a stranger asking. Offering "add this?" for a key the
+# person took out of service invites undoing a rotation by clicking.
+CTX_HOME=$T/bl $CTX retire three >/dev/null 2>&1
+blget > "$T/blb"
+if python3 - "$T/blb" "$D3S" <<'PY4'
+import json,sys
+d=json.load(open(sys.argv[1]))
+sys.exit(0 if all(q["key"]!=sys.argv[2] for q in d["requests"]) else 1)
+PY4
+then ok; else bad "a retired key was offered as a new connection request"; fi
+kill $blpid 2>/dev/null; wait 2>/dev/null
+
 echo "a good bundle exits 0"
 CTX_HOME=$T/b $CTX open "$T/b1" >/dev/null 2>&1; code good $? 0
 

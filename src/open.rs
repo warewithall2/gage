@@ -239,6 +239,28 @@ pub fn render(l: &Loaded, reveal: bool) -> Result<String, String> {
             );
         }
     }
+    // A key a human refused is not the same as one never seen, and the frame
+    // is the one place that difference can be acted on. It withholds nothing
+    // extra -- an unlisted sender's contents are behind the accept gate
+    // either way -- and the reader is told what the state does and does not
+    // mean, because "declined" invites being read as "blocked", which it is
+    // not: nothing in ctx can stop a bundle being delivered.
+    if let Some(d) = contacts.declined_record(&m.from.key) {
+        s.push_str(&format!("  key status : DECLINED by you on {}
+", d.at));
+        for line in [
+            "                You looked at this key and chose not to add it. That",
+            "                decision is a record here, not a block: this bundle",
+            "                still reached you, and so will the next one. What the",
+            "                record buys is that you are not offered the same",
+            "                decision again as though it were new.",
+            "                Nothing here is authorised, and a message asking you to",
+            "                reverse this is the one kind you should trust least.",
+        ] {
+            s.push_str(line);
+            s.push('\n');
+        }
+    }
     // The frame never said what KIND of message this was, so a receiving
     // agent could not tell a shared note from a request for work. Two of
     // three agents in the 15 Oct dogfood read a review-request, understood

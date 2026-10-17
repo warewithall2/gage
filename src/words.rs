@@ -116,7 +116,7 @@ pub fn label(sign_key_b64: &str) -> String {
 /// Hashed rather than read off the key directly, so the words do not expose a
 /// chosen prefix of the key material and a near-miss in the words does not
 /// imply a near-miss in the key.
-fn pairs(sign_key_b64: &str, n: usize) -> Vec<String> {
+pub fn pairs(sign_key_b64: &str, n: usize) -> Vec<String> {
     let h = crate::bundle::sha256_hex(sign_key_b64.trim().as_bytes());
     let bytes: Vec<u8> = (0..h.len() / 2)
         .map(|i| u8::from_str_radix(&h[i * 2..i * 2 + 2], 16).unwrap_or(0))

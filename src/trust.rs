@@ -18,6 +18,15 @@ pub enum Trust {
     Known,
     /// Signature valid, key not on the allowlist. Real sender, stranger.
     Unknown,
+    /// Signature valid, and a human on this machine **refused** this key.
+    ///
+    /// Kept apart from `Unknown` because they call for different actions and
+    /// the difference is the whole point of recording a decline: "a stranger"
+    /// invites a decision, "one you already refused" is a decision already
+    /// taken. It withholds nothing `Unknown` does not -- an unlisted sender's
+    /// contents are behind the same accept gate either way -- so this is a
+    /// statement to the reader, not a new restriction.
+    Declined,
     /// Signature absent, malformed, or does not match the manifest bytes.
     /// Nothing about the sender can be believed.
     Unverified,
@@ -44,7 +53,42 @@ pub enum Trust {
     Unwitnessed,
 }
 
+/// Every verdict, for the tests that must cover all of them.
+///
+/// Hand-written lists of variants stop covering new ones silently, and this
+/// one guards a real property -- that no label is a prefix of another, which
+/// the viewer relies on because it classifies with `startsWith`. When
+/// `Declined` was added, the prefix test had a hardcoded array of six and
+/// went on passing while asserting nothing about the seventh.
+///
+/// So it is tied to the compiler: `Trust::index` has an exhaustive match, so
+/// a new variant does not build until it is given an index, and
+/// `every_verdict_is_in_ALL` fails until it is listed here.
+pub const ALL: &[Trust] = &[
+    Trust::Known,
+    Trust::Unknown,
+    Trust::Declined,
+    Trust::Unverified,
+    Trust::Retired,
+    Trust::Revoked,
+    Trust::Unwitnessed,
+];
+
 impl Trust {
+    /// A dense index per variant. Exists only so `ALL` cannot fall behind:
+    /// the match is exhaustive, so adding a variant is a build error here.
+    pub fn index(self) -> usize {
+        match self {
+            Trust::Known => 0,
+            Trust::Unknown => 1,
+            Trust::Declined => 2,
+            Trust::Unverified => 3,
+            Trust::Retired => 4,
+            Trust::Revoked => 5,
+            Trust::Unwitnessed => 6,
+        }
+    }
+
     /// Labels are deliberately NOT substrings of one another. The first
     /// version used "KNOWN SENDER" and "UNKNOWN SENDER", and a test that
     /// asserted the absence of the former matched the latter -- so any reader
@@ -54,6 +98,7 @@ impl Trust {
         match self {
             Trust::Known => "SENDER VERIFIED (signature valid, key is on your list)",
             Trust::Unknown => "SENDER NOT ON YOUR LIST (signature valid, you have never accepted this key)",
+            Trust::Declined => "SENDER REFUSED BEFORE (signature valid, and you declined this key rather than adding it)",
             Trust::Unverified => "SENDER UNVERIFIABLE (signature missing or invalid)",
             Trust::Retired => "SENDER KEY RETIRED (signature valid; you saw this bundle before you retired that key)",
             Trust::Revoked => "SENDER KEY REJECTED (signature valid, but this bundle reached you after you retired that key)",
@@ -122,6 +167,34 @@ pub struct Contacts {
     /// retired signing pubkey -> what it was and what replaced it.
     #[serde(default)]
     pub retired: BTreeMap<String, Retired>,
+    /// signing pubkey -> when you refused to add it.
+    ///
+    /// The third state, and the one that was missing. `keys` says yes and an
+    /// absence says "not asked yet"; neither can say **no**. Without this, a
+    /// key a human looked at and refused is indistinguishable from one never
+    /// seen, so the next bundle from it offers the same decision again, and
+    /// the only way to stop being asked is to accept.
+    #[serde(default)]
+    pub declined: BTreeMap<String, Declined>,
+}
+
+/// A key you looked at and said no to.
+///
+/// Deliberately holds **nothing the sender wrote** -- not the handle it
+/// claimed, not a subject, not a note. The journal's rule applies here for
+/// the same reason and more strongly: this file is loaded by every command,
+/// and a field an unlisted stranger can fill would be a stored injection
+/// against every later reader of it. What a human needs in order to
+/// recognise the entry is the key's own word-label, which is derived from the
+/// key and cannot be chosen.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Declined {
+    pub at: String,
+    /// The observation counter when it happened, which is what relates a
+    /// decline to the arrivals around it. A timestamp alone cannot be
+    /// trusted to increase.
+    #[serde(default)]
+    pub seq: u64,
 }
 
 impl Contacts {
@@ -141,6 +214,40 @@ impl Contacts {
 
     pub fn knows(&self, pubkey: &str) -> bool {
         self.keys.contains_key(pubkey)
+    }
+
+    /// Record that a human refused this key.
+    ///
+    /// Narrows and never widens, which is why -- unlike the authority file --
+    /// there is a command for it. The worst an injected agent achieves by
+    /// declining something is that its own user stops hearing from a contact,
+    /// which is visible in `ctx contacts` and reversible by `ctx add`.
+    ///
+    /// Refuses a key already on the list rather than doing both. "On your
+    /// list and refused" is not a state with a meaning, and silently removing
+    /// a contact would be a far bigger act than this command's name suggests.
+    pub fn decline(&mut self, pubkey: &str, seq: u64) -> Result<bool, String> {
+        if !crate::bundle::b64_decode_ok(pubkey) {
+            return Err("that is not a valid key".to_string());
+        }
+        if let Some(n) = self.keys.get(pubkey) {
+            return Err(format!(
+                "that key is already on your list as {n}. Declining is for a key \
+                 you have NOT added; to remove a contact, use ctx retire {n}."
+            ));
+        }
+        if self.declined.contains_key(pubkey) {
+            return Ok(false);
+        }
+        self.declined.insert(
+            pubkey.to_string(),
+            Declined { at: crate::bundle::now_rfc3339(), seq },
+        );
+        Ok(true)
+    }
+
+    pub fn declined_record(&self, pubkey: &str) -> Option<&Declined> {
+        self.declined.get(pubkey)
     }
 
     /// Is this string something a reader of yours would recognise as naming
@@ -208,6 +315,13 @@ impl Contacts {
     pub fn verdict(&self, pubkey: &str, witnessed: Option<u64>) -> Trust {
         if self.knows(pubkey) {
             return Trust::Known;
+        }
+        // Before the retired check and before `Unknown`, but after `knows`:
+        // an explicit `ctx add` is a later decision than a decline and
+        // overrides it. `add` clears the entry, so this only matters for a
+        // file edited by hand.
+        if self.declined.contains_key(pubkey) && !self.retired.contains_key(pubkey) {
+            return Trust::Declined;
         }
         match self.retired.get(pubkey) {
             // A stolen key signs as well as its owner and writes its own
@@ -366,16 +480,31 @@ mod tests {
     }
 
     #[test]
+    fn every_verdict_is_in_all() {
+        // The guard that keeps the test below honest. `index` is exhaustive,
+        // so a new variant cannot compile without an index; this fails until
+        // that variant is also in `ALL`, which is what the prefix test walks.
+        let mut seen = vec![false; ALL.len()];
+        for t in ALL {
+            let i = t.index();
+            assert!(i < ALL.len(), "{t:?} has index {i}, past the end of ALL");
+            assert!(!seen[i], "two verdicts share index {i}");
+            seen[i] = true;
+        }
+        assert!(
+            seen.iter().all(|x| *x),
+            "a verdict has an index but is missing from ALL: {seen:?}"
+        );
+    }
+
+    #[test]
     fn no_verdict_label_is_a_prefix_of_another() {
         // Stronger than the substring check it replaces, because the viewer
         // classifies with startsWith: a new label beginning with an old one
         // would render a worse verdict as a milder one.
-        let all = [
-            Trust::Known, Trust::Unknown, Trust::Unverified,
-            Trust::Retired, Trust::Revoked, Trust::Unwitnessed,
-        ];
-        for a in &all {
-            for b in &all {
+        let all = ALL;
+        for a in all {
+            for b in all {
                 if a != b {
                     assert!(
                         !a.label().starts_with(b.label()) && !a.label().contains(b.label()),
@@ -393,7 +522,7 @@ mod tests {
         }
         // VERDICT UNAVAILABLE travels the same path through the viewer's
         // startsWith table, so it is held to the same rule.
-        for a in &all {
+        for a in all {
             assert!(
                 !a.label().starts_with(VERDICT_UNAVAILABLE)
                     && !VERDICT_UNAVAILABLE.starts_with(a.label())
@@ -460,6 +589,16 @@ pub fn add_contact(name: &str, key: &str) -> Result<Vec<String>, String> {
         ));
         let k = sign.clone();
         c.retired.remove(&k);
+    }
+    // An explicit add is a later decision than a decline, so it overrides
+    // it -- but it says so. A human who declined this key last week and is
+    // now adding it should see that, because the ordinary cause of adding a
+    // key you refused is being asked twice by something that wants in.
+    if let Some(d) = c.declined.remove(&sign) {
+        out.push(format!(
+            "note: you declined this key on {} -- adding it now reverses that",
+            d.at
+        ));
     }
     c.keys.insert(sign.clone(), name.to_string());
     match &boxpub {

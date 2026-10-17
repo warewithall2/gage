@@ -138,7 +138,26 @@ replying hook is A->B->A->B until someone notices. `chain` counts *forwarding*
 hops, which is a different thing. `docs/prior-art.md` notes peer tools carry
 `--ttl`, `--max-depth` and `--max-calls`; ctx carries none of them.
 
-### 3. The buddy list UI
+### 3. The buddy list UI -- **built 17 Oct**
+
+Built as described below, with three corrections the plan did not anticipate:
+
+- **The confirmation gate had to be inverted.** The plan said "the four
+  word-pairs are the confirmation; a button is not", and my first build
+  honoured the letter and missed the point: it printed the whole fingerprint
+  on the card and asked the person to type one pair *from it*. The answer was
+  on screen. The card now shows no fingerprint until a pair -- never pair 1,
+  which is the visible label -- is typed correctly.
+- **A contact added from a request is verify-only.** A manifest does not
+  carry its sender's encryption key, which the plan had not considered. Said
+  in the list rather than papered over.
+- **Retired keys had to be excluded from requests**, not just declined ones.
+  Offering "add this contact?" for a key the person deliberately took out of
+  service invites undoing a rotation with a click.
+
+The original text follows.
+
+
 
 The shape the owner actually wants, and the first thing a second person would
 judge the project by. `ctx ui` already has threads, accept/reject, a reply box

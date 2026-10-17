@@ -397,6 +397,21 @@ fn handle(stream: TcpStream, port: u16) -> std::io::Result<()> {
             Err((code, msg)) => respond(stream, code, "application/json",
                 &serde_json::json!({ "error": msg }).to_string()),
         },
+        ("GET", "/api/buddies") => {
+            respond(stream, "200 OK", "application/json", &buddies_json())
+        }
+        ("POST", "/api/connect") => match connect_from_ui(&req.body) {
+            Ok(lines) => respond(stream, "200 OK", "application/json",
+                &serde_json::json!({ "ok": true, "lines": lines }).to_string()),
+            Err((code, msg)) => respond(stream, code, "application/json",
+                &serde_json::json!({ "error": msg }).to_string()),
+        },
+        ("POST", "/api/decline") => match decline_from_ui(&req.body) {
+            Ok(msg) => respond(stream, "200 OK", "application/json",
+                &serde_json::json!({ "ok": true, "lines": [msg] }).to_string()),
+            Err((code, msg)) => respond(stream, code, "application/json",
+                &serde_json::json!({ "error": msg }).to_string()),
+        },
         ("POST", "/api/pair") => match pair_from_ui(&req.body) {
             Ok(lines) => respond(stream, "200 OK", "application/json",
                 &serde_json::json!({ "ok": true, "lines": lines }).to_string()),
@@ -445,6 +460,169 @@ fn nearby_json() -> String {
     serde_json::json!({
         "lan_running": !list.is_empty() || crate::lan::nearby_path().exists(),
         "devices": list,
+    })
+    .to_string()
+}
+
+/// The buddy list: who is on it, who is asking, and who was refused.
+///
+/// One endpoint rather than three, because the three are one question -- "who
+/// can reach me and what have I decided about them" -- and splitting it would
+/// let the page render a contact and a request for the same key from two
+/// fetches that disagree.
+///
+/// **Reachability is per path and never a presence roster.** A standing "who
+/// is online" list has been refused twice in this project and is refused
+/// here: `lan` reports only what is announcing itself *while it runs*, and
+/// nothing here polls a relay to see who is alive. What each flag means:
+///
+/// * `routed` -- a local ctx home on this machine. Certain, because it is a
+///   directory that either exists or does not.
+/// * `lan` -- announced itself on this network within the last minute. A
+///   claim by that machine, timestamped by this one.
+/// * `relay` -- this machine is joined to a relay, so mail *can* be left for
+///   them. It says nothing about whether they ever collect it, and the page
+///   must not render it as presence.
+fn buddies_json() -> String {
+    let observed = observed();
+    let home = crate::identity::home();
+    let contacts = crate::trust::Contacts::load();
+    let routes = crate::routes::Routes::load();
+    let st = crate::state::LocalState::load();
+    let relay = crate::remote::relay_addr();
+    let now = crate::lan::now();
+
+    // Fresh LAN announcements, keyed by signing key.
+    let near: std::collections::BTreeMap<String, u64> = crate::lan::read_nearby()
+        .into_iter()
+        .filter(|e| now.saturating_sub(e.at) <= 60)
+        .map(|e| (e.sign, now.saturating_sub(e.at)))
+        .collect();
+
+    // What is sitting in the inbox, per sender key. Built once: counting
+    // unread per contact and finding unlisted senders are the same scan, and
+    // doing it twice is how the two end up disagreeing.
+    let mut unread: std::collections::BTreeMap<String, u64> = Default::default();
+    let mut waiting: std::collections::BTreeMap<String, u64> = Default::default();
+    let mut askers: std::collections::BTreeMap<String, (String, u64, bool)> = Default::default();
+    for (stage, dir) in [
+        ("pending", crate::routes::pending_dir(&home)),
+        ("accepted", crate::routes::accepted_dir(&home)),
+    ] {
+        for (_, l) in crate::routes::list(&dir) {
+            let m = &l.manifest;
+            let k = m.from.key.clone();
+            if stage == "pending" {
+                *waiting.entry(k.clone()).or_default() += 1;
+            }
+            if !st.is_read(&m.id) {
+                *unread.entry(k.clone()).or_default() += 1;
+            }
+            // An unlisted, unrefused key that has sent something IS the
+            // connection request. There is no separate request message type
+            // and deliberately so: a dedicated "please add me" bundle would
+            // be a kind whose whole purpose is to ask for trust, which is
+            // the one thing a sender must not be able to ask for in a way
+            // that looks different from ordinary mail.
+            // Retired keys are excluded as well as declined ones. A retired
+            // key is also a decision already taken, and offering "add this
+            // contact?" for a key the person deliberately took out of
+            // service would invite undoing a rotation by clicking -- the
+            // opposite of what `retire` is for. Its bundles still show in
+            // the conversation list with their own verdict.
+            if !contacts.knows(&k)
+                && !contacts.declined.contains_key(&k)
+                && !contacts.retired.contains_key(&k)
+            {
+                let e = askers.entry(k).or_insert((m.created.clone(), 0, false));
+                e.1 += 1;
+                // Only that the signature checked out. Anything less and the
+                // key is not even a claim.
+                if !matches!(l.trust, crate::trust::Trust::Unverified) && l.tampered.is_empty() {
+                    e.2 = true;
+                }
+                if m.created < e.0 {
+                    e.0 = m.created.clone();
+                }
+            }
+        }
+    }
+
+    let reach = |key: &str, name: &str| -> serde_json::Value {
+        serde_json::json!({
+            "routed": routes.local.contains_key(name),
+            "lan": near.get(key).copied(),
+            "relay": relay.is_some() && contacts.box_keys.contains_key(key),
+        })
+    };
+
+    let buddies: Vec<serde_json::Value> = contacts
+        .keys
+        .iter()
+        .map(|(k, n)| {
+            serde_json::json!({
+                "name": n,
+                "key": k,
+                // Shown so a person can confirm a contact they already have,
+                // which is what you do after a machine behaves oddly.
+                "fingerprint": crate::words::fingerprint(k),
+                "label": crate::words::label(k),
+                "sealable": contacts.box_keys.contains_key(k),
+                "unread": unread.get(k).copied().unwrap_or(0),
+                "waiting": waiting.get(k).copied().unwrap_or(0),
+                "reach": reach(k, n),
+            })
+        })
+        .collect();
+
+    let requests: Vec<serde_json::Value> = askers
+        .iter()
+        .map(|(k, (first, count, verified))| {
+            serde_json::json!({
+                "key": k,
+                // **No fingerprint.** It is withheld until the person types
+                // the asked-for pair, because a page that already holds the
+                // answer turns the confirmation into copying. The label is
+                // pair 1 and `asked_pair` never asks for pair 1.
+                "label": crate::words::label(k),
+                // Which pair the person is asked to type. Sent so the page
+                // and the handler cannot disagree about the question.
+                "ask_pair": asked_pair(k) + 1,
+                "first_seen": first,
+                "bundles": count,
+                "signature_ok": verified,
+                // A request key is by construction neither listed, declined
+                // nor retired, so the witness argument cannot change the
+                // answer. Passed as None rather than looked up, so this
+                // cannot drift into asking a question it does not need.
+                "verdict": verdict_label_for(observed, contacts.verdict(k, None)),
+            })
+        })
+        .collect();
+
+    let refused: Vec<serde_json::Value> = contacts
+        .declined
+        .iter()
+        .map(|(k, d)| {
+            serde_json::json!({
+                "key": k,
+                "label": crate::words::label(k),
+                "fingerprint": crate::words::fingerprint(k),
+                "at": d.at,
+                // Still arriving, which is the point a refusal must not be
+                // allowed to obscure. A person who thinks a decline blocks
+                // delivery has the wrong model of what ctx can do.
+                "still_arriving": waiting.contains_key(k) || unread.contains_key(k),
+            })
+        })
+        .collect();
+
+    serde_json::json!({
+        "verdicts_stale": !observed,
+        "relay": relay,
+        "buddies": buddies,
+        "requests": requests,
+        "refused": refused,
     })
     .to_string()
 }
@@ -617,6 +795,146 @@ fn pair_from_ui(body: &str) -> Result<Vec<String>, (&'static str, String)> {
         if e.boxpub.is_empty() { e.sign.clone() } else { format!("{}.{}", e.sign, e.boxpub) }
     })
     .map_err(|e| ("400 Bad Request", e))
+}
+
+/// Which of the four word-pairs this key's connection request asks for.
+///
+/// Derived from the key, so a reload asks the same question -- a question that
+/// changes under the person is one they learn to answer without reading. It
+/// is not secret and does not need to be: knowing which pair will be asked
+/// for does not help an attacker, because the pairs come from the key and an
+/// attacker's key renders its own.
+///
+/// **Never pair 1**, which is the key's word-label and is shown in the list as
+/// the way to tell one request from another. The first version chose any of
+/// the four and the page printed the whole fingerprint on the same card,
+/// which made the typing pure theatre: the answer was on screen, so it could
+/// be copied without anyone looking at the other machine. The request card
+/// now shows no fingerprint at all until a pair is typed correctly, and the
+/// asked pair is one the label does not give away.
+///
+/// The limit, which the page states rather than hiding: a correct answer
+/// shows the person read it off something other than this screen, and does
+/// not show *which* something. It is a prompt to compare, and the remaining
+/// three pairs are revealed for exactly that. A button labelled "they match"
+/// collects the same claim with none of the looking.
+pub fn asked_pair(sign: &str) -> usize {
+    let h = crate::bundle::sha256_hex(format!("which-pair:{sign}").as_bytes());
+    1 + usize::from_str_radix(&h[..2], 16).unwrap_or(0) % 3
+}
+
+/// Add a key the page is showing as a connection request.
+///
+/// Three things are checked, and the first two are not security boundaries --
+/// the caller is local and could call `ctx add` directly. They catch the real
+/// bug, which is a list that changed under the person between reading the
+/// words and clicking: a key that stopped being an open request, or a
+/// fingerprint that is no longer the one displayed.
+fn connect_from_ui(body: &str) -> Result<Vec<String>, (&'static str, String)> {
+    let v: serde_json::Value =
+        serde_json::from_str(body).map_err(|e| ("400 Bad Request", format!("bad body: {e}")))?;
+    let key = v.get("key").and_then(|x| x.as_str()).unwrap_or("").trim().to_string();
+    let name = v.get("name").and_then(|x| x.as_str()).unwrap_or("").trim().to_string();
+    let typed = v.get("confirm").and_then(|x| x.as_str()).unwrap_or("").trim().to_lowercase();
+    if !crate::bundle::b64_decode_ok(&key) {
+        return Err(("400 Bad Request", "that is not a key".into()));
+    }
+    // `name` empty means the **reveal** step: check the typed pair and, if it
+    // is right, hand back the whole fingerprint so the person can compare the
+    // other three. Adding is a second call with a name. Two steps rather than
+    // one because the page must not hold the answer before the person has
+    // shown they got it from somewhere else.
+    let reveal_only = name.is_empty();
+    if !reveal_only
+        && (!name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == ' ')
+            || name.len() > 40)
+    {
+        return Err((
+            "400 Bad Request",
+            "a contact name is letters, digits, spaces, - and _".into(),
+        ));
+    }
+    let contacts = crate::trust::Contacts::load();
+    if let Some(n) = contacts.keys.get(&key) {
+        return Err(("409 Conflict", format!("that key is already on your list as {n}")));
+    }
+    let pairs = crate::words::pairs(&key, 4);
+    let want = &pairs[asked_pair(&key)];
+    if typed != *want {
+        return Err((
+            "409 Conflict",
+            // The expected value is NOT echoed back. A message that says
+            // "you typed X, it was Y" turns the step into a two-try copy
+            // exercise and teaches the person that the words do not matter.
+            format!(
+                "that is not pair {} of this key's fingerprint. Read it off the OTHER \
+                 machine -- it is deliberately not shown on this one, so that typing \
+                 it means something.",
+                asked_pair(&key) + 1
+            ),
+        ));
+    }
+    if reveal_only {
+        return Ok(vec![
+            "reveal".to_string(),
+            crate::words::fingerprint(&key),
+        ]);
+    }
+    // Only the signing key, unless one is already on file.
+    //
+    // A manifest does not carry the sender's encryption key and should not:
+    // a sender seals *to* you, using the key you published, and never needs
+    // to publish its own. So a contact added from a request is verifiable
+    // and not sealable -- real and useful, and a state `add_contact` has
+    // always supported for contacts predating encryption. The asymmetry with
+    // LAN pairing, where both halves are announced, is worth saying out loud
+    // rather than papering over, so the result does.
+    let token = match contacts.box_keys.get(&key) {
+        Some(b) => format!("{key}.{b}"),
+        None => key.clone(),
+    };
+    let mut out = crate::trust::add_contact(&name, &token).map_err(|e| ("400 Bad Request", e))?;
+    if !contacts.box_keys.contains_key(&key) {
+        // `add_contact` already says "verify only". This adds the remedy,
+        // which is the part a person cannot work out from the statement.
+        out.push(
+            "to seal mail to them as well, get their `ctx whoami` token \
+             (signpub.boxpub) and add it over this entry, or pair on the network."
+                .to_string(),
+        );
+    }
+    Ok(out)
+}
+
+/// Refuse a key from the page.
+fn decline_from_ui(body: &str) -> Result<String, (&'static str, String)> {
+    let v: serde_json::Value =
+        serde_json::from_str(body).map_err(|e| ("400 Bad Request", format!("bad body: {e}")))?;
+    let key = v.get("key").and_then(|x| x.as_str()).unwrap_or("").trim().to_string();
+    let undo = v.get("undo").and_then(|x| x.as_bool()).unwrap_or(false);
+    if !crate::bundle::b64_decode_ok(&key) {
+        return Err(("400 Bad Request", "that is not a key".into()));
+    }
+    let mut c = crate::trust::Contacts::load();
+    if undo {
+        return match c.declined.remove(&key) {
+            Some(_) => {
+                c.save().map_err(|e| ("500 Internal Server Error", e.to_string()))?;
+                Ok("no longer refused -- and still not on your list".to_string())
+            }
+            None => Err(("409 Conflict", "that key is not refused".into())),
+        };
+    }
+    let seq = crate::state::LocalState::load().seq;
+    match c.decline(&key, seq).map_err(|e| ("409 Conflict", e))? {
+        true => {
+            c.save().map_err(|e| ("500 Internal Server Error", e.to_string()))?;
+            Ok("refused. Its bundles still arrive; you are not asked again".to_string())
+        }
+        false => Ok("already refused".to_string()),
+    }
 }
 
 /// Send a reply on behalf of the page.
@@ -924,6 +1242,62 @@ const INDEX: &str = include_str!("ui.html");
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_pages_verdict_table_matches_the_verdicts_that_exist() {
+        // A cross-language drift test. The page classifies a verdict with
+        // `startsWith` against a table of truncated prefixes, so the Rust
+        // test that no LABEL is a prefix of another does not cover it: a new
+        // label could match an old row's shortened key. When `Declined` was
+        // added, the page had no row for it and would have rendered it
+        // through the fallback as `v-bad` with the raw string.
+        let keys: Vec<String> = INDEX
+            .lines()
+            .skip_while(|l| !l.contains("const V=["))
+            .take_while(|l| !l.contains("const vRow"))
+            .flat_map(|l| {
+                l.match_indices('[')
+                    .filter_map(|(i, _)| l[i + 1..].strip_prefix('\''))
+                    .filter_map(|rest| rest.split_once('\'').map(|(k, _)| k.to_string()))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        assert!(keys.len() >= 7, "could not parse the page's verdict table: {keys:?}");
+        let all: Vec<&'static str> = crate::trust::ALL
+            .iter()
+            .map(|t| t.label())
+            .chain([crate::trust::VERDICT_UNAVAILABLE])
+            .collect();
+        // Every verdict is matched by exactly one row, so nothing falls
+        // through to the fallback and nothing is classified twice.
+        for label in &all {
+            let hits: Vec<&String> = keys.iter().filter(|k| label.starts_with(k.as_str())).collect();
+            assert_eq!(hits.len(), 1, "{label:?} matches {} rows: {hits:?}", hits.len());
+        }
+        // And every row matches a verdict, so a renamed label does not leave
+        // a dead row quietly classifying nothing.
+        for k in &keys {
+            assert!(
+                all.iter().any(|l| l.starts_with(k.as_str())),
+                "the page has a row for {k:?}, which no verdict starts with"
+            );
+        }
+    }
+
+    #[test]
+    fn the_asked_pair_is_never_the_one_the_label_gives_away() {
+        // Pair 1 is `words::label`, which the request card shows as the way
+        // to tell one request from another. Asking for it would make the
+        // answer readable off this screen, which is the thing withholding
+        // the fingerprint exists to prevent.
+        for i in 0..400u32 {
+            let k = crate::bundle::sha256_hex(&i.to_le_bytes());
+            let a = asked_pair(&k);
+            assert!((1..4).contains(&a), "asked pair {a} for {k}");
+            let pairs = crate::words::pairs(&k, 4);
+            assert_ne!(pairs[a], pairs[0], "the asked pair equals the label for {k}");
+        }
+    }
 
     #[test]
     fn an_id_route_matches_exactly_one_segment() {
