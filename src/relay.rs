@@ -38,6 +38,21 @@ use std::sync::Mutex;
 
 pub const MAX_BODY: usize = 40 * 1024 * 1024;
 
+/// How long a client may take over any single read or write.
+///
+/// The relay had none. One connection that said nothing held the accept loop
+/// for ever, because the loop is sequential and `read_line` blocked in it --
+/// a complete denial of service from a single TCP connection, with no
+/// credentials and nothing sent. The viewer was given timeouts when the same
+/// shape was found there; the relay never was, and it is the part that faces
+/// other people.
+const IO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// Connections served at once. A cap rather than unbounded spawning, so a
+/// flood costs a bounded amount of memory and the relay refuses politely
+/// instead of falling over.
+const MAX_INFLIGHT: usize = 64;
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Registration {
     /// ed25519 public key, base64. Authorises fetching.
@@ -64,6 +79,58 @@ struct State {
     pending: HashMap<(String, String), (String, std::time::Instant)>,
     /// nonce -> when it was issued, for age-based eviction.
     challenge_age: HashMap<String, std::time::Instant>,
+    limits: Limits,
+    /// source address -> (requests in the current window, when it opened).
+    ///
+    /// Per address and not per key, because the abuse that matters on a
+    /// public relay -- `/send` and the first leg of `/register` -- needs no
+    /// key at all.
+    rate: HashMap<String, (u32, std::time::Instant)>,
+}
+
+/// What a public relay has to bound, with the reason each one exists.
+///
+/// All of it was absent, which was safe only because the relay has so far
+/// been reachable from one person's tailnet. `/send` takes no authentication
+/// by design -- a stranger must be able to send you a first message, which
+/// is the whole point of the "not on your list" section of the buddy list --
+/// so the answer is not authentication, it is a bound.
+#[derive(Clone, Copy, Debug)]
+pub struct Limits {
+    /// Bytes one mailbox may hold before it stops accepting.
+    pub mailbox_bytes: u64,
+    /// Envelopes one mailbox may hold. A thousand one-byte messages is as
+    /// effective a flood as one big one, and costs the recipient more.
+    pub mailbox_msgs: usize,
+    /// Bytes the whole store may hold. The backstop when many mailboxes are
+    /// each individually under their limit.
+    pub store_bytes: u64,
+    /// Requests per minute from one address.
+    pub per_min: u32,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        // Deliberately modest. A relay is a letterbox, not a file host: these
+        // are sized so a personal VPS cannot be filled by a stranger, and an
+        // operator who wants more says so.
+        Self {
+            mailbox_bytes: 64 * 1024 * 1024,
+            mailbox_msgs: 500,
+            store_bytes: 4 * 1024 * 1024 * 1024,
+            per_min: 120,
+        }
+    }
+}
+
+/// Bytes currently stored under a directory, one level deep.
+fn dir_bytes(p: &std::path::Path) -> u64 {
+    let Ok(rd) = std::fs::read_dir(p) else { return 0 };
+    rd.flatten().filter_map(|e| e.metadata().ok()).map(|m| m.len()).sum()
+}
+
+fn dir_count(p: &std::path::Path) -> usize {
+    std::fs::read_dir(p).map(|rd| rd.flatten().count()).unwrap_or(0)
 }
 
 static STATE: Mutex<Option<State>> = Mutex::new(None);
@@ -84,6 +151,10 @@ fn key_to_dirname(k: &str) -> Option<String> {
 }
 
 pub fn serve(bind: &str, root: PathBuf) -> std::io::Result<()> {
+    serve_with(bind, root, Limits::default())
+}
+
+pub fn serve_with(bind: &str, root: PathBuf, limits: Limits) -> std::io::Result<()> {
     std::fs::create_dir_all(root.join("mail"))?;
     let owners = std::fs::read_to_string(root.join("owners.json"))
         .ok()
@@ -95,19 +166,48 @@ pub fn serve(bind: &str, root: PathBuf) -> std::io::Result<()> {
         challenges: HashMap::new(),
         challenge_age: HashMap::new(),
         pending: HashMap::new(),
+        limits,
+        rate: HashMap::new(),
     });
     let l = TcpListener::bind(bind)?;
     println!("ctx relay on {bind}, store at {}", root.display());
     println!("  it cannot read what it stores; envelopes are sealed to recipients");
+    println!(
+        "  limits: {} MB and {} envelopes per mailbox, {} MB total, {} requests/min per address",
+        limits.mailbox_bytes / (1024 * 1024),
+        limits.mailbox_msgs,
+        limits.store_bytes / (1024 * 1024),
+        limits.per_min
+    );
+    let live = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     for s in l.incoming() {
-        match s {
-            Ok(s) => {
-                if let Err(e) = handle(s) {
-                    eprintln!("relay: {e}");
-                }
+        let s = match s {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("relay: accept: {e}");
+                continue;
             }
-            Err(e) => eprintln!("relay: accept: {e}"),
+        };
+        // Timeouts first, before anything reads: a client that connects and
+        // says nothing must not be able to hold anything.
+        let _ = s.set_read_timeout(Some(IO_TIMEOUT));
+        let _ = s.set_write_timeout(Some(IO_TIMEOUT));
+        let n = live.load(std::sync::atomic::Ordering::SeqCst);
+        if n >= MAX_INFLIGHT {
+            // Refusing is the honest answer and costs one short write. The
+            // alternative -- queueing behind a sequential loop -- is how one
+            // slow client became everybody's outage.
+            let _ = reply(s, "503 Service Unavailable", r#"{"error":"relay busy, retry"}"#);
+            continue;
         }
+        live.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let live2 = live.clone();
+        std::thread::spawn(move || {
+            if let Err(e) = handle(s) {
+                eprintln!("relay: {e}");
+            }
+            live2.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+        });
     }
     Ok(())
 }
@@ -123,7 +223,36 @@ fn reply(mut s: TcpStream, status: &str, body: &str) -> std::io::Result<()> {
     s.flush()
 }
 
+/// Has this address used up its allowance for the current minute?
+///
+/// A fixed window rather than a token bucket, because the thing it protects
+/// against is a flood and the difference at a window edge does not matter
+/// here. Keyed by IP, with the port dropped -- a client gets a new source
+/// port per connection, so keeping it would make the limit count nothing.
+fn over_rate(peer: &str) -> bool {
+    let ip = peer.rsplit_once(':').map(|(h, _)| h.to_string()).unwrap_or_else(|| peer.to_string());
+    let mut g = STATE.lock().unwrap();
+    let st = g.as_mut().unwrap();
+    let per_min = st.limits.per_min;
+    let now = std::time::Instant::now();
+    let window = std::time::Duration::from_secs(60);
+    st.rate.retain(|_, (_, at)| now.duration_since(*at) < window);
+    let e = st.rate.entry(ip).or_insert((0, now));
+    if now.duration_since(e.1) >= window {
+        *e = (0, now);
+    }
+    e.0 += 1;
+    e.0 > per_min
+}
+
 fn handle(stream: TcpStream) -> std::io::Result<()> {
+    let peer = stream
+        .peer_addr()
+        .map(|a| a.to_string())
+        .unwrap_or_else(|_| "unknown".to_string());
+    if over_rate(&peer) {
+        return reply(stream, "429 Too Many Requests", r#"{"error":"slow down"}"#);
+    }
     let mut r = BufReader::new(stream.try_clone()?);
     let mut line = String::new();
     r.read_line(&mut line)?;
@@ -318,6 +447,30 @@ fn do_send(stream: TcpStream, body: &[u8]) -> std::io::Result<()> {
     let box_dir = st.root.join("mail").join(&dir);
     if std::fs::create_dir_all(&box_dir).is_err() {
         return reply(stream, "500 Internal Server Error", r#"{"error":"store failed"}"#);
+    }
+    // Three bounds, checked here because `/send` is deliberately open: a
+    // stranger has to be able to send a first message, so the protection
+    // cannot be authentication.
+    //
+    // The refusal says the mailbox is full and nothing about who filled it.
+    // It is a letterbox, and the person who gets to see who is sending is
+    // the recipient, when they collect.
+    let incoming = req.envelope.len() as u64;
+    if dir_bytes(&box_dir) + incoming > st.limits.mailbox_bytes {
+        return reply(stream, "507 Insufficient Storage", r#"{"error":"mailbox is full"}"#);
+    }
+    if dir_count(&box_dir) >= st.limits.mailbox_msgs {
+        return reply(stream, "507 Insufficient Storage", r#"{"error":"mailbox is full"}"#);
+    }
+    // The backstop, for when many mailboxes are each individually under their
+    // own limit. Walked per send, which is fine for a letterbox and would not
+    // be for a file host -- said here so nobody later mistakes it for one.
+    let mail_root = st.root.join("mail");
+    let total: u64 = std::fs::read_dir(&mail_root)
+        .map(|rd| rd.flatten().map(|e| dir_bytes(&e.path())).sum())
+        .unwrap_or(0);
+    if total + incoming > st.limits.store_bytes {
+        return reply(stream, "507 Insufficient Storage", r#"{"error":"relay store is full"}"#);
     }
     let name = format!(
         "{}-{}.ctxb",

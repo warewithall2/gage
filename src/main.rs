@@ -197,6 +197,15 @@ enum Cmd {
         /// pass the tailnet IP explicitly rather than 0.0.0.0.
         #[arg(long, default_value = "127.0.0.1:7788")] bind: String,
         #[arg(long)] store: Option<PathBuf>,
+        /// megabytes one mailbox may hold before it stops accepting
+        #[arg(long, default_value = "64")] max_mailbox_mb: u64,
+        /// envelopes one mailbox may hold -- a thousand small ones flood as
+        /// well as one big one, and cost the recipient more
+        #[arg(long, default_value = "500")] max_mailbox_msgs: usize,
+        /// megabytes the whole store may hold
+        #[arg(long, default_value = "4096")] max_store_mb: u64,
+        /// requests per minute from one address
+        #[arg(long, default_value = "120")] rate_per_min: u32,
     },
     /// Point this identity at a relay and register your mailbox
     Join { addr: String },
@@ -1348,9 +1357,30 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             std::fs::remove_dir_all(&p)?;
             println!("rejected {id}, deleted unread");
         }
-        Cmd::Relay { bind, store } => {
+        Cmd::Relay { bind, store, max_mailbox_mb, max_mailbox_msgs, max_store_mb, rate_per_min } => {
             let root = store.unwrap_or_else(|| identity::home().join("relaystore"));
-            relay::serve(&bind, root)?;
+            // Said once, loudly, because the difference between a tailnet
+            // relay and a public one is the whole of its threat model and
+            // the bind address is where that decision is actually made.
+            if !bind.starts_with("127.") && !bind.starts_with("100.") && !bind.starts_with("[::1]")
+            {
+                eprintln!(
+                    "ctx relay: binding {bind}, which may be reachable beyond your own \
+                     network.\n  Anyone who can reach it may push to any REGISTERED \
+                     mailbox -- that is deliberate, so a stranger can send you a first \
+                     message -- within the limits below. It still cannot read anything."
+                );
+            }
+            relay::serve_with(
+                &bind,
+                root,
+                relay::Limits {
+                    mailbox_bytes: max_mailbox_mb * 1024 * 1024,
+                    mailbox_msgs: max_mailbox_msgs,
+                    store_bytes: max_store_mb * 1024 * 1024,
+                    per_min: rate_per_min,
+                },
+            )?;
         }
         Cmd::Join { addr } => {
             let id = identity::Identity::load()?;

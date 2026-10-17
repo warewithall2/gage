@@ -492,6 +492,44 @@ Trust still comes from the signature inside the bundle, never from the relay.
 A bundle that arrives via a relay from someone you have not added reads
 `SENDER NOT ON YOUR LIST`, exactly as it would locally.
 
+### A relay that faces other people
+
+Everything above about the relay assumed it was reachable only from one
+person's tailnet, which is how it has run so far. Making it reachable by a
+colleague changes the threat model completely, and three things were missing.
+
+**One connection that said nothing held the entire relay for ever.** The
+accept loop was sequential and `read_line` blocked inside it: no credentials,
+nothing sent, total denial of service from a single TCP socket. The viewer was
+given timeouts when the same shape was found there; the relay never was, and
+the relay is the part that faces other people. It now sets read and write
+timeouts before anything reads, serves connections concurrently up to a cap,
+and past that cap refuses politely instead of falling over.
+
+**`/send` takes no authentication, on purpose, so it needs a bound instead.**
+A stranger must be able to send you a first message — that is exactly what the
+buddy list's "not on your list" section is for — so the answer cannot be
+authentication. It is quotas: bytes and envelopes per mailbox, a total store
+cap as the backstop when many mailboxes are each individually under their
+limit, and a per-address request limit. All four are flags on `ctx relay`, so
+an operator who wants more says so:
+
+    ctx relay --bind 0.0.0.0:7788 --max-mailbox-mb 64               --max-mailbox-msgs 500 --max-store-mb 4096 --rate-per-min 120
+
+A full mailbox is refused with "mailbox is full" and nothing about who filled
+it. A letterbox does not report its senders to whoever knocks; the person who
+gets to see who is sending is the recipient, when they collect. And the
+recipient can still collect what did arrive — a bound on strangers must not
+become a bound on you.
+
+Binding anything other than loopback or a tailnet address prints what that
+means before it serves a byte.
+
+**Still missing for a genuinely public relay**: transport security. Envelopes
+are sealed, so confidentiality does not need TLS — but plain HTTP shows anyone
+on the path who talks to whom and how often, and lets an active attacker drop
+or delay mail. Signatures cover content; they do not cover delivery.
+
 ## Conversations
 
 A bundle carries what the sender wants from you:
@@ -1080,7 +1118,7 @@ in the message. See [Authority](#authority-the-one-thing-that-says-you-may-act).
     cargo build --release && cargo test --release && bash tests/attacks.sh
     bash tests/ui-e2e.sh      # optional: drives the viewer in a real browser
 
-632 checks plus 104 Rust unit tests, and one end-to-end test that opens the
+640 checks plus 104 Rust unit tests, and one end-to-end test that opens the
 viewer in a browser and completes a connection request.
 
 That last one exists because of a gap the other two could not see. The buddy

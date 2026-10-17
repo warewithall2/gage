@@ -2876,6 +2876,131 @@ if CTX_HOME=$T/ch3 $CTX journal --verify > "$T/chv7" 2>&1; then
 else want "$T/chv7" "the history this chain was started over has changed"; fi
 cp "$T/ch3/journal.good" "$T/ch3/journal.jsonl"
 
+echo
+echo "--- a relay that faces other people"
+# Everything here is about the relay being reachable by someone who is not
+# you. On a tailnet none of it mattered; the moment the port is public, all
+# of it does.
+RP=7907
+mkdir -p "$T"/{rl,rlh1,rlh2}
+CTX_HOME=$T/rlh1 $CTX init rl1 >/dev/null 2>&1
+CTX_HOME=$T/rlh2 $CTX init rl2 >/dev/null 2>&1
+CTX_HOME=$T/rl $CTX relay --bind 127.0.0.1:$RP --store "$T/rl/store" \
+  --max-mailbox-mb 1 --max-mailbox-msgs 3 --rate-per-min 400 >"$T/rl/log" 2>&1 &
+rlpid=$!
+sleep 1
+want "$T/rl/log" "limits:"
+
+# ONE connection that says nothing used to hold the whole relay for ever: the
+# accept loop was sequential and `read_line` blocked inside it. No
+# credentials, nothing sent, total denial of service. The viewer was given
+# timeouts when the same shape was found there; the relay never was.
+if python3 - "$RP" <<'PY4'
+import socket,subprocess,sys
+p=sys.argv[1]
+held=[socket.create_connection(("127.0.0.1",int(p))) for _ in range(5)]
+r=subprocess.run(["curl","-s","-m","4",f"http://127.0.0.1:{p}/health"],
+                 capture_output=True,text=True)
+for s in held: s.close()
+sys.exit(0 if '"ok":true' in r.stdout else 1)
+PY4
+then ok; else bad "silent connections wedged the relay"; fi
+
+# Past the in-flight cap it refuses politely rather than falling over, and
+# recovers when they go away.
+if python3 - "$RP" <<'PY4'
+import socket,subprocess,sys,time
+p=int(sys.argv[1]); held=[]
+try:
+    for _ in range(90):
+        held.append(socket.create_connection(("127.0.0.1",p)))
+except Exception: pass
+r=subprocess.run(["curl","-s","-m","5",f"http://127.0.0.1:{p}/health"],
+                 capture_output=True,text=True)
+busy = "busy" in r.stdout
+for s in held: s.close()
+time.sleep(1)
+r2=subprocess.run(["curl","-s","-m","5",f"http://127.0.0.1:{p}/health"],
+                  capture_output=True,text=True)
+sys.exit(0 if busy and '"ok":true' in r2.stdout else 1)
+PY4
+then ok; else bad "the relay did not refuse politely past its cap, or did not recover"; fi
+
+# `/send` takes no authentication ON PURPOSE -- a stranger has to be able to
+# send you a first message, which is what the buddy list's "not on your list"
+# section is for. So the protection is a bound, and here it is.
+CTX_HOME=$T/rlh2 $CTX join "127.0.0.1:$RP" >/dev/null 2>&1
+RLK=$(CTX_HOME=$T/rlh2 $CTX whoami | cut -f2)
+RLBOX=${RLK#*.}
+CTX_HOME=$T/rlh1 $CTX add rl2 "$RLK" >/dev/null 2>&1
+for i in 1 2 3 4 5; do
+  CTX_HOME=$T/rlh1 $CTX send --to rl2 --subject "q$i" --prompt "$T/w/task.md" \
+    --out "$T/rl/b$i" >/dev/null 2>&1
+  CTX_HOME=$T/rlh1 $CTX seal "$T/rl/b$i" --to rl2 --out "$T/rl/e$i.ctxb" >/dev/null 2>&1
+done
+if python3 - "$RP" "$RLBOX" "$T/rl" <<'PY4'
+import json,sys,urllib.request
+port, box, d = sys.argv[1], sys.argv[2], sys.argv[3]
+codes=[]
+for i in range(1,6):
+    body=json.dumps({"to_box":box,"envelope":open(f"{d}/e{i}.ctxb").read()}).encode()
+    try:
+        r=urllib.request.urlopen(urllib.request.Request(
+            f"http://127.0.0.1:{port}/send", data=body, method="POST"), timeout=8)
+        codes.append(r.status)
+    except Exception as e:
+        codes.append(getattr(e,"code",0))
+# Three fit the cap; the rest are refused, and refused with a storage code
+# rather than something that reads like the sender's fault.
+sys.exit(0 if codes[:3]==[200,200,200] and all(c==507 for c in codes[3:]) else 1)
+PY4
+then ok; else bad "the mailbox message cap did not stop a flood"; fi
+
+# The refusal says the mailbox is full and nothing about who filled it: a
+# letterbox does not report its senders to whoever knocks.
+if python3 - "$RP" "$RLBOX" "$T/rl" <<'PY4'
+import json,sys,urllib.request
+port, box, d = sys.argv[1], sys.argv[2], sys.argv[3]
+body=json.dumps({"to_box":box,"envelope":open(f"{d}/e1.ctxb").read()}).encode()
+try:
+    urllib.request.urlopen(urllib.request.Request(
+        f"http://127.0.0.1:{port}/send", data=body, method="POST"), timeout=8)
+    sys.exit(1)
+except Exception as e:
+    msg=getattr(e,"read",lambda:b"")().decode()
+    sys.exit(0 if "full" in msg and "rl1" not in msg and "sender" not in msg else 1)
+PY4
+then ok; else bad "a full-mailbox refusal said more than it should"; fi
+
+# And the recipient can still collect what did arrive: a bound on strangers
+# must not become a bound on you.
+if CTX_HOME=$T/rlh2 $CTX pull >/dev/null 2>&1; then ok
+else bad "the recipient could not collect from a full mailbox"; fi
+n=$(nfiles "$T/rlh2/inbox/pending")
+if [ "$n" = 3 ]; then ok; else bad "collected $n envelopes, wanted 3"; fi
+
+kill $rlpid 2>/dev/null; wait $rlpid 2>/dev/null
+
+# The rate limit, on its own relay so the counts are not polluted.
+RP2=7909
+mkdir -p "$T/rl2"
+CTX_HOME=$T/rl $CTX relay --bind 127.0.0.1:$RP2 --store "$T/rl2/store" \
+  --rate-per-min 10 >"$T/rl2/log" 2>&1 &
+rl2pid=$!
+sleep 1
+if python3 - "$RP2" <<'PY4'
+import sys,urllib.request
+p=sys.argv[1]; ok=refused=0
+for _ in range(20):
+    try:
+        urllib.request.urlopen(f"http://127.0.0.1:{p}/health", timeout=5); ok+=1
+    except Exception as e:
+        if getattr(e,"code",0)==429: refused+=1
+sys.exit(0 if ok==10 and refused==10 else 1)
+PY4
+then ok; else bad "the per-address rate limit did not hold at 10/min"; fi
+kill $rl2pid 2>/dev/null; wait $rl2pid 2>/dev/null
+
 echo "a good bundle exits 0"
 CTX_HOME=$T/b $CTX open "$T/b1" >/dev/null 2>&1; code good $? 0
 
