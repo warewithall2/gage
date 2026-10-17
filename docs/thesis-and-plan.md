@@ -178,11 +178,35 @@ and the LAN panel built on 16 Oct. What it does not have:
   *connection* is a different record: the key must stay refused without being
   re-offered every time that agent sends.
 
-### 4. The audit log (decision 4)
+### 4. The audit log (decision 4) -- **the capture half built 17 Oct**
 
 Once anything happens while nobody is watching, "what did my machine do" is
 the question, and `sent/` plus `accepted/` is a trail of artifacts rather than
-of decisions. muse reviewed what the log must answer; it is unbuilt.
+of decisions.
+
+`src/journal.rs` records four events with the verdict frozen at the event, and
+auto-accept's exchange budget is counted from it rather than from a counter
+file. What is still unbuilt is everything about making it *tamper-evident*:
+the hash chain, a retention policy, external anchoring. muse's review of the
+journal is explicit that a chain added later proves only that entries have not
+changed since chaining began -- it would chain a forged pre-chain history just
+as faithfully -- so this is worth doing while the log is still short.
+
+### 5. Running where it claims to run
+
+Added 17 Oct, after the suite was run on the MacBook for the first time and
+reported six failures -- none of them a defect in ctx, and one of them a
+*security property the suite was lying about*. The project's own thesis is
+two machines; a test suite that only runs on one of them cannot tell you
+whether the other is fine. Fixed, and the honest lesson is that the bug class
+it exposed (a check that picks whichever bundle the filesystem lists first)
+had been passing here by luck for weeks.
+
+What this suggests next: the end-to-end viewer test runs only where playwright
+and chromium happen to be, and nothing runs either suite automatically on
+either machine. A `git pull && cargo test && attacks.sh` that runs on both and
+tells you when it breaks is a small thing that would have caught all of the
+above the day it was written.
 
 ## Not on the plan
 
