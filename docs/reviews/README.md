@@ -14,6 +14,7 @@ reason**. Nothing is closed by being forgotten.
 | [2026-10-16 codex](2026-10-16-codex.md) | 7 | 7 | 0 | 0 |
 | [2026-10-17 muse](2026-10-17-muse.md) | 10 | 10 | 0 | 0 |
 | [2026-10-17 muse, on the journal](2026-10-17-muse-journal.md) | 7 | 7 | 0 | 0 |
+| [2026-10-17 muse, on auto-accept](2026-10-17-muse-autoaccept.md) | 5 claims, 2 broken | 2 | 1 | 0 |
 
 ## 2026-10-16, codex, on the day's five changes
 

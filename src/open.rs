@@ -430,7 +430,8 @@ fn authority_matched(contacts: &Contacts, l: &Loaded) -> bool {
             l.trust,
             &m.from.key,
             m.msg_type,
-            crate::authority::answers_something_i_sent(&crate::identity::home(), m),
+            crate::authority::answers_something_i_sent(&crate::identity::home(), m)
+                .is_some(),
         )
         .is_ok()
 }
@@ -444,7 +445,8 @@ fn authority_block(contacts: &Contacts, l: &Loaded, nonce: &str) -> Vec<String> 
         l.trust,
         &m.from.key,
         m.msg_type,
-        crate::authority::answers_something_i_sent(&crate::identity::home(), m),
+        crate::authority::answers_something_i_sent(&crate::identity::home(), m)
+                .is_some(),
     );
     match found {
         Ok(g) => {

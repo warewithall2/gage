@@ -1519,6 +1519,10 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             // active, since fetch timing is metadata they can see. Two
             // minutes is slow enough not to be a presence feed.
             let every = every.max(10);
+            // Latched for the life of the process, not reset each poll: a
+            // journal that cannot be written is not a transient condition to
+            // retry against, and retrying is what would make it unbounded.
+            let mut journal_broken = false;
             loop {
                 // Pull before counting, so arrivals are collected and then
                 // announced once, rather than announced and collected later.
@@ -1555,7 +1559,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     // rather than race the watcher for it.
                     let mut accepted: std::collections::BTreeSet<String> =
                         std::collections::BTreeSet::new();
-                    if auto_accept {
+                    if auto_accept && !journal_broken {
                         let home = identity::home();
                         let contacts = trust::Contacts::load();
                         let auth = authority::Authority::load();
@@ -1576,11 +1580,28 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                                     println!("  {short}: {}", d.explain());
                                 }
                                 Err(e) => {
-                                    // The move or the journal write failed.
-                                    // The entry IS the budget, so an
-                                    // acceptance that could not be recorded
-                                    // must not be treated as having happened.
+                                    // The entry IS the budget, so a failure
+                                    // to record stops the feature for the
+                                    // rest of this run rather than being
+                                    // printed and passed over.
+                                    //
+                                    // A reviewer caught the gap: `perform`'s
+                                    // comment claimed the caller "stops
+                                    // auto-accepting for this run", and the
+                                    // caller only printed. A full disk would
+                                    // have become an unbounded uncounted
+                                    // accept path for as long as it lasted --
+                                    // in exactly the unattended mode this
+                                    // feature exists to bound.
                                     eprintln!("  {short}: could not auto-accept: {e}");
+                                    eprintln!(
+                                        "ctx watch: auto-accept is off for the rest of this \
+                                         run. Nothing can be accepted unattended while the \
+                                         journal cannot be written, because the journal is \
+                                         what counts the budget. Arrivals stay pending."
+                                    );
+                                    journal_broken = true;
+                                    break;
                                 }
                             }
                         }

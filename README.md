@@ -217,12 +217,22 @@ Four conditions, all required:
   the rendered line is what is actually in force.
 - **The thread's budget is not spent**, counted from the journal.
 
-**The budget cannot be refilled by a sender, and that is the whole reason
-`in-reply-only` is implied.** It is per thread, and a thread id is a field the
-*sender* writes — so without the implication a sender gets a fresh budget by
-inventing a fresh thread. A reply has to name a parent found in this machine's
-own `sent/` and signed by this machine's own key, so opening a thread is the
-receiver's act. A sender naming a parent that was never sent gets nothing.
+**The budget cannot be refilled by a sender.** It is per thread, and a thread
+id is a field the *sender* writes, so the key is read out of this machine's
+own `sent/` instead: the thread of the parent being answered, which only the
+receiver can have written. A reply must name a parent found there and signed
+by this machine's own key, so opening a thread is the receiver's act, and a
+sender naming a parent that was never sent gets nothing.
+
+The first version of this claimed the implication of `in-reply-only` was the
+whole defence. A reviewer showed it is not even half of one: `in_reply_to` and
+`thread` are *separate* fields, so a granted sender could answer the same
+verified parent with `thread: "aa"`, then `"bb"`, then `"cc"`, and collect a
+full budget each time. Validating the parent and then discarding everything
+learned from it is what left the hole — the predicate returned a bool. It now
+returns the parent, and the budget is keyed on it. A reply that claims a
+different thread from the parent it answers is refused outright as well, since
+no sender built with `--reply-to` ever does that.
 
 That check is also what made `in-reply-only` mean anything at all. Until this
 feature needed it, it tested `in_reply_to.is_some()` — asking the sender
@@ -236,14 +246,36 @@ on `pull`.
 **The journal entry is the budget.** There is no counter file: a second place
 to keep a count is a second place for it to be wrong, and the record of what
 was done is already the record of how much was used. Each unattended accept
-writes which grant allowed it, which line of the file that was, and where the
-count stood. A write that fails is an accept that did not happen — unlike every
-other journal site, where a failed write is reported and ignored.
+writes which grant allowed it, which line of the file that was, the budget key,
+and where the count stood.
 
-**What it is not:** permission to act. Acceptance moves a directory and marks
-it readable. It does not open the bundle, hand it to a model, or run anything,
-and `ctx open`'s `authorised :` block is still the only thing that says what
-may be done with what is inside. Nor is the bound a defence against a
+Three things follow, and each was a defect first:
+
+- **The record is written before the move,** so a failed write leaves the
+  bundle in `pending` for a human rather than in `accepted` with nothing
+  counting it. The other order spends no budget and accepts anyway.
+- **The count is taken again inside the journal lock**, because counting and
+  then appending as two steps is a race: two watchers each read `used = 0`
+  against `max = 1` and each accepted.
+- **A journal that cannot be written turns auto-accept off for the rest of the
+  run**, latched. It used to print and carry on, so a full disk would have
+  become an unbounded, uncounted accept path for as long as it lasted. A line
+  that will not *parse* also declines rather than counts past it — `read`
+  skips unreadable lines, which is right for showing history and fails open
+  for a counter.
+
+**What it is not:** permission to act — with one honest qualification. The
+acceptance itself moves a directory and marks it readable; it does not open
+the bundle, hand it to a model, or run anything, and `ctx open`'s
+`authorised :` block is still the only thing that says what may be done with
+what is inside. But `ctx watch --auto-accept --on-arrival …` is an end-to-end
+unattended pipeline in one process, and the accept is deliberately ordered
+*before* the hook so the hook finds the bundle accepted. A reviewer was right
+that "nothing opens or runs anything" is true of the acceptance and false of
+that combination. What the hook may then do is bounded by the hook, which a
+human wrote, and by the grant it is told about — not by this feature.
+
+Nor is the bound a defence against a
 determined verified sender — that sender can still reply to everything you
 send, within the budget, indefinitely. What it buys is that a *runaway*
 exchange — two agents answering each other, a loop, a sender that got stuck —
@@ -907,7 +939,7 @@ in the message. See [Authority](#authority-the-one-thing-that-says-you-may-act).
 
     cargo build --release && cargo test --release && bash tests/attacks.sh
 
-584 checks plus 96 Rust unit tests. Every one is an attack that worked, or
+586 checks plus 99 Rust unit tests. Every one is an attack that worked, or
 nearly worked, during development: frame-boundary forgery, payload swapping
 after signing, a listed contact claiming a third party's name, an unverified
 author name on a forward, a trust label that was a substring of its own

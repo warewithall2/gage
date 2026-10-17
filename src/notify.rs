@@ -113,7 +113,7 @@ pub fn new_arrivals() -> Vec<Pending> {
                 l.trust,
                 &m.from.key,
                 m.msg_type,
-                crate::authority::answers_something_i_sent(&home, m),
+                crate::authority::answers_something_i_sent(&home, m).is_some(),
             )
             .ok()
             .map(|g| g.to_string());

@@ -203,18 +203,42 @@ impl Authority {
 /// parent was addressed *to*. A second contact who learned the id could reply
 /// to a message intended for someone else. The grant's subject is what bounds
 /// that -- this predicate bounds the conversation, not the participant.
-pub fn answers_something_i_sent(home: &std::path::Path, m: &crate::manifest::Manifest) -> bool {
-    let Some(parent) = m.in_reply_to.as_deref() else { return false };
+///
+/// It returns the parent's **own thread id** rather than a bool, and that is
+/// the whole point. The first version returned a bool, and a reviewer took
+/// the feature apart with it: validating the parent and then throwing away
+/// everything learned from it left the exchange budget still counting
+/// `m.thread`, which the sender writes *independently of* `in_reply_to`. So
+/// one granted sender could answer the same verified parent with `thread:
+/// "aa"`, then `"bb"`, then `"cc"`, and collect a fresh budget each time. The
+/// budget has to be keyed on something read out of the receiver's own
+/// `sent/`, and this is that value.
+pub fn answers_something_i_sent(
+    home: &std::path::Path,
+    m: &crate::manifest::Manifest,
+) -> Option<Parent> {
+    let parent = m.in_reply_to.as_deref()?;
     if !crate::manifest::id_is_safe(parent) {
-        return false;
+        return None;
     }
     let p = crate::routes::sent_dir(home).join(parent).join("manifest.json");
-    let Ok(bytes) = std::fs::read(&p) else { return false };
-    let Ok(parent_m) = serde_json::from_slice::<crate::manifest::Manifest>(&bytes) else {
-        return false;
-    };
-    let Ok(me) = crate::identity::Identity::load() else { return false };
-    parent_m.from.key == me.public_b64()
+    let bytes = std::fs::read(&p).ok()?;
+    let parent_m = serde_json::from_slice::<crate::manifest::Manifest>(&bytes).ok()?;
+    let me = crate::identity::Identity::load().ok()?;
+    if parent_m.from.key != me.public_b64() {
+        return None;
+    }
+    Some(Parent { id: parent.to_string(), thread: parent_m.thread_id().to_string() })
+}
+
+/// A parent message this machine sent, as read from its own `sent/` copy.
+/// Every field here is therefore the receiver's, not the sender's.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Parent {
+    pub id: String,
+    /// The thread the parent belongs to, which is the thread the reply is in
+    /// whatever the reply claims. This is the exchange budget's key.
+    pub thread: String,
 }
 
 /// A key as `ctx whoami` prints it, versus a handle you chose. Keys are long

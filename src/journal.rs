@@ -157,6 +157,16 @@ pub struct Entry {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Auto {
     pub grant: String,
+    /// The budget's key: the thread of the parent message, **read out of this
+    /// machine's own `sent/`**.
+    ///
+    /// Not `Entry::thread`, which is what the sender claimed and is kept
+    /// beside it so a disagreement is visible. A reviewer found the hole that
+    /// makes this a separate field: keying the budget on the sender's thread
+    /// let one granted sender answer the same verified parent under a new
+    /// thread id each time and get a fresh budget for each. A field only the
+    /// receiver writes cannot be minted by the party being bounded.
+    pub thread: String,
     /// The line in the authority file, so an auditor can go read the grant
     /// as it is *now* and compare it with what was in force then.
     pub line: usize,
@@ -264,6 +274,24 @@ pub fn path() -> std::path::PathBuf {
 /// `write_all` of a single line, so a concurrent writer interleaves whole
 /// lines rather than halves of two.
 pub fn append(e: &Entry) -> std::io::Result<()> {
+    append_inner(e, None).map(|_| ())
+}
+
+/// Append an acceptance only if the thread's budget is still unspent,
+/// **checked under the same lock as the write**.
+///
+/// Returns false when the budget went in the meantime, which is the only
+/// honest answer: counting and then appending as two steps is a race, and it
+/// is the same race the index was given a lock for. Two `ctx watch
+/// --auto-accept` processes -- or one restarted while another still runs --
+/// each read `used = 0` against `max = 1` and each accepted, so a budget of
+/// one spent two. The decision `autoaccept::consider` reached is therefore
+/// advisory, and this is the authority.
+pub fn append_accept_within_budget(e: &Entry, max: u64) -> std::io::Result<bool> {
+    append_inner(e, Some(max))
+}
+
+fn append_inner(e: &Entry, budget: Option<u64>) -> std::io::Result<bool> {
     let p = path();
     if let Some(d) = p.parent() {
         std::fs::create_dir_all(d)?;
@@ -274,7 +302,38 @@ pub fn append(e: &Entry) -> std::io::Result<()> {
     // the same position, which is exactly the dispute the index exists to
     // settle.
     let _guard = crate::state::take_lock(&p)?;
-    let next = read_unlocked().last().map_or(1, |l| l.n + 1);
+    let have = read_unlocked();
+    if let Some(max) = budget {
+        // A line that will not parse is a line that stops counting, so the
+        // budget declines rather than counting past it. Checked inside the
+        // lock, like the count itself.
+        if !every_line_parses() {
+            return Err(std::io::Error::other(
+                "the journal has a line this version cannot read, so the exchange                  budget cannot be counted; auto-accept declines rather than guess",
+            ));
+        }
+        let Some(key) = e.auto.as_ref().map(|a| a.thread.clone()) else {
+            return Err(std::io::Error::other("a budgeted append needs an auto record"));
+        };
+        // Recounted here, inside the lock, from the file as it is now.
+        let used = count_auto(&have, &key);
+        if used >= max {
+            return Ok(false);
+        }
+        // And the entry's own `used` is corrected to what was true at the
+        // moment of the write, so the record cannot claim a count that was
+        // already stale when it was taken.
+        if let Some(a) = e.auto.as_ref() {
+            if a.used != used {
+                let mut e = e.clone();
+                if let Some(a) = e.auto.as_mut() {
+                    a.used = used;
+                }
+                return write_line(&p, &e, &have).map(|_| true);
+            }
+        }
+    }
+    let next = have.last().map_or(1, |l| l.n + 1);
     let mut e = e.clone();
     e.n = next;
     let mut line = serde_json::to_vec(&e)?;
@@ -284,7 +343,44 @@ pub fn append(e: &Entry) -> std::io::Result<()> {
     // Durable before the caller is told it worked. Without this a crash can
     // lose the line that was supposedly frozen, which is the one thing a log
     // of decisions must not do.
+    f.sync_all()?;
+    Ok(true)
+}
+
+/// Write one line, assuming the lock is already held and `have` is the file.
+fn write_line(p: &std::path::Path, e: &Entry, have: &[Entry]) -> std::io::Result<()> {
+    let mut e = e.clone();
+    e.n = have.last().map_or(1, |l| l.n + 1);
+    let mut line = serde_json::to_vec(&e)?;
+    line.push(b'\n');
+    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(p)?;
+    f.write_all(&line)?;
     f.sync_all()
+}
+
+fn count_auto(have: &[Entry], thread: &str) -> u64 {
+    have.iter()
+        .filter(|e| e.event == Event::Accepted)
+        .filter_map(|e| e.auto.as_ref())
+        .filter(|a| a.thread == thread)
+        .count() as u64
+}
+
+/// Could every line of the journal be read?
+///
+/// The budget counts entries, and `read` **skips** lines that will not parse
+/// -- right for showing history, where one lost line should not cost the
+/// whole file, and wrong for a counter, where a lost line is an accept that
+/// stops counting. A reviewer put it exactly: for a budget that fails open.
+/// So the unattended path asks this first and declines rather than counts.
+fn every_line_parses() -> bool {
+    let Ok(text) = std::fs::read_to_string(path()) else {
+        // No file yet is not a corrupt file. The count is legitimately zero.
+        return true;
+    };
+    text.lines()
+        .filter(|l| !l.trim().is_empty())
+        .all(|l| serde_json::from_str::<Entry>(l).is_ok())
 }
 
 fn read_unlocked() -> Vec<Entry> {
@@ -352,13 +448,8 @@ pub fn entry_for(
 /// Unparseable thread ids are counted as their own bucket on purpose, not
 /// ignored: `Thread::Other` is a single bucket, so every bundle that sends
 /// garbage in the field shares one budget rather than each getting a new one.
-pub fn auto_accepts_in_thread(thread: Option<&Thread>) -> u64 {
-    read()
-        .iter()
-        .filter(|e| {
-            e.event == Event::Accepted && e.auto.is_some() && e.thread.as_ref() == thread
-        })
-        .count() as u64
+pub fn auto_accepts_in_thread(thread: &str) -> u64 {
+    count_auto(&read(), thread)
 }
 
 /// Record one event against a bundle on disk.
@@ -387,8 +478,20 @@ pub fn record_with_auto(
     let witness = crate::bundle::witness_of(&l.manifest.from.key, &bytes);
     let seq = crate::state::LocalState::load().seq;
     let mut e = entry_for(event, &l.manifest, &witness, l.trust.label(), seq);
+    let max = auto.as_ref().map(|a| a.max);
     e.auto = auto;
-    append(&e)
+    match max {
+        // An unattended acceptance is rechecked against the budget under the
+        // lock, so the count that authorised it and the count that records it
+        // are the same read of the same file.
+        Some(max) => match append_accept_within_budget(&e, max)? {
+            true => Ok(()),
+            false => Err(std::io::Error::other(
+                "the thread's auto-accept budget went while this was being decided",
+            )),
+        },
+        None => append(&e),
+    }
 }
 
 /// Record a first observation for every bundle in the inbox not yet recorded.
@@ -544,6 +647,44 @@ mod tests {
     }
 
     #[test]
+    fn the_budget_counts_the_receivers_key_and_ignores_the_senders_claim() {
+        // The hole a reviewer found, as a test. Two entries whose `thread`
+        // fields differ -- the sender's claim -- but whose `auto.thread`
+        // agrees, because that is read from the receiver's own `sent/`. They
+        // must count against ONE budget. Keyed the other way round, a sender
+        // answering the same parent under a new thread id each time collected
+        // a fresh budget each time.
+        let mk = |claim: &str, key: &str| Entry {
+            n: 1,
+            seq: 1,
+            at: "2026-10-17T00:00:00Z".into(),
+            event: Event::Accepted,
+            backfilled: false,
+            bundle: "ab".into(),
+            witness: "w".into(),
+            from_key: "k".into(),
+            author_key: None,
+            verdict: "SENDER VERIFIED".into(),
+            thread: Some(Thread::Id(claim.into())),
+            auto: Some(Auto {
+                grant: "allow x answer in-reply-only auto-accept max-exchanges 2".into(),
+                thread: key.into(),
+                line: 1,
+                used: 0,
+                max: 2,
+            }),
+        };
+        let have = vec![mk("aa", "parent"), mk("bb", "parent"), mk("cc", "other")];
+        assert_eq!(count_auto(&have, "parent"), 2);
+        assert_eq!(count_auto(&have, "other"), 1);
+        // And an accept a human performed carries no `auto`, so it is
+        // countable against nobody's budget.
+        let mut human = mk("aa", "parent");
+        human.auto = None;
+        assert_eq!(count_auto(&[human], "parent"), 0);
+    }
+
+    #[test]
     fn an_auto_accept_record_round_trips_and_is_absent_otherwise() {
         // `auto` is both the audit record and the budget, so a version that
         // dropped it on reserialisation would silently refill every budget.
@@ -566,6 +707,7 @@ mod tests {
         assert!(!serde_json::to_string(&e).unwrap().contains("auto"));
         e.auto = Some(Auto {
             grant: "allow codex question in-reply-only auto-accept max-exchanges 4".into(),
+            thread: "aa".into(),
             line: 2,
             used: 1,
             max: 4,
@@ -574,6 +716,10 @@ mod tests {
         let back: Entry = serde_json::from_str(&s).unwrap();
         let a = back.auto.expect("auto survived the round trip");
         assert_eq!((a.used, a.max, a.line), (1, 4, 2));
+        // The budget's key is in `auto`, where only the receiver writes it,
+        // and not in `thread`, which is the sender's claim kept beside it.
+        assert_eq!(a.thread, "aa");
+        assert_eq!(back.thread, Some(Thread::Id("dd".into())));
         // The grant is local text out of the receiver's own file. It is the
         // only prose in an entry, and that is why it may be there.
         assert!(a.grant.starts_with("allow "));

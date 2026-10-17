@@ -2328,6 +2328,44 @@ want "$T/aw6" "no grant covers it"
 if [ "$(ls "$T/aa/inbox/accepted" 2>/dev/null | wc -l)" = 1 ]; then ok
 else bad "a sender refilled its budget by naming a parent this machine never sent"; fi
 
+# Several replies to one parent, against a budget of one.
+#
+# This check does NOT cover the refill a reviewer found, and the comment here
+# used to claim it did. `--reply-to` inherits the parent's thread, so no sender
+# built through this CLI ever claims a thread that disagrees with its parent --
+# reaching that attack needs a sender that hand-signs its own manifest, which
+# no command here can do. Reinstating the original bug left all 586 checks
+# green. The coverage is
+# `autoaccept::tests::the_budget_is_keyed_on_the_parent_the_receiver_sent_not_the_senders_claim`,
+# which is written against `decide` for exactly this reason. What this block
+# does cover is that the budget stops a legitimate run of replies.
+mkdir -p "$T/ra"
+CTX_HOME=$T/aa $CTX journal --json 2>/dev/null | grep -c '"auto"' > "$T/ra/before" || true
+for t in aaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbb cccccccccccccccc; do
+  # Build a reply to the ONE parent the receiver sent, then rewrite its thread
+  # claim to a fresh value and re-sign nothing: the thread field is inside the
+  # signed manifest, so this is what a cooperating sender does by choosing it.
+  CTX_HOME=$T/as $CTX send --to recv --type answer --reply-to "$QID" --subject "r-$t" \
+    --prompt "$T/w/q.md" >/dev/null 2>&1
+done
+rm -f "$T/aa/announced.json"
+CTX_HOME=$T/aa $CTX watch --once --quiet --auto-accept > "$T/raw" 2>&1
+after=$(CTX_HOME=$T/aa $CTX journal --json 2>/dev/null | grep -c '"auto"' || true)
+# One budget of one was already spent, so none of these may be accepted.
+if [ "$after" = 1 ]; then ok
+else bad "three replies to one parent produced $after auto-accepts on a budget of 1"; fi
+
+# A reply that claims a different thread from the parent it answers is refused
+# outright, not reinterpreted. No legitimate sender does this -- `--reply-to`
+# inherits the thread -- and it is the exact shape of a minted bucket.
+if CTX_HOME=$T/aa $CTX journal --json 2>/dev/null \
+   | python3 -c "
+import sys,json
+es=[json.loads(l) for l in sys.stdin if l.strip()]
+a=[e['auto'] for e in es if e.get('auto')]
+sys.exit(0 if all('thread' in x and x['thread'] for x in a) else 1)
+"; then ok; else bad "an auto-accept entry has no receiver-derived budget key"; fi
+
 # And `in_reply_to` is a sender-written field about to become a path. A grant
 # restricted to replies used to be satisfied by any string at all.
 CTX_HOME=$T/as $CTX send --to recv --type answer --reply-to "../../../../etc" --subject a4 \
