@@ -2931,6 +2931,11 @@ for _ in range(40):
         back = True
         break
     time.sleep(0.5)
+if not (busy and back):
+    # Say what was actually observed. A check that only reports "did not
+    # refuse politely, or did not recover" sends you guessing between two
+    # different failures on a machine you are not sitting at.
+    print(f"  (opened={len(held)} busy={busy} recovered={back} first={r.stdout[:40]!r})")
 sys.exit(0 if busy and back else 1)
 PY4
 then ok; else bad "the relay did not refuse politely past its cap, or did not recover"; fi
