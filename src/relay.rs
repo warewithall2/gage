@@ -53,6 +53,54 @@ const IO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 /// instead of falling over.
 const MAX_INFLIGHT: usize = 64;
 
+/// Bytes that may be held in memory for request bodies at any one moment.
+///
+/// Found by reading the deployment rather than the code. The unit on the
+/// relay host sets `MemoryMax=200M`, and `MAX_BODY` is 40MB with a
+/// concurrency cap of 64 -- so sixty-four concurrent uploads would try to
+/// buffer 2.5GB against a 200MB ceiling. systemd kills the process,
+/// `Restart=on-failure` brings it back, and the attacker repeats: a
+/// trivially triggerable outage, needing no credentials, on exactly the port
+/// about to face the internet.
+///
+/// A connection cap alone cannot express this, because the cost of a
+/// connection is not a connection -- it is the body it declares. So the
+/// budget is in bytes, reserved from the declared `Content-Length` before a
+/// single byte is read, and released when the request is done.
+static BODY_BYTES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Default ceiling, chosen to sit well inside a 200MB cgroup with room for
+/// everything that is not a body.
+const MAX_BODY_BYTES_INFLIGHT: usize = 96 * 1024 * 1024;
+
+/// Holds a reservation and gives it back however the request ends -- an
+/// early return, an I/O error or a panic. A counter that leaks on the error
+/// path is a counter that reaches its ceiling and stays there, which would
+/// turn this protection into the outage it prevents.
+struct BodyReservation(usize);
+
+impl BodyReservation {
+    fn take(n: usize) -> Option<Self> {
+        use std::sync::atomic::Ordering;
+        let mut cur = BODY_BYTES.load(Ordering::SeqCst);
+        loop {
+            if cur + n > MAX_BODY_BYTES_INFLIGHT {
+                return None;
+            }
+            match BODY_BYTES.compare_exchange(cur, cur + n, Ordering::SeqCst, Ordering::SeqCst) {
+                Ok(_) => return Some(BodyReservation(n)),
+                Err(actual) => cur = actual,
+            }
+        }
+    }
+}
+
+impl Drop for BodyReservation {
+    fn drop(&mut self) {
+        BODY_BYTES.fetch_sub(self.0, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Registration {
     /// ed25519 public key, base64. Authorises fetching.
@@ -297,6 +345,18 @@ fn handle(stream: TcpStream) -> std::io::Result<()> {
     if len > MAX_BODY {
         return reply(stream, "413 Payload Too Large", r#"{"error":"too large"}"#);
     }
+    // Reserved from the DECLARED length, before anything is allocated or
+    // read. Checking after the read would be checking after the harm.
+    let _reservation = match BodyReservation::take(len) {
+        Some(r) => r,
+        None => {
+            return reply(
+                stream,
+                "503 Service Unavailable",
+                r#"{"error":"relay is busy with other transfers, retry"}"#,
+            )
+        }
+    };
     let mut body = vec![0u8; len];
     if len > 0 {
         r.read_exact(&mut body)?;

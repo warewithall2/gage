@@ -3054,6 +3054,41 @@ sys.exit(0 if busy and back else 1)
 PY4
 then ok; else bad "the relay did not refuse politely past its cap, or did not recover"; fi
 
+# Memory, which a connection cap cannot express: the cost of a connection is
+# not a connection, it is the body it DECLARES. The relay host's unit sets
+# MemoryMax=200M, MAX_BODY is 40MB and the in-flight cap is 64, so sixty-four
+# concurrent uploads would try to buffer 2.5GB -- systemd kills it,
+# Restart=on-failure brings it back, and the attacker repeats. No credentials
+# needed. Found by reading the deployment, not the code.
+if python3 - "$RP" <<'PY4'
+import socket,subprocess,sys,threading,time
+p=int(sys.argv[1]); opened=[]
+def hold():
+    try:
+        s=socket.create_connection(("127.0.0.1",p))
+        # Declare a large body and send none of it.
+        s.sendall(b"POST /send HTTP/1.1\r\nHost: x\r\nContent-Length: 40000000\r\n\r\n")
+        opened.append(s); time.sleep(8)
+    except Exception: pass
+ts=[threading.Thread(target=hold,daemon=True) for _ in range(3)]
+for t in ts: t.start()
+time.sleep(2)
+# The relay is still answering: the declarations cost a reservation, not a
+# 40MB allocation each.
+r=subprocess.run(["curl","-s","-m","5","-o","/dev/null","-w","%{http_code}",
+                  f"http://127.0.0.1:{p}/health"],capture_output=True,text=True)
+if r.stdout.strip()!="200": sys.exit(1)
+# And one more large declaration is refused rather than admitted.
+s=socket.create_connection(("127.0.0.1",p))
+s.sendall(b"POST /send HTTP/1.1\r\nHost: x\r\nContent-Length: 40000000\r\n\r\n")
+s.settimeout(8)
+try: line=s.recv(200).split(b"\r\n")[0].decode()
+except Exception: line=""
+s.close()
+sys.exit(0 if "503" in line else 1)
+PY4
+then ok; else bad "concurrent declared bodies were not bounded in memory"; fi
+
 # `/send` takes no authentication ON PURPOSE -- a stranger has to be able to
 # send you a first message, which is what the buddy list's "not on your list"
 # section is for. So the protection is a bound, and here it is.
