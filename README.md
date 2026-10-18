@@ -577,6 +577,26 @@ is the shape of mistake this suite exists to prevent.
 Cost: 29 crates, taking the tree from 117 to 146. Worth stating in a project
 whose other seven dependencies are all cryptographic primitives.
 
+### Replay
+
+A sealed envelope is a file. Anyone who can reach the relay — including the
+relay — can hand the same one over twice, and the content is genuine, which
+is exactly what makes it dangerous: **a replayed instruction is a real
+instruction that was already carried out.**
+
+Delivery used to ask only whether the id was still in `pending`. Once a bundle
+had been accepted that path was gone, so the identical envelope was staged
+again as a fresh arrival — for ever, on demand — and the journal recorded
+nothing at all. `ctx pull` now refuses it and writes a `duplicate` entry, the
+one event in the log that records something the machine *declined* to do.
+
+The check is the witness, which was already being recorded:
+`sha256(from.key || 0x1f || manifest bytes)`. It identifies **this manifest**,
+not merely this id, so a sender resending in good faith is unaffected — a new
+message has a new `created` at minimum, so a new witness. The suite asserts
+both halves, because the easy over-correction here is to refuse anything from
+a sender you have heard from before.
+
 ## Conversations
 
 A bundle carries what the sender wants from you:
@@ -1165,7 +1185,7 @@ in the message. See [Authority](#authority-the-one-thing-that-says-you-may-act).
     cargo build --release && cargo test --release && bash tests/attacks.sh
     bash tests/ui-e2e.sh      # optional: drives the viewer in a real browser
 
-657 checks plus 106 Rust unit tests, and one end-to-end test that opens the
+664 checks plus 106 Rust unit tests, and one end-to-end test that opens the
 viewer in a browser and completes a connection request.
 
 That last one exists because of a gap the other two could not see. The buddy

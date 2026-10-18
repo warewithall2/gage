@@ -523,6 +523,42 @@ fn fetch_mailbox(
             continue;
         }
         let dest = pending.join(&loaded.manifest.id);
+        // Has this machine seen this EXACT manifest before?
+        //
+        // `dest.exists()` below only asks about `pending`, so once a bundle
+        // was accepted that path was gone and the identical envelope was
+        // staged again as a fresh arrival -- for ever, on demand. The
+        // content is genuine, which is what makes it dangerous: a replayed
+        // instruction is a real instruction that was already carried out.
+        // Anyone who can reach the relay, including the relay, can do this.
+        //
+        // The witness is the answer and was already being recorded: it is
+        // `sha256(from.key || 0x1f || manifest bytes)`, so it identifies
+        // this manifest and not merely this id. A sender resending in good
+        // faith produces a new manifest -- different `created` at minimum --
+        // and is unaffected.
+        let seen_before = std::fs::read(tmp.join("manifest.json"))
+            .ok()
+            .map(|bytes| bundle::witness_of(&loaded.manifest.from.key, &bytes))
+            .and_then(|w| state::LocalState::load().witnessed(&w))
+            .is_some();
+        if seen_before && !dest.exists() {
+            println!(
+                "  refused {} -- this machine has already seen this exact message.",
+                loaded.manifest.id
+            );
+            println!("    A replayed message is a real one that was already handled.");
+            println!("    If they meant to send it again, ask them to send it again:");
+            println!("    a new message has a new id and arrives normally.");
+            // Recorded against the temp copy, because in a moment there will
+            // not be one -- the same reason `reject` journals before it
+            // deletes.
+            if let Err(e) = journal::record(journal::Event::Duplicate, &tmp) {
+                eprintln!("  (could not journal that refusal: {e})");
+            }
+            let _ = std::fs::remove_dir_all(&tmp);
+            continue;
+        }
         if dest.exists() {
             println!("  already have {} -- left in place", loaded.manifest.id);
         } else {

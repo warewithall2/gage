@@ -193,6 +193,16 @@ pub enum Event {
     Accepted,
     Rejected,
     Opened,
+    /// The same signed manifest arrived again, after this machine had
+    /// already seen it, and was refused rather than re-staged.
+    ///
+    /// This is the one event that records something the machine *declined*
+    /// to do, and it earns its place: a replayed envelope is a genuine
+    /// instruction that was already handled, and re-delivering it is how an
+    /// old "transfer the funds" becomes a new one. The refusal was silent
+    /// before this existed -- the duplicate simply reappeared in `pending`
+    /// beside the accepted copy, and the log said nothing at all.
+    Duplicate,
 }
 
 impl Event {
@@ -202,6 +212,7 @@ impl Event {
             Event::Accepted => "accepted",
             Event::Rejected => "rejected",
             Event::Opened => "opened",
+            Event::Duplicate => "duplicate",
         }
     }
 }

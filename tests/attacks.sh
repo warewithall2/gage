@@ -2979,6 +2979,38 @@ CTX_HOME=$T/xden $CTX open "$T/xden/inbox/pending/$XDID" > "$T/xdo" 2>&1
 want "$T/xdo" "SENDER VERIFIED"
 want "$T/xdo" "no ambient margin"
 
+# A REPLAYED envelope is refused, and the refusal is recorded.
+#
+# The staging check asked only whether the id was still in `pending`, so once
+# a bundle had been accepted that path was gone and the identical envelope
+# staged again as a fresh arrival -- for ever, on demand, by anyone who can
+# reach the relay, including the relay. The content is genuine, which is what
+# makes it dangerous: a replayed instruction is a real instruction that was
+# already carried out. The log said nothing at all about it.
+XRID=$(ls "$T/xvir/inbox/accepted" 2>/dev/null | head -1)
+if [ -n "$XRID" ]; then ok; else bad "no accepted bundle to replay"; fi
+# Push the very same envelope again. `push` keeps its sealed copy in the
+# sender's outbox, so this is exactly the bytes that were sent before.
+CTX_HOME=$T/xden $CTX push "$T/xden/out" --to virginia --yes >/dev/null 2>&1
+CTX_HOME=$T/xvir $CTX pull > "$T/xrep" 2>&1
+want "$T/xrep" "already seen this exact message"
+if [ "$(nfiles "$T/xvir/inbox/pending")" = 0 ]; then ok
+else bad "a replayed envelope was staged again as a new arrival"; fi
+if CTX_HOME=$T/xvir $CTX journal --json 2>/dev/null | grep -q '"duplicate"'; then ok
+else bad "the replay was refused but not recorded"; fi
+
+# And a GENUINE resend still arrives. This is the half a replay check breaks:
+# a new message from the same sender about the same thing has a new manifest,
+# so it must not be mistaken for the old one.
+printf 'resending, with the ambient figure this time\n' > "$T/xden/again.md"
+CTX_HOME=$T/xden $CTX send --to virginia --type question --subject "spec review again" \
+  --prompt "$T/xden/again.md" --out "$T/xden/out2" >/dev/null 2>&1
+CTX_HOME=$T/xden $CTX push "$T/xden/out2" --to virginia --yes >/dev/null 2>&1
+CTX_HOME=$T/xvir $CTX pull > "$T/xrep2" 2>&1
+wantno "$T/xrep2" "already seen this exact message"
+if [ "$(nfiles "$T/xvir/inbox/pending")" = 1 ]; then ok
+else bad "a genuine resend was refused as a replay"; fi
+
 # The relay stored sealed bytes and nothing else: it is the one party in this
 # exchange that neither side chose to trust.
 if grep -rqF "widget must never exceed" "$T/xr/store" 2>/dev/null; then
