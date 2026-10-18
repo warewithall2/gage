@@ -2877,6 +2877,50 @@ else want "$T/chv7" "the history this chain was started over has changed"; fi
 cp "$T/ch3/journal.good" "$T/ch3/journal.jsonl"
 
 echo
+echo "--- a relay address says whether it is verified, and https means verified"
+# TLS exists here for what is AROUND the payload, not the payload: `/send`
+# carries the recipient's box key in the clear, so an observer learns who you
+# write to and how often, and without a server identity anything that can
+# answer for the address can take a push, say {"ok":true} and drop it.
+# Signatures cover content; they never covered delivery.
+#
+# These four need the network. They are skipped, not failed, when it is
+# absent -- but a SKIP is printed, because silently passing a security check
+# that did not run is the shape of mistake this suite exists to prevent.
+if curl -s -m 8 -o /dev/null https://badssl.com 2>/dev/null; then
+  for host_expect in \
+      "expired.badssl.com:certificate expired" \
+      "self-signed.badssl.com:UnknownIssuer" \
+      "wrong.host.badssl.com:not valid for name" \
+      "untrusted-root.badssl.com:UnknownIssuer"; do
+    h=${host_expect%%:*}; e=${host_expect#*:}
+    # `join` needs an identity before it can register one.
+    mkdir -p "$T/tlsx"
+    [ -f "$T/tlsx/identity.key" ] || CTX_HOME=$T/tlsx $CTX init tlsx >/dev/null 2>&1
+    if CTX_HOME=$T/tlsx $CTX join "https://$h" > "$T/tlsout" 2>&1; then
+      bad "ctx accepted a bad certificate from $h"
+    else
+      if grep -qF "$e" "$T/tlsout"; then ok
+      else bad "$h was refused, but not for its certificate: $(head -1 "$T/tlsout")"; fi
+    fi
+  done
+  # And the half that the four above cannot cover: a GOOD certificate is
+  # ACCEPTED. Without this, emptying the root store -- so nothing verifies
+  # at all -- still leaves three of the four refusals looking correct,
+  # because "refused" does not say why. Reaching a real HTTP reply proves
+  # the handshake completed and the chain checked out. A 405 is the right
+  # answer here: it is a web server that does not have /register.
+  if CTX_HOME=$T/tlsx $CTX join "https://example.com" > "$T/tlsgood" 2>&1; then
+    bad "example.com accepted a ctx registration, which is not what it is"
+  else
+    if grep -q "relay said: HTTP" "$T/tlsgood"; then ok
+    else bad "a valid certificate did not complete a handshake: $(head -1 "$T/tlsgood")"; fi
+  fi
+else
+  echo "  SKIP: no network, so certificate verification was not exercised"
+fi
+
+echo
 echo "--- two agents on different networks, with only a relay between them"
 # The project's whole thesis, as one path: no shared network, no local route,
 # no LAN discovery. A prompt-and-file package from one person's agent to

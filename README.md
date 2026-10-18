@@ -525,10 +525,36 @@ become a bound on you.
 Binding anything other than loopback or a tailnet address prints what that
 means before it serves a byte.
 
-**Still missing for a genuinely public relay**: transport security. Envelopes
-are sealed, so confidentiality does not need TLS — but plain HTTP shows anyone
-on the path who talks to whom and how often, and lets an active attacker drop
-or delay mail. Signatures cover content; they do not cover delivery.
+### TLS, and why it is here despite the payload being sealed
+
+    ctx join https://relay.example.com      # verified against the system roots
+    ctx join 100.102.84.72:7788             # no TLS: a tailnet or a loopback test
+
+The scheme decides, and the address is written by a person, so the choice is
+visible rather than buried in a default.
+
+The payload was always sealed and TLS does not change that. What it changes is
+everything *around* it. `/send` carries the recipient's box key in the clear,
+so anyone on the path learns who you write to, how often and how big it was —
+the content stays sealed and the correspondence does not. And without a server
+identity, anything that can answer for that address can accept your push,
+return `{"ok":true}` and drop it: nothing readable, nothing delivered, and the
+sender has been told it worked. **Signatures cover content; they never covered
+delivery.**
+
+Verification is the system root store, and the suite asserts it in both
+directions against `badssl.com`: expired, self-signed, wrong-host and
+untrusted-root certificates are each refused *for their own reason*, and a
+valid certificate completes a handshake. That last check is not decoration —
+emptying the root store so that nothing verifies at all still leaves three of
+the four refusals looking correct, because "refused" does not say why.
+
+Those checks need the network, so they **skip** when it is absent — and print
+that they skipped, because silently passing a security check that did not run
+is the shape of mistake this suite exists to prevent.
+
+Cost: 29 crates, taking the tree from 117 to 146. Worth stating in a project
+whose other seven dependencies are all cryptographic primitives.
 
 ## Conversations
 
@@ -1118,7 +1144,7 @@ in the message. See [Authority](#authority-the-one-thing-that-says-you-may-act).
     cargo build --release && cargo test --release && bash tests/attacks.sh
     bash tests/ui-e2e.sh      # optional: drives the viewer in a real browser
 
-640 checks plus 104 Rust unit tests, and one end-to-end test that opens the
+657 checks plus 106 Rust unit tests, and one end-to-end test that opens the
 viewer in a browser and completes a connection request.
 
 That last one exists because of a gap the other two could not see. The buddy
