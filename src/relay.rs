@@ -53,6 +53,26 @@ const IO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 /// instead of falling over.
 const MAX_INFLIGHT: usize = 64;
 
+/// Caps on the request head, and on how long a whole request may take.
+///
+/// The viewer was given the first of these the morning after its parser was
+/// written. The relay -- the part that faces other people -- never was, and
+/// a reviewer found it by reading both: `read_line` appends until a newline
+/// with no limit of its own, and the 20-second timeout is per *read*, so a
+/// client that streams bytes and never sends a newline keeps every read
+/// succeeding while the `String` grows until the cgroup's `MemoryMax` kills
+/// the process. `Restart=on-failure` then brings it back for the same
+/// connection to do it again. One address, no credentials, no mailbox: a
+/// crash loop.
+///
+/// `DEADLINE` is the other half of the same lesson. A per-operation timeout
+/// cannot stop a client that sends one byte every nineteen seconds, which
+/// costs an attacker nothing and holds a worker slot indefinitely. A request
+/// gets a total budget, not a per-syscall one.
+const MAX_HEAD_BYTES: u64 = 64 * 1024;
+const MAX_HEADERS: usize = 200;
+const DEADLINE: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// Bytes that may be held in memory for request bodies at any one moment.
 ///
 /// Found by reading the deployment rather than the code. The unit on the
@@ -302,7 +322,24 @@ fn reply(mut s: TcpStream, status: &str, body: &str) -> std::io::Result<()> {
 /// here. Keyed by IP, with the port dropped -- a client gets a new source
 /// port per connection, so keeping it would make the limit count nothing.
 fn over_rate(peer: &str) -> bool {
-    let ip = peer.rsplit_once(':').map(|(h, _)| h.to_string()).unwrap_or_else(|| peer.to_string());
+    // Parsed, not string-split. `rsplit_once(':')` cuts inside an IPv6
+    // address -- so distinct clients collapsed into shared buckets while an
+    // attacker rotating within one /64 got a fresh bucket per address, which
+    // is the wrong answer in both directions at once.
+    //
+    // IPv6 is keyed on the /64, because one allocation hands out more
+    // addresses than any rate limit could enumerate.
+    let ip = match peer.parse::<std::net::SocketAddr>() {
+        Ok(std::net::SocketAddr::V4(a)) => a.ip().to_string(),
+        Ok(std::net::SocketAddr::V6(a)) => {
+            let o = a.ip().octets();
+            format!(
+                "{:02x}{:02x}:{:02x}{:02x}:{:02x}{:02x}:{:02x}{:02x}::/64",
+                o[0], o[1], o[2], o[3], o[4], o[5], o[6], o[7]
+            )
+        }
+        Err(_) => peer.to_string(),
+    };
     let mut g = STATE.lock().unwrap();
     let st = g.as_mut().unwrap();
     let per_min = st.limits.per_min;
@@ -325,18 +362,55 @@ fn handle(stream: TcpStream) -> std::io::Result<()> {
     if over_rate(&peer) {
         return reply(stream, "429 Too Many Requests", r#"{"error":"slow down"}"#);
     }
+    let started = std::time::Instant::now();
+    // The buffer wraps the socket ONCE and the cap is applied to a borrow of
+    // it while the head is read. The obvious arrangement --
+    // `BufReader::new(socket.take(N))`, then rebuilding a reader on the raw
+    // socket afterwards -- loses every byte the first buffer had already
+    // read ahead, which here is the start of the body. It broke `join`,
+    // `push` and the whole challenge handshake, and it broke them exactly
+    // when the body happened to arrive in the same packet as the head.
     let mut r = BufReader::new(stream.try_clone()?);
     let mut line = String::new();
-    r.read_line(&mut line)?;
+    {
+        // `.take` on the head alone, so a newline that never comes costs
+        // 64KB rather than the process.
+        let mut head = (&mut r).take(MAX_HEAD_BYTES);
+        head.read_line(&mut line)?;
+    }
+    if line.is_empty() {
+        return reply(stream, "400 Bad Request", r#"{"error":"no request line"}"#);
+    }
     let mut it = line.split_whitespace();
     let method = it.next().unwrap_or("").to_string();
     let target = it.next().unwrap_or("/").to_string();
 
     let mut len = 0usize;
+    let mut headers = 0usize;
+    let mut head_budget = MAX_HEAD_BYTES.saturating_sub(line.len() as u64);
     loop {
         let mut h = String::new();
-        if r.read_line(&mut h)? == 0 || h.trim().is_empty() {
+        let n = {
+            let mut head = (&mut r).take(head_budget);
+            head.read_line(&mut h)?
+        };
+        head_budget = head_budget.saturating_sub(n as u64);
+        if head_budget == 0 {
+            return reply(
+                stream,
+                "431 Request Header Fields Too Large",
+                r#"{"error":"head too large"}"#,
+            );
+        }
+        if n == 0 || h.trim().is_empty() {
             break;
+        }
+        headers += 1;
+        if headers > MAX_HEADERS {
+            return reply(stream, "431 Request Header Fields Too Large", r#"{"error":"too many headers"}"#);
+        }
+        if started.elapsed() > DEADLINE {
+            return reply(stream, "408 Request Timeout", r#"{"error":"took too long"}"#);
         }
         if let Some(v) = h.to_ascii_lowercase().strip_prefix("content-length:") {
             len = v.trim().parse().unwrap_or(0);

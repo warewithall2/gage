@@ -3118,6 +3118,36 @@ sys.exit(0 if busy and back else 1)
 PY4
 then ok; else bad "the relay did not refuse politely past its cap, or did not recover"; fi
 
+# A header line that never ends. `read_line` appends until a newline with no
+# limit of its own, and the socket timeout is per-READ, so a client that keeps
+# streaming bytes keeps every read succeeding while the buffer grows until the
+# cgroup kills the process -- and Restart=on-failure makes that a crash loop.
+# One address, no credentials, no mailbox. The viewer was given this cap the
+# morning after its parser was written; the relay, which is the part that
+# faces other people, never was.
+if python3 - "$RP" <<'PY4'
+import socket,subprocess,sys,time
+p=int(sys.argv[1])
+s=socket.create_connection(("127.0.0.1",p))
+s.sendall(b"POST /send HTTP/1.1\r\n")
+try:
+    for _ in range(200):
+        s.sendall(b"X-Pad: " + b"A"*4096)
+        time.sleep(0.002)
+except Exception:
+    pass
+s.settimeout(6)
+try: line=s.recv(200).split(b"\r\n")[0].decode()
+except Exception: line=""
+s.close()
+# Refused for its head, and the relay is still serving afterwards.
+if "431" not in line: sys.exit(1)
+r=subprocess.run(["curl","-s","-m","5",f"http://127.0.0.1:{p}/health"],
+                 capture_output=True,text=True)
+sys.exit(0 if '"ok":true' in r.stdout else 1)
+PY4
+then ok; else bad "an endless header line was not capped, or killed the relay"; fi
+
 # Memory, which a connection cap cannot express: the cost of a connection is
 # not a connection, it is the body it DECLARES. The relay host's unit sets
 # MemoryMax=200M, MAX_BODY is 40MB and the in-flight cap is 64, so sixty-four
