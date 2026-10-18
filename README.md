@@ -53,6 +53,14 @@ Agent2Agent protocol, and what gage deliberately is not — not a transport, not
 a registry, not an identity provider. It is a design position, not code: gage
 speaks no A2A today.
 
+**On losing your key:**
+[docs/adr-identity-recovery.md](docs/adr-identity-recovery.md) is the decision
+record for identity recovery — why encrypted export won, why trusted-contact
+recovery was rejected as a new social attack surface that fights the ceremony
+model, and the specification the implementation follows. The trade it commits
+to is stated plainly there and in the threat model: opting in converts "lose
+the key, lose everything" into "your security is your passphrase's strength".
+
 That matters because the reader is different. A receipt's verdict is read by a
 program at an admission check, which cannot be talked out of its conclusion. A
 bundle's verdict is read by a language model whose next tokens are the payload
