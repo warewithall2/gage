@@ -24,6 +24,7 @@ mod rotate;
 mod routes;
 mod scrub;
 mod seal;
+mod sig;
 mod state;
 mod trust;
 mod ui;
@@ -500,21 +501,11 @@ fn register_with_proof(
     Ok(())
 }
 
-/// Restore the default SIGPIPE disposition. Declared here rather than taking
-/// a libc dependency for one constant.
+/// Restore the default SIGPIPE disposition. The declaration lives in `sig`,
+/// which is the only place in this crate that declares `signal(2)`.
 #[cfg(unix)]
 unsafe fn libc_signal_default() {
-    unsafe extern "C" {
-        // `handler` is a usize here because this call passes SIG_DFL (0), while
-        // src/lan.rs declares the same symbol taking a function pointer. Both are
-        // pointer-sized and both work; unifying them means touching signal setup,
-        // which is a behaviour change rather than a lint fix. See the report.
-        #[allow(clashing_extern_declarations)]
-        fn signal(sig: i32, handler: usize) -> usize;
-    }
-    const SIGPIPE: i32 = 13;
-    const SIG_DFL: usize = 0;
-    unsafe { signal(SIGPIPE, SIG_DFL) };
+    sig::restore_default(sig::SIGPIPE);
 }
 
 /// Collect anything waiting on the relay into inbox/pending.

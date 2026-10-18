@@ -977,16 +977,13 @@ fn ctrlc_remove(path: std::path::PathBuf) -> std::io::Result<()> {
     use std::sync::OnceLock;
     static PATH: OnceLock<std::path::PathBuf> = OnceLock::new();
     let _ = PATH.set(path);
-    unsafe extern "C" {
-        fn signal(sig: i32, handler: extern "C" fn(i32)) -> usize;
-    }
     extern "C" fn on_int(_: i32) {
         if let Some(p) = PATH.get() {
             let _ = std::fs::remove_file(p);
         }
         std::process::exit(130);
     }
-    unsafe { signal(2, on_int) };
+    crate::sig::install(crate::sig::SIGINT, on_int);
     Ok(())
 }
 
