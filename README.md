@@ -53,6 +53,12 @@ Agent2Agent protocol, and what gage deliberately is not — not a transport, not
 a registry, not an identity provider. It is a design position, not code: gage
 speaks no A2A today.
 
+**Driving it from a script:** [docs/agents.md](docs/agents.md) is gage with no
+human at the keyboard — the command table for a whole handoff, the exit codes
+(checked, including the case where `1` rather than `2` means "could not read
+it"), how to read a verdict out of the output, one complete worked script, and
+the honest boundary: what an agent can and cannot do about confirming a key.
+
 **On losing your key:**
 [docs/adr-identity-recovery.md](docs/adr-identity-recovery.md) is the decision
 record for identity recovery — why encrypted export won, why trusted-contact
@@ -334,12 +340,6 @@ exists for — was leaving the thinnest record: an `accepted` entry with no
 
 ## Getting started, and getting someone else started
 
-    gage connect https://relay.example.com
-
-Three steps that have no decisions in them — make an identity, register a
-mailbox, work out what to share — and then a deliberate stop at the one that
-does. It prints the line the other person runs, and the four word-pairs you
-have to read to them out loud. That last part is not automated because
 Install it without a Rust toolchain:
 
     curl -fsSL https://gage.sh/install.sh | sh
@@ -368,6 +368,12 @@ Every step is skippable; it does nothing the individual commands below do not.
 
 Or, with a relay:
 
+    gage connect https://relay.example.com
+
+Three steps that have no decisions in them — make an identity, register a
+mailbox, work out what to share — and then a deliberate stop at the one that
+does. It prints the line the other person runs, and the four word-pairs you
+have to read to them out loud. That last part is not automated because
 automating it would be removing the only thing gage does.
 
 Run it again whenever: it keeps the identity you have. A command whose job is
