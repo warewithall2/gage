@@ -340,6 +340,34 @@ Three steps that have no decisions in them — make an identity, register a
 mailbox, work out what to share — and then a deliberate stop at the one that
 does. It prints the line the other person runs, and the four word-pairs you
 have to read to them out loud. That last part is not automated because
+Install it without a Rust toolchain:
+
+    curl -fsSL https://gage.sh/install.sh | sh
+
+That pipes a script into a shell, which is a thing worth being asked to
+trust — so **read it first if you would rather**, and it is short enough to
+read in a minute:
+
+    curl -fsSL https://gage.sh/install.sh -o install.sh
+    less install.sh && sh install.sh
+
+It works out your OS and architecture, downloads the matching binary and its
+`SHA256SUMS` from the latest release, **verifies the checksum before
+installing anything**, and puts one file in `~/.local/bin` (`PREFIX=` to
+change that). It never uses sudo, and it fails loudly rather than guessing on
+a platform with no released binary. `cargo install gage` remains the other
+path and works anywhere Rust does.
+
+Then, from nothing to a first handoff, answering four questions:
+
+    gage quickstart
+
+It makes an identity if you have none, shows your word-pairs and the one line
+you send a colleague, then offers to add their key and send a first bundle.
+Every step is skippable; it does nothing the individual commands below do not.
+
+Or, with a relay:
+
 automating it would be removing the only thing gage does.
 
 Run it again whenever: it keeps the identity you have. A command whose job is
