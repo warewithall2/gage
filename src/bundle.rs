@@ -11,7 +11,8 @@
 
 use crate::identity::Identity;
 use crate::manifest::{
-    AgentInfo, FORMAT_VERSION, Hop, HopAction, Item, ItemKind, Manifest, Peer, path_is_safe,
+    AgentInfo, FORMAT_VERSION, Hop, HopAction, Item, ItemKind, Manifest, Peer, one_line,
+    path_is_safe,
 };
 use crate::trust::{Contacts, Trust};
 use base64::{Engine, engine::general_purpose::STANDARD as B64};
@@ -300,7 +301,7 @@ pub fn load(dir: &Path) -> std::io::Result<Loaded> {
     let mut seen_paths: std::collections::BTreeSet<&str> = Default::default();
     for it in &manifest.items {
         if !path_is_safe(&it.path) {
-            tampered.push(format!("{} (unsafe path)", it.path));
+            tampered.push(format!("{} (unsafe path)", one_line(&it.path)));
             continue;
         }
         // Two entries naming one file verified independently, so a single
@@ -308,13 +309,13 @@ pub fn load(dir: &Path) -> std::io::Result<Loaded> {
         // and fenced as both a file and a memory, which decides how loudly
         // `open` warns about it.
         if !seen_paths.insert(it.path.as_str()) {
-            tampered.push(format!("{} (declared more than once)", it.path));
+            tampered.push(format!("{} (declared more than once)", one_line(&it.path)));
             continue;
         }
         match fs::read(dir.join(&it.path)) {
             Ok(d) if sha256_hex(&d) == it.sha256 => {}
-            Ok(_) => tampered.push(format!("{} (digest mismatch)", it.path)),
-            Err(_) => tampered.push(format!("{} (missing)", it.path)),
+            Ok(_) => tampered.push(format!("{} (digest mismatch)", one_line(&it.path))),
+            Err(_) => tampered.push(format!("{} (missing)", one_line(&it.path))),
         }
     }
     Ok(Loaded {

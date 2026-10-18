@@ -29,6 +29,7 @@ mod ui;
 mod words;
 
 use clap::{Parser, Subcommand};
+use manifest::one_line;
 use outbound::{SendArgs, all_manifests, resolve_reply, send_bundle};
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -1440,18 +1441,23 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             observe_or_warn();
             let l = bundle::load(&dir)?;
             let m = &l.manifest;
-            println!("id       : {}", m.id);
-            println!("subject  : {}", m.subject);
+            println!("id       : {}", one_line(&m.id));
+            println!("subject  : {}", one_line(&m.subject));
             println!("trust    : {}", l.trust.label());
             println!(
                 "from     : {} ({}…)",
-                m.from.handle,
-                m.from.key.chars().take(16).collect::<String>()
+                one_line(&m.from.handle),
+                one_line(&m.from.key.chars().take(16).collect::<String>())
             );
             println!("forwarded: {}", if m.is_forwarded() { "yes" } else { "no" });
-            println!("to       : {}", m.to.join(", "));
+            println!("to       : {}", one_line(&m.to.join(", ")));
             for it in &m.items {
-                println!("  {:?}\t{}\t{} bytes", it.kind, it.path, it.bytes);
+                println!(
+                    "  {:?}\t{}\t{} bytes",
+                    it.kind,
+                    one_line(&it.path),
+                    it.bytes
+                );
             }
             if !l.tampered.is_empty() {
                 println!("TAMPERED : {}", l.tampered.join(", "));
@@ -1814,13 +1820,13 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             if !yes {
                 println!("about to send OFF THIS MACHINE, via {addr}:");
                 println!("  to      : {to}");
-                println!("  subject : {}", loaded.manifest.subject);
-                println!("  bundle  : {}", loaded.manifest.id);
+                println!("  subject : {}", one_line(&loaded.manifest.subject));
+                println!("  bundle  : {}", one_line(&loaded.manifest.id));
                 for it in &loaded.manifest.items {
                     println!(
                         "  {:?}  {}  ({} bytes)",
                         it.kind,
-                        it.path.strip_prefix("items/").unwrap_or(&it.path),
+                        one_line(it.path.strip_prefix("items/").unwrap_or(&it.path)),
                         it.bytes
                     );
                 }
@@ -2002,7 +2008,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     println!(
                         "      {:?}  {}",
                         it.kind,
-                        it.path.strip_prefix("items/").unwrap_or(&it.path)
+                        one_line(it.path.strip_prefix("items/").unwrap_or(&it.path))
                     );
                 }
             }

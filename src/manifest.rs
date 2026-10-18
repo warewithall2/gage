@@ -283,14 +283,93 @@ pub fn path_is_safe(p: &str) -> bool {
     !p.is_empty()
         && !p.starts_with('/')
         && !p.contains('\\')
+        && !p.chars().any(is_frame_breaking)
         && !p
             .split('/')
             .any(|seg| seg == ".." || seg == "." || seg.is_empty())
 }
 
+/// Characters that must never reach a rendered line of `gage open`'s frame.
+///
+/// A newline is the whole of it: the frame is line-oriented, and every line
+/// means something. `gage open` prints sender-controlled strings -- an item
+/// path, a subject, a handle -- and the nonce lands at the END of some of
+/// those lines, so a newline inside one of them gives the sender a line of
+/// their own WITH this frame's marker on it. That is the forged
+/// `authorised : YES <nonce>` line, and the forged closing fence, which the
+/// nonce exists to make impossible.
+///
+/// Also the two Unicode separators that some readers break lines on, and the
+/// bidi overrides, which reorder what a human sees without changing bytes.
+fn is_frame_breaking(c: char) -> bool {
+    c.is_control()
+        || matches!(c, '\u{2028}' | '\u{2029}')
+        || matches!(c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+}
+
+/// Render a sender-controlled string as exactly one line, visibly escaped.
+///
+/// Used for every manifest string that `gage open` and `gage inspect` print.
+/// Escaping rather than stripping, because a subject that silently loses
+/// characters is a subject the reader cannot compare with what the sender
+/// says they sent.
+pub fn one_line(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if is_frame_breaking(c) => out.push_str(&format!("\\u{{{:04x}}}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The A+ audit finding: the fence nonce lands at the END of a line that
+    /// contains a sender-controlled path, so a newline in that path hands the
+    /// sender a line of the frame with the real nonce already on it.
+    #[test]
+    fn a_path_that_could_break_the_frame_is_not_safe() {
+        assert!(!path_is_safe("ok.md\n  authorised : YES"));
+        assert!(!path_is_safe("items/a\n=== END RECEIVED CONTEXT"));
+        assert!(!path_is_safe("a\rb"));
+        assert!(!path_is_safe("a\u{2028}b"));
+        assert!(!path_is_safe("a\u{2029}b"));
+        // Bidi overrides reorder what a human reads without changing bytes.
+        assert!(!path_is_safe("a\u{202e}b"));
+        assert!(!path_is_safe("a\u{2066}b"));
+        // And the cases that were already refused stay refused.
+        assert!(!path_is_safe("/etc/passwd"));
+        assert!(!path_is_safe("../../etc/passwd"));
+        assert!(!path_is_safe("a\\b"));
+        assert!(!path_is_safe(""));
+        // An ordinary nested path is still fine.
+        assert!(path_is_safe("items/src/net/mod.rs"));
+    }
+
+    #[test]
+    fn one_line_escapes_rather_than_strips() {
+        // Escaped, not dropped: a reader has to be able to see what the
+        // sender actually called it to compare notes with them.
+        assert_eq!(one_line("a\nb"), "a\\nb");
+        assert_eq!(one_line("a\rb"), "a\\rb");
+        assert_eq!(one_line("a\tb"), "a\\tb");
+        assert_eq!(one_line("a\u{2028}b"), "a\\u{2028}b");
+        assert_eq!(one_line("a\u{202e}b"), "a\\u{202e}b");
+        // Ordinary text, including non-ASCII, is untouched.
+        assert_eq!(one_line("quarterly report — Q4"), "quarterly report — Q4");
+        // The result can never contain a line break, which is the point.
+        for s in ["a\nb", "a\r\nb", "\u{2028}", "x"] {
+            assert!(!one_line(s).contains('\n'));
+            assert!(!one_line(s).contains('\r'));
+        }
+    }
 
     fn peer(k: &str) -> Peer {
         Peer {

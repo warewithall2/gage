@@ -192,6 +192,13 @@ impl Identity {
     pub fn create(handle: &str) -> std::io::Result<Self> {
         let dir = home();
         fs::create_dir_all(&dir)?;
+        // The key is 0600, but everything AROUND it was 0644 inside a 0755
+        // directory: contacts, the journal, and every bundle in inbox/. On a
+        // shared machine another local user could read who you talk to and
+        // what they sent, which is most of what a sealed envelope exists to
+        // keep from the relay. Set on the home itself, so it covers what is
+        // written later rather than needing a rule per file.
+        set_private_dir(&dir)?;
         let kp = dir.join("identity.key");
         if kp.exists() {
             return Err(std::io::Error::new(
@@ -450,6 +457,19 @@ fn write_store(kp: &Path, st: &StoredKeys) -> std::io::Result<()> {
 fn set_private(p: &Path) -> std::io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
     fs::set_permissions(p, fs::Permissions::from_mode(0o600))
+}
+
+/// 0700 on the gage home. Only ever applied at creation: tightening a home
+/// that already exists is a change to someone's filesystem they did not ask
+/// for, and belongs to a command that says so rather than to every run.
+#[cfg(unix)]
+fn set_private_dir(p: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(p, fs::Permissions::from_mode(0o700))
+}
+#[cfg(not(unix))]
+fn set_private_dir(_p: &Path) -> std::io::Result<()> {
+    Ok(())
 }
 #[cfg(not(unix))]
 fn set_private(_p: &Path) -> std::io::Result<()> {
