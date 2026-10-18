@@ -2,6 +2,8 @@
 name = "gage"
 version = "0.1.0"
 edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Hand context between agents — files, prompts and decisions — with a trust boundary that survives the hop."
 
 [dependencies]
 base64 = "0.23.1"

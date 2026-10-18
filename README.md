@@ -1301,3 +1301,14 @@ while it was being written, a secret hidden from the outbound scan by one
 invalid byte, an envelope that unpacked half of itself before refusing, a discovery query
 from a key nobody added, and a pairing waved through on a fingerprint that
 was one word different, and a dropped file whose name was a path.
+
+## License
+
+Dual-licensed under either of
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+- MIT license ([LICENSE-MIT](LICENSE-MIT))
+
+at your option. Unless you state otherwise, any contribution you intentionally
+submit for inclusion in this work shall be dual-licensed as above, with no
+additional terms or conditions.
