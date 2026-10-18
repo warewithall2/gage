@@ -6,7 +6,7 @@ In `/register`, the successful proof path serializes and writes the full owners 
 > `let st = g.as_mut().unwrap();`  
 > `let data = serde_json::to_vec_pretty(&st.owners).unwrap_or_default();`  
 > `let _ = std::fs::write(path, data);`  
-> — [src/relay.rs](/home/owenware/Projects/ctx/src/relay.rs:471), [src/relay.rs](/home/owenware/Projects/ctx/src/relay.rs:517)
+> — [src/relay.rs](src/relay.rs:471), [src/relay.rs](src/relay.rs:517)
 
 The first leg of registration is unauthenticated, and the pending-claim cap is 10,000. An attacker can generate many claims, prove them by generating the matching box keys, and register many distinct mailboxes. Each registration grows `owners.json`; serializing and rewriting it under the global lock makes concurrent requests wait behind increasingly expensive disk work. This is a real remote denial-of-service path. There is no per-party mailbox cap: the registration check only rejects a box key already bound to a different signing key. The unauthenticated rate limit raises the cost but does not remove the issue.
 

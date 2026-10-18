@@ -243,9 +243,9 @@ mod tests {
         // Bare host:port is the tailnet and loopback case: no TLS, and the
         // Host header keeps the port, which is what the relay has always
         // been sent.
-        let (dial, host, tls) = target("100.102.84.72:7788");
-        assert_eq!(dial, "100.102.84.72:7788");
-        assert_eq!(host, "100.102.84.72:7788");
+        let (dial, host, tls) = target("100.64.0.1:7788");
+        assert_eq!(dial, "100.64.0.1:7788");
+        assert_eq!(host, "100.64.0.1:7788");
         assert!(tls.is_none());
 
         // A bare host gets the project's port rather than 80.

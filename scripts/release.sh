@@ -15,6 +15,10 @@
 # have an exact answer.
 set -u
 cd "$(dirname "$0")/.." || exit 2
+# Where the checkout lives on a remote builder. It is `~/ctx` on the machines
+# this was written against, for historical reasons -- the project was called
+# that -- so it is a variable rather than a surprise.
+REMOTE_DIR=${GAGE_REMOTE_DIR:-'~/ctx'}
 REPO=$PWD
 OUT=$REPO/dist
 fail() { echo "release: $*" >&2; exit 1; }
@@ -58,24 +62,24 @@ stamp "$LOCAL" "$HOSTOS-$HOSTARCH"
 # one fewer thing to be wrong about.
 for h in "$@"; do
   echo "building on $h..."
-  if ! ssh -o BatchMode=yes -o ConnectTimeout=10 "$h" "test -d ~/ctx" 2>/dev/null; then
-    echo "  skipped: $h is unreachable or has no ~/ctx" >&2
+  if ! ssh -o BatchMode=yes -o ConnectTimeout=10 "$h" "test -d $REMOTE_DIR" 2>/dev/null; then
+    echo "  skipped: $h is unreachable or has no $REMOTE_DIR" >&2
     continue
   fi
-  ssh -o BatchMode=yes "$h" "cd ~/ctx && git fetch -q origin 2>/dev/null; \
+  ssh -o BatchMode=yes "$h" "cd $REMOTE_DIR && git fetch -q origin 2>/dev/null; \
     git rev-parse HEAD" > "$OUT/.rev.$h" 2>/dev/null
   RREV=$(tr -d '[:space:]' < "$OUT/.rev.$h"); rm -f "$OUT/.rev.$h"
   if [ "$RREV" != "$FULLREV" ]; then
     echo "  skipped: $h is at ${RREV:-unknown}, not $FULLREV -- sync it first" >&2
     continue
   fi
-  ssh -o BatchMode=yes "$h" "cd ~/ctx && . ~/.cargo/env 2>/dev/null; \
+  ssh -o BatchMode=yes "$h" "cd $REMOTE_DIR && . ~/.cargo/env 2>/dev/null; \
     cargo build --release >/dev/null 2>&1 && uname -s && uname -m" > "$OUT/.plat" 2>/dev/null \
     || { echo "  skipped: the build on $h failed" >&2; rm -f "$OUT/.plat"; continue; }
   ROS=$(sed -n 1p "$OUT/.plat" | tr '[:upper:]' '[:lower:]')
   RARCH=$(sed -n 2p "$OUT/.plat"); rm -f "$OUT/.plat"
   B=$OUT/gage-$VER-$ROS-$RARCH
-  scp -q -o BatchMode=yes "$h:~/ctx/target/release/gage" "$B" || { echo "  copy failed" >&2; continue; }
+  scp -q -o BatchMode=yes "$h:$REMOTE_DIR/target/release/gage" "$B" || { echo "  copy failed" >&2; continue; }
   chmod +x "$B"
   # Checked by asking the binary, not by trusting the path it came from.
   # A binary for another platform cannot run here -- so the host that built
@@ -84,7 +88,7 @@ for h in "$@"; do
   if [ "$ROS-$RARCH" = "$HOSTOS-$HOSTARCH" ]; then
     stamp "$B" "$ROS-$RARCH"
   else
-    RSTAMP=$(ssh -o BatchMode=yes "$h" "~/ctx/target/release/gage --version" 2>/dev/null)
+    RSTAMP=$(ssh -o BatchMode=yes "$h" "$REMOTE_DIR/target/release/gage --version" 2>/dev/null)
     case "$RSTAMP" in
       *dirty*) fail "$ROS-$RARCH was built from a dirty tree on $h" ;;
       *"$REV"*) echo "  $ROS-$RARCH: $RSTAMP (checked on $h)" ;;

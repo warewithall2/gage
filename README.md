@@ -317,7 +317,7 @@ everything you have already exchanged was built on.
 
 ## Giving it to someone else
 
-    scripts/release.sh owens-macbook-air     # build on every machine reachable
+    scripts/release.sh my-laptop     # build on every machine reachable
     cat dist/SHA256SUMS
 
 Binaries land in `dist/`, one per platform, each built on the machine it runs
@@ -577,7 +577,7 @@ means before it serves a byte.
 ### TLS, and why it is here despite the payload being sealed
 
     gage join https://relay.example.com      # certificate verified
-    gage join 100.102.84.72:7788             # no TLS: a tailnet or a loopback test
+    gage join 100.64.0.1:7788             # no TLS: a tailnet or a loopback test
 
 The scheme decides, and the address is written by a person, so the choice is
 visible rather than buried in a default.
@@ -1236,7 +1236,7 @@ never reported success -- the button is dead"*.
 ### Running it, and knowing when it breaks
 
     tests/selfcheck.sh                                  # is this machine good?
-    tests/selfcheck-status.sh owens-macbook-air         # is every machine good?
+    tests/selfcheck-status.sh my-laptop         # is every machine good?
 
 `selfcheck.sh` builds, runs all three suites, writes one status line and exits
 non-zero with a specific reason. It is scheduled daily on both machines — a
