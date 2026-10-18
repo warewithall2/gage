@@ -79,7 +79,7 @@ for h in "$@"; do
   if [ "$ROS-$RARCH" = "$HOSTOS-$HOSTARCH" ]; then
     stamp "$B" "$ROS-$RARCH"
   else
-    RSTAMP=$(ssh -o BatchMode=yes "$h" "~/countersign/target/release/countersign --version" 2>/dev/null)
+    RSTAMP=$(ssh -o BatchMode=yes "$h" "~/ctx/target/release/countersign --version" 2>/dev/null)
     case "$RSTAMP" in
       *dirty*) fail "$ROS-$RARCH was built from a dirty tree on $h" ;;
       *"$REV"*) echo "  $ROS-$RARCH: $RSTAMP (checked on $h)" ;;
