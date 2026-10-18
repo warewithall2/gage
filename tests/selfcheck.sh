@@ -49,7 +49,16 @@ for p in 7799 7809 7813 7891 7892 7893 7895 7898 7903 7905; do
     netstat -an -p tcp 2>/dev/null | grep -i listen | grep -q "\.$p " && BUSY="$BUSY $p"
   fi
 done
-[ -n "$BUSY" ] && fail "ports in use by something else:$BUSY (the suite needs them; a stray \`ctx ui\` is the usual cause)"
+[ -n "$BUSY" ] && fail "ports in use by something else:$BUSY (the suite needs them; a stray \`gage ui\` is the usual cause)"
+
+# Same reason as the ports: a real `gage lan` shares the network with the LAN
+# checks, so "nobody announcing" sees a genuine announcement. An environment
+# collision reported as a defect wastes more time than it saves.
+for _p in $(pgrep -x gage 2>/dev/null; pgrep -x ctx 2>/dev/null); do
+  if tr '\0' ' ' < "/proc/$_p/cmdline" 2>/dev/null | grep -qE ' (lan|listen)( |$)'; then
+    fail "a real \`gage lan\` or \`gage listen\` is running (pid $_p); the LAN checks share that network and would report failures that are not defects"
+  fi
+done
 
 # The working tree must be clean, or the result describes code nobody has.
 if [ -n "$(git -C "$REPO" status --porcelain 2>/dev/null)" ]; then

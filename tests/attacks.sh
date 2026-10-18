@@ -21,6 +21,20 @@ code()   { if [ "$2" = "$3" ]; then ok; else bad "exit $2, wanted $3 ($1)"; fi; 
 # suite was lying, which is the worse way round.
 nfiles() { ls "$1" 2>/dev/null | wc -l | tr -d '[:space:]'; }
 
+# A real `gage lan` on this machine broadcasts on the same network the LAN
+# checks use, so "nobody announcing" sees a genuine announcement and reports
+# a defect that is not one. Said once, up front, rather than leaving someone
+# to chase four confusing failures -- the same lesson as the port preflight.
+for _p in $(pgrep -x gage 2>/dev/null; pgrep -x ctx 2>/dev/null); do
+  if tr '\0' ' ' < "/proc/$_p/cmdline" 2>/dev/null | grep -qE ' (lan|listen)( |$)'; then
+    echo "NOTE: a real \`gage lan\` or \`gage listen\` is running (pid $_p)."
+    echo "      The LAN checks below share this network with it and some will"
+    echo "      fail for that reason alone. Stop it, or ignore those four."
+    echo
+    break
+  fi
+done
+
 # The pending bundle with this subject, in this home.
 #
 # NOT `inbox --json | sed ... | head -1`, which takes whichever bundle the
