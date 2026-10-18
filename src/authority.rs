@@ -1,20 +1,20 @@
 //! What the receiver's own user has pre-authorised.
 //!
-//! Every other verdict in ctx is a statement about what is *known*. This is
+//! Every other verdict in gage is a statement about what is *known*. This is
 //! the only thing in the tool that tells an agent it may *act*, which is why
 //! it is kept in its own file with its own rules.
 //!
 //! Three properties it must have, in order of how badly each would hurt:
 //!
 //! 1. **Nothing a sender can influence reaches this file.** It is local, the
-//!    receiver's human writes it, and no command in ctx adds a line to it --
+//!    receiver's human writes it, and no command in gage adds a line to it --
 //!    see `gage authority`, which only prints. A `gage allow` subcommand would
 //!    be a privilege escalation reachable by prompt injection: an agent that
 //!    can be talked into running a command could be talked into granting
 //!    itself the authority to obey the thing that talked it into it.
 //!    The guard is partial and worth being honest about: it stops the obvious
 //!    path, not the general one. Any agent with a shell and write access to
-//!    the ctx home can append a line to this file directly -- as happened
+//!    the gage home can append a line to this file directly -- as happened
 //!    within the hour, when the grants used to run today's reviews were
 //!    written by an agent rather than typed by the human. There is no local
 //!    fix for that: a file the receiver's process can read, a process

@@ -117,7 +117,7 @@ pub fn take_lock(target: &Path) -> io::Result<Lock> {
         if Instant::now() > deadline {
             return Err(io::Error::new(
                 io::ErrorKind::TimedOut,
-                format!("{} stayed locked; another ctx process is stuck", lp.display()),
+                format!("{} stayed locked; another gage process is stuck", lp.display()),
             ));
         }
         std::thread::sleep(Duration::from_millis(20));

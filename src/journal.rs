@@ -1,6 +1,6 @@
 //! What this machine did with what arrived.
 //!
-//! Every other record in ctx is an artifact: a bundle in `pending`, a copy in
+//! Every other record in gage is an artifact: a bundle in `pending`, a copy in
 //! `sent`, a witness in `state.json`. Artifacts answer *what was said*. None
 //! of them answers *what this machine decided*, and once anything happens
 //! while nobody is watching, that is the only question worth asking.
@@ -47,7 +47,7 @@
 //!
 //! ## What a log cannot tell you, said here so nobody reads it as more
 //!
-//! ctx's knowledge stops at the bundle boundary. This file cannot say what
+//! gage's knowledge stops at the bundle boundary. This file cannot say what
 //! the agent did after `gage open` -- which tools it called, which files it
 //! touched, what it sent onward -- nor whether a human was actually looking,
 //! because `accept` records an act and not an intention. It cannot prove the
@@ -86,7 +86,7 @@ pub struct Entry {
     /// retirement cut, which is what it is for. It is not an ordering of this
     /// file.
     pub seq: u64,
-    /// Wall clock, which gives correlation with everything outside ctx.
+    /// Wall clock, which gives correlation with everything outside gage.
     /// Both, because neither alone is enough: `seq` cannot be compared with
     /// an incident report and a timestamp cannot be trusted to increase.
     pub at: String,
@@ -128,7 +128,7 @@ pub struct Entry {
     /// and called it "the record of a key having changed underneath". A
     /// reviewer listed the other explanations: a backfilled first entry, a
     /// verdict computed after acceptance, a contact edited by hand, local
-    /// tampering, or a ctx upgrade changing what a verdict means. The entry
+    /// tampering, or a gage upgrade changing what a verdict means. The entry
     /// freezes an **outcome**, not the evidence that produced it -- it does
     /// not hold the contacts revision, the key's status inputs, or the code
     /// version -- so a difference is a question to investigate rather than an

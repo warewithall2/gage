@@ -1,7 +1,7 @@
 <!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>ctx</title>
+<title>gage</title>
 <style>
 /* One accent, one warm neutral, semantic colour reserved for trust verdicts
    so nothing decorative ever borrows the colour that means "unverified".
@@ -274,7 +274,7 @@ textarea:focus{border-color:var(--accent);outline:none}
 <div class="app" id="app">
   <div class="left">
     <div class="brand">
-      <span class="logo">ctx</span>
+      <span class="logo">gage</span>
       <span class="wordmark" id="wordmark">Conversations</span>
       <span class="whoami" id="me"></span>
     </div>
@@ -288,7 +288,7 @@ textarea:focus{border-color:var(--accent);outline:none}
   <div class="right">
     <div class="head">
       <button class="back" onclick="back()" title="Back">&larr;</button>
-      <h1 id="title">ctx</h1><span class="sp"></span>
+      <h1 id="title">gage</h1><span class="sp"></span>
       <span id="hstate"></span>
       <button class="headbtn" id="settle" hidden onclick="act('close',SEL)">Mark settled</button>
     </div>
@@ -429,7 +429,7 @@ function render(){
   else st.hidden=!DATA.verdicts_stale;
   if(!LERR && DATA.verdicts_stale) st.textContent=
     'Verdicts withheld: your inbox could not be recorded, so a verdict here could read '+
-    'milder than the truth. Usually another ctx process is writing \u2014 it clears on '+
+    'milder than the truth. Usually another gage process is writing \u2014 it clears on '+
     'the next poll. Until then, read bundles with gage open in a terminal.';
   document.getElementById('me').innerHTML = me
     ? `<div class="h">${esc(me.handle)}</div><div class="k">${esc((me.key||'').slice(0,10))}&hellip;</div>`
@@ -468,7 +468,7 @@ function render(){
   // header two and a half seconds after `setTab` set the other one.
   if(TAB!=='chats') return;
   const t=th.find(x=>x.id===SEL);
-  document.getElementById('title').textContent = t ? t.subject : 'ctx';
+  document.getElementById('title').textContent = t ? t.subject : 'gage';
   document.getElementById('hstate').innerHTML = t
     ? `<span class="state ${sClass(t.state)}">${esc(sShort(t.state))}</span>` : '';
   document.getElementById('settle').hidden = !t || t.state==='closed';
@@ -514,7 +514,7 @@ function ckey(e){ if((e.metaKey||e.ctrlKey)&&e.key==='Enter'){e.preventDefault()
 // cross-site fetch that tries must first pass a preflight the server does not
 // answer. Without it, any page you visited could act on your inbox.
 const post=(path,body)=>fetch(path,{method:'POST',headers:
-  Object.assign({'X-Ctx':'1'},body?{'Content-Type':'application/json'}:{}),
+  Object.assign({'X-Gage':'1'},body?{'Content-Type':'application/json'}:{}),
   body:body?JSON.stringify(body):undefined});
 
 async function act(what,id){
@@ -795,13 +795,13 @@ function setTab(t){
       <p>Approving one asks for a word-pair you have to read off the other machine.
         That is not a formality: the pairs come from the key, so a key can quote its
         own in a message to you, and only the other machine's screen is evidence.</p>
-      <p>Refusing records that you said no. It is not a block &mdash; nothing in ctx
+      <p>Refusing records that you said no. It is not a block &mdash; nothing in gage
         can stop a bundle being delivered, and mail from a refused key still arrives
         and still waits for you to accept it.</p>
       <p><code>gage decline &lt;key&gt;</code> and <code>gage undecline &lt;key&gt;</code>
         do the same from a terminal.</p></div>`;
   }else{
-    document.getElementById('title').textContent='ctx';
+    document.getElementById('title').textContent='gage';
   }
   tabsRender(); budRender();
 }
@@ -831,7 +831,7 @@ async function budReveal(k){
   ABUSY=true;AERR='';AOK='';budRender();
   try{
     const r=await fetch('/api/connect',{method:'POST',
-      headers:{'X-Ctx':'1','Content-Type':'application/json'},
+      headers:{'X-Gage':'1','Content-Type':'application/json'},
       body:JSON.stringify({key:k,name:'',confirm:ACONF})});
     const j=await r.json().catch(()=>({}));
     if(!r.ok)throw new Error(j.error||('HTTP '+r.status));
@@ -944,7 +944,7 @@ function budRender(){
       style="color:inherit">Refused (${BUD.refused.length}) ${SHOWREF?'&#9662;':'&#9656;'}</a></div>`;
     if(SHOWREF){
       h+=`<div class="lansub" style="margin-bottom:8px">Refusing records a decision. It does
-        not block anything &mdash; nothing in ctx can stop a bundle being delivered, and
+        not block anything &mdash; nothing in gage can stop a bundle being delivered, and
         mail from these keys still arrives and still waits for you to accept it. What it
         buys is that you are not asked about these again. Their word-pairs are not shown
         here, so that un-refusing one puts you back in front of the same check.</div>`;
@@ -968,7 +968,7 @@ function budRender(){
 async function budPost(path,body){
   ABUSY=true;AERR='';AOK='';budRender();
   try{
-    const r=await fetch(path,{method:'POST',headers:{'X-Ctx':'1','Content-Type':'application/json'},
+    const r=await fetch(path,{method:'POST',headers:{'X-Gage':'1','Content-Type':'application/json'},
       body:JSON.stringify(body)});
     const j=await r.json().catch(()=>({}));
     if(!r.ok)throw new Error(j.error||('HTTP '+r.status));

@@ -1,4 +1,4 @@
-//! ctx -- hand context between agents, with a trust boundary.
+//! gage -- hand context between agents, with a trust boundary.
 //!
 //! Transport-agnostic on purpose. A bundle is a directory, so it moves over
 //! anything you already have: a shared folder for two agents on one machine,
@@ -37,9 +37,9 @@ use std::process::ExitCode;
 #[command(
     name = "gage",
     about = "Hand context between agents, with provenance",
-    // The version carries the build's commit, because "which ctx is this"
+    // The version carries the build's commit, because "which gage is this"
     // is the first question when two machines disagree -- and with the
-    // journal freezing verdicts, "a ctx upgrade changed what a verdict
+    // journal freezing verdicts, "a gage upgrade changed what a verdict
     // means" is an explanation an auditor has to be able to rule out.
     version = concat!(env!("CARGO_PKG_VERSION"), " (", env!("CTX_BUILD_REV"), ")")
 )]
@@ -88,7 +88,7 @@ enum Cmd {
     /// and then stops at the one step that does: confirming the other
     /// party's word-pairs with them, out loud, over a channel that is not
     /// this one. That step is not automated here because automating it
-    /// would be removing the only thing ctx actually does
+    /// would be removing the only thing gage actually does
     Connect {
         /// The relay to register with, e.g. https://relay.example.com.
         /// Omit it to see where you stand and get your share line again
@@ -200,7 +200,7 @@ enum Cmd {
         /// Show contents even when the signature does not verify
         #[arg(long)] reveal: bool,
     },
-    /// Map a handle to a local ctx home, so --to delivers with no --out
+    /// Map a handle to a local gage home, so --to delivers with no --out
     Route { handle: String, home: PathBuf },
     /// Conversations, grouped, newest activity first
     Threads {
@@ -315,7 +315,7 @@ enum Cmd {
     /// Who is announcing themselves on this network, right now
     Nearby {
         /// Also announce YOURSELF, for this many seconds. Off by default:
-        /// ctx has never had presence, and a laptop broadcasting its handle
+        /// gage has never had presence, and a laptop broadcasting its handle
         /// and public key onto every network it joins would change that
         /// quietly. This is the pairing mode, and it stops on its own.
         #[arg(long, value_name = "SECS", num_args = 0..=1, default_missing_value = "60")]
@@ -364,9 +364,9 @@ enum Cmd {
 fn observe_or_warn() {
     if let Err(e) = routes::observe_inbox() {
         eprintln!(
-            "ctx: WARNING -- could not record what is in your inbox ({e}). A retired-key \
+            "gage: WARNING -- could not record what is in your inbox ({e}). A retired-key \
              verdict below may read as ARRIVAL UNRECORDED when it should be a rejection. \
-             Re-run once no other ctx process is writing."
+             Re-run once no other gage process is writing."
         );
     }
 }
@@ -531,7 +531,7 @@ fn fetch_mailbox(
         }
         let loaded = bundle::load(&tmp)?;
         // The id becomes a directory name, so its shape is checked before the
-        // join. A signed manifest carrying `id: "../../../../tmp/ctx-pwn"`
+        // join. A signed manifest carrying `id: "../../../../tmp/gage-pwn"`
         // would otherwise have written a bundle outside the inbox entirely.
         if !manifest::id_is_safe(&loaded.manifest.id) {
             eprintln!(
@@ -648,7 +648,7 @@ fn main() -> ExitCode {
     match run() {
         Ok(code) => code,
         Err(e) => {
-            eprintln!("ctx: {e}");
+            eprintln!("gage: {e}");
             ExitCode::FAILURE
         }
     }
@@ -1030,7 +1030,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             println!("  claim, and it is not what the verdict uses.");
             // Said because the consequence is surprising: the same bundle can
             // read as attributable on one machine and not on another.
-            println!("  this is recorded for THIS ctx home only. Another machine sharing");
+            println!("  this is recorded for THIS gage home only. Another machine sharing");
             println!("  your identity has its own record and needs its own keychange,");
             println!("  and until then the old key is still live over there.");
             println!("  their old bundles stay verifiable, marked as signed with a retired key");
@@ -1087,7 +1087,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 println!("  arriving later is rejected, and a bundle with no record either way");
                 println!("  reads as ARRIVAL UNRECORDED rather than as an accusation");
             }
-            println!("  recorded for THIS ctx home only -- another machine on the same");
+            println!("  recorded for THIS gage home only -- another machine on the same");
             println!("  identity keeps its own record");
             // Said out loud rather than left to be discovered. Someone who
             // runs this believing it covers everything from that person, when
@@ -1285,12 +1285,12 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 Some(s) if !dir.exists() && manifest::id_is_safe(s) => {
                     match routes::find_by_id(&identity::home(), s) {
                         Some(p) => {
-                            eprintln!("ctx: {s} -> {}", p.display());
+                            eprintln!("gage: {s} -> {}", p.display());
                             p
                         }
                         None => {
                             return Err(format!(
-                                "no bundle {s} in this ctx home. `gage inbox` lists what is here"
+                                "no bundle {s} in this gage home. `gage inbox` lists what is here"
                             )
                             .into())
                         }
@@ -1312,7 +1312,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 format!(
                     "refusing to render a trust verdict: could not record what is in your \
                      inbox ({e}). The verdict would be computed from stale state and could \
-                     read milder than the truth. Re-run once no other ctx process is \
+                     read milder than the truth. Re-run once no other gage process is \
                      writing."
                 )
                 .into()
@@ -1324,14 +1324,14 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             // also bookkeeping, and bookkeeping must not turn a successful
             // read into a failure after the content has already been printed.
             if let Err(e) = state::LocalState::load().mark_read(&l.manifest.id) {
-                eprintln!("ctx: could not record this as read: {e}");
+                eprintln!("gage: could not record this as read: {e}");
             }
             // Opening is the event that matters most to an auditor, because
             // it is the moment the contents entered an agent's context. Same
             // rule as above: bookkeeping must not turn a successful read into
             // a failure after the content has already been printed.
             if let Err(e) = journal::record(journal::Event::Opened, &l.dir) {
-                eprintln!("ctx: could not journal this read: {e}");
+                eprintln!("gage: could not journal this read: {e}");
             }
             // Non-zero when the content could not be attributed, so a script
             // or agent harness can branch on it instead of parsing prose.
@@ -1454,7 +1454,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             // machine that would not accept a bundle because it could not
             // write a log line has turned an audit feature into an outage.
             if let Err(e) = journal::record(journal::Event::Accepted, &dest) {
-                eprintln!("ctx: could not journal this acceptance: {e}");
+                eprintln!("gage: could not journal this acceptance: {e}");
             }
             println!("accepted {id}");
             println!("  gage open {}", dest.display());
@@ -1471,7 +1471,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             // existed is gone, and deletion becomes indistinguishable from
             // never having arrived.
             if let Err(e) = journal::record(journal::Event::Rejected, &p) {
-                eprintln!("ctx: could not journal this rejection: {e}");
+                eprintln!("gage: could not journal this rejection: {e}");
             }
             std::fs::remove_dir_all(&p)?;
             println!("rejected {id}, deleted unread");
@@ -2067,7 +2067,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             let id = identity::Identity::load()?;
             // If `gage lan` is running it has already written down who is
             // here, so pairing needs no second announce window and no timing
-            // between two machines. Falling back to listening keeps `ctx
+            // between two machines. Falling back to listening keeps `gage
             // pair` working on its own.
             let live: Vec<lan::Seen> = lan::read_nearby()
                 .into_iter()

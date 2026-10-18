@@ -29,7 +29,7 @@ pub fn all_manifests() -> Vec<manifest::Manifest> {
     // Observation first, verdicts second. A failure is reported rather than
     // swallowed: every caller is about to show a verdict that depends on it.
     if let Err(e) = routes::observe_inbox() {
-        eprintln!("ctx: WARNING -- inbox not recorded ({e}); verdicts below may read milder than the truth");
+        eprintln!("gage: WARNING -- inbox not recorded ({e}); verdicts below may read milder than the truth");
     }
     let mut out = Vec::new();
     for stage in [
@@ -377,7 +377,7 @@ pub fn send_bundle(a: SendArgs) -> Result<manifest::Manifest, Box<dyn std::error
             if !unrouted.is_empty() && !lan {
                 println!("  no local route for: {}", unrouted.join(", "));
                 println!("  bundle is at {} -- move it yourself, or", stage.display());
-                println!("  gage route <handle> <their-ctx-home> to deliver automatically");
+                println!("  gage route <handle> <their-gage-home> to deliver automatically");
             }
         
     Ok(m)

@@ -16,7 +16,7 @@ use std::path::PathBuf;
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Routes {
-    /// handle -> that agent's ctx home on this machine
+    /// handle -> that agent's gage home on this machine
     #[serde(default)]
     pub local: BTreeMap<String, String>,
 }
@@ -54,13 +54,13 @@ impl Routes {
 pub fn observe_inbox() -> std::io::Result<crate::state::LocalState> {
     let st = crate::state::LocalState::observe(&scan_inbox())?;
     // Dated here because this is where the inbox is noticed, and noticing is
-    // the only arrival ctx can honestly claim -- nothing tells this machine
+    // the only arrival gage can honestly claim -- nothing tells this machine
     // when a bundle was placed in its inbox. After `observe`, so the entry
     // carries the sequence number the witness was recorded at rather than the
     // one before it.
     let failed = crate::journal::record_arrivals();
     if failed > 0 {
-        eprintln!("ctx: could not journal {failed} arrival(s)");
+        eprintln!("gage: could not journal {failed} arrival(s)");
     }
     Ok(st)
 }
@@ -274,7 +274,7 @@ fn resumable(from: &std::path::Path, dest: &std::path::Path) -> bool {
 ///
 /// Accepted is searched before pending: once a bundle has been staged, that
 /// is the copy the reader means. The id is validated before it reaches the
-/// filesystem, so this cannot be used to walk out of the ctx home.
+/// filesystem, so this cannot be used to walk out of the gage home.
 pub fn find_by_id(ctx_home: &std::path::Path, id: &str) -> Option<PathBuf> {
     if !crate::manifest::id_is_safe(id) {
         return None;
@@ -354,7 +354,7 @@ mod tests {
     }
 
     fn scratch(name: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("ctx-routes-{}-{}", name, std::process::id()));
+        let d = std::env::temp_dir().join(format!("gage-routes-{}-{}", name, std::process::id()));
         let _ = fs::remove_dir_all(&d);
         fs::create_dir_all(&d).unwrap();
         d

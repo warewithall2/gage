@@ -60,7 +60,7 @@ pub const LISTEN_PORT: u16 = 7791;
 /// Discovery is two machines on a physical network, which is precisely the
 /// kind of surface that goes untested and then breaks in the one place a
 /// human touches -- as the viewer did, the same day this was written. Two
-/// ctx homes on one host cannot both bind a fixed port, so the ports and the
+/// gage homes on one host cannot both bind a fixed port, so the ports and the
 /// broadcast address come from the environment when it sets them. That makes
 /// the real announce, query and answer paths runnable on loopback.
 ///
@@ -142,7 +142,7 @@ pub struct Packet {
     /// `announce` | `query` | `here`. Inside the signature, so a query
     /// cannot be replayed as an announcement.
     pub t: String,
-    /// Decoration, exactly as everywhere else in ctx: a string the sender
+    /// Decoration, exactly as everywhere else in gage: a string the sender
     /// chose. Shown in quotes and never matched on.
     #[serde(default)]
     pub handle: String,
@@ -170,7 +170,7 @@ pub struct Packet {
 /// different packets produced the same signing input. Length prefixes make
 /// the encoding unambiguous for free.
 fn signed_bytes(p: &Packet) -> Vec<u8> {
-    let mut out = b"ctx-lan-1".to_vec();
+    let mut out = b"gage-lan-1".to_vec();
     for f in [
         p.t.as_str(),
         p.handle.as_str(),
@@ -194,7 +194,7 @@ pub fn now() -> u64 {
 
 /// What a wanted key looks like on the wire, hashed with the query's nonce.
 pub fn want_tag(sign_key: &str, nonce: &str) -> String {
-    crate::bundle::sha256_hex(format!("ctx-lan-want|{}|{}", sign_key.trim(), nonce).as_bytes())
+    crate::bundle::sha256_hex(format!("gage-lan-want|{}|{}", sign_key.trim(), nonce).as_bytes())
 }
 
 /// A fresh nonce, or None when the system cannot provide randomness.
@@ -1029,7 +1029,7 @@ pub fn hand_over(dir: &std::path::Path, who: &str) -> Result<Vec<String>, String
                 .map_err(|e| e.to_string())?
                 .ok_or_else(|| {
                     format!(
-                        "no answer from {who} on this network. They need `gage lan` or `ctx \
+                        "no answer from {who} on this network. They need `gage lan` or `gage \
                          listen` running, and you need to be on their list -- a query from \
                          a key they do not know is ignored, deliberately and silently."
                     )

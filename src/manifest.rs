@@ -257,7 +257,7 @@ impl Manifest {
 /// checked rather than trusted.
 ///
 /// `pull` joins it onto the inbox path, and a signed manifest carrying
-/// `id: "../../../../tmp/ctx-pwn"` would have written a bundle outside the
+/// `id: "../../../../tmp/gage-pwn"` would have written a bundle outside the
 /// inbox entirely. The ids this tool mints are 16 lowercase hex characters;
 /// anything else is refused before it becomes a path.
 pub fn id_is_safe(id: &str) -> bool {

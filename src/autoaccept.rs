@@ -4,7 +4,7 @@
 //! bundle out of `pending`. This module is the one path where that happens
 //! without the human, and it exists because the alternative people actually
 //! build is worse -- a hook that runs `gage accept` itself, which turns every
-//! grant into an unbounded one and leaves ctx unable to tell an unattended
+//! grant into an unbounded one and leaves gage unable to tell an unattended
 //! acceptance from a deliberate one afterwards.
 //!
 //! So it is in the tool, where it can be bounded and recorded. Four conditions,

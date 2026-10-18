@@ -120,7 +120,7 @@ fn read_req(stream: &TcpStream) -> std::io::Result<Req> {
             "host" => host = Some(v.to_ascii_lowercase()),
             "origin" => origin = Some(v),
             "sec-fetch-site" => fetch_site = Some(v),
-            "x-ctx" => guard = true,
+            "x-gage" => guard = true,
             // Capped well below anything legitimate. The body is one short
             // reply, and an unbounded read here is a one-line denial of
             // service against a server with no other limits.
@@ -200,10 +200,10 @@ fn may_mutate(r: &Req, port: u16) -> bool {
     //
     // The previous version skipped this block entirely when the header was
     // absent, and treated `Sec-Fetch-Site: none` as allowed, so a request
-    // carrying `X-Ctx` and no `Origin` reached the handler. A reviewer found
+    // carrying `X-Gage` and no `Origin` reached the handler. A reviewer found
     // it and was careful about the size of it: no page can produce that
     // shape, because a browser `fetch` always sends an `Origin` on a POST,
-    // and a form cannot set `X-Ctx` at all. So this was never a hole a
+    // and a form cannot set `X-Gage` at all. So this was never a hole a
     // website could drive -- it was the guard being wider than its own
     // stated property, which is that only this page may mutate.
     //
@@ -213,7 +213,7 @@ fn may_mutate(r: &Req, port: u16) -> bool {
     //
     // Which makes the contract worth stating, since a reviewer noted this
     // breaks more than browsers: a script, a CLI helper or another native app
-    // that sent `X-Ctx` and no `Origin` used to work and now gets 403. That is
+    // that sent `X-Gage` and no `Origin` used to work and now gets 403. That is
     // intended -- the CLI is the supported programmatic interface and does not
     // go through HTTP at all -- but it is a compatibility narrowing as much as
     // a fix, and anything local that was driving these routes must now send
@@ -222,10 +222,10 @@ fn may_mutate(r: &Req, port: u16) -> bool {
     // And the property is exactly this and no more: **no cross-site page can
     // reach these routes.** A second reviewer was right that "for this page
     // only" overstates it -- there is no per-page secret, so any local process
-    // can send both `X-Ctx: 1` and the correct `Origin` and be
+    // can send both `X-Gage: 1` and the correct `Origin` and be
     // indistinguishable from the page. Against a local process this is not a
     // boundary at all, and it was never meant to be: such a process already
-    // has the ctx home and the signing key, so there is nothing here for it
+    // has the gage home and the signing key, so there is nothing here for it
     // to gain.
     let Some(o) = &r.origin else {
         return false;
@@ -490,7 +490,7 @@ fn first_observed(key: &str) -> Option<String> {
 /// here: `lan` reports only what is announcing itself *while it runs*, and
 /// nothing here polls a relay to see who is alive. What each flag means:
 ///
-/// * `routed` -- a local ctx home on this machine. Certain, because it is a
+/// * `routed` -- a local gage home on this machine. Certain, because it is a
 ///   directory that either exists or does not.
 /// * `lan` -- announced itself on this network within the last minute. A
 ///   claim by that machine, timestamped by this one.
@@ -1499,7 +1499,7 @@ mod tests {
         // the shell check, which passed either way and so proved less than it
         // looked like it proved.
         for (raw, want) in [
-            ("../../../../tmp/ctx-ui-pwn", "ctx-ui-pwn"),
+            ("../../../../tmp/gage-ui-pwn", "gage-ui-pwn"),
             ("docs/notes.md", "notes.md"),
             ("C:\\Users\\x\\secrets.md", "secrets.md"),
             ("notes.md", "notes.md"),

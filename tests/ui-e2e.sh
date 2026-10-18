@@ -36,7 +36,7 @@ CTX_HOME=$T/u1 $CTX ui --port "$PORT" >/dev/null 2>&1 &
 uipid=$!
 sleep 2
 
-J=$(curl -s -H "Origin: http://127.0.0.1:$PORT" -H 'X-Ctx: 1' \
+J=$(curl -s -H "Origin: http://127.0.0.1:$PORT" -H 'X-Gage: 1' \
     "http://127.0.0.1:$PORT/api/buddies")
 read -r K PAIR <<<"$(printf '%s' "$J" | python3 -c "
 import sys,json

@@ -174,7 +174,7 @@ fn one_line(s: &str, max: usize) -> String {
 /// server there is no desktop, and `gage watch` still has to work there.
 pub fn desktop(title: &str, body: &str, urgent: bool) -> bool {
     let mut c = Command::new("notify-send");
-    c.arg("--app-name=ctx")
+    c.arg("--app-name=gage")
         .arg(format!("--urgency={}", if urgent { "critical" } else { "normal" }))
         // `--` before the positional arguments, so a subject that begins with
         // a dash is a subject rather than an option to notify-send. The
@@ -190,7 +190,7 @@ pub fn desktop(title: &str, body: &str, urgent: bool) -> bool {
 pub fn summarise(p: &[Pending]) -> (String, String) {
     if p.len() == 1 {
         let m = &p[0];
-        let t = format!("ctx: {} from {}", m.msg_type, m.from);
+        let t = format!("gage: {} from {}", m.msg_type, m.from);
         let b = if m.expects_reply {
             format!("{}\nawaiting your reply", m.subject)
         } else {
@@ -199,7 +199,7 @@ pub fn summarise(p: &[Pending]) -> (String, String) {
         (t, b)
     } else {
         let needs = p.iter().filter(|x| x.expects_reply).count();
-        let t = format!("ctx: {} new bundles", p.len());
+        let t = format!("gage: {} new bundles", p.len());
         let mut b: Vec<String> = p.iter().take(4).map(|x| format!("{} — {}", x.from, x.subject)).collect();
         if p.len() > 4 {
             b.push(format!("and {} more", p.len() - 4));
@@ -276,7 +276,7 @@ mod tests {
 
 /// Run the receiver's own command for one arrival.
 ///
-/// This is the only place in ctx where something arriving causes something to
+/// This is the only place in gage where something arriving causes something to
 /// happen without a human in the loop, so the shape of it is the whole
 /// security argument:
 ///
@@ -307,18 +307,18 @@ mod tests {
 ///    the human sees, so it leaks nothing the desktop popup does not -- but
 ///    it is the sender's text, and a hook that treats it as trustworthy input
 ///    is a hook with a problem.
-/// 3. **This code does not accept the bundle.** After `run_hook` returns, ctx
+/// 3. **This code does not accept the bundle.** After `run_hook` returns, gage
 ///    has moved nothing: the bundle is still unread, still in `pending`.
 ///
 ///    Stated about this code rather than about the world, because a reviewer
 ///    was right that the stronger phrasing was false. The hook is handed
 ///    `CTX_BUNDLE_ID` and can perfectly well run `gage accept && gage open`
-///    itself -- and for an agent loop, that is the point. What ctx guarantees
+///    itself -- and for an agent loop, that is the point. What gage guarantees
 ///    is that *nothing here* crosses the gate, so crossing it remains an act
 ///    the receiver's own hook performs, under its own name, with a journal
 ///    entry to show it. The gate is not removed; it is left where it is, for
 ///    the hook to walk through deliberately.
-/// 4. **ctx does not interpolate sender text into the command string.** The subject is written by whoever sent it. Pasted
+/// 4. **gage does not interpolate sender text into the command string.** The subject is written by whoever sent it. Pasted
 ///    into a shell line it would be a command injection with extra steps, so
 ///    the command the receiver wrote is passed to `sh -c` untouched and every
 ///    sender-chosen value arrives as `$CTX_SUBJECT` and friends -- already
@@ -326,7 +326,7 @@ mod tests {
 ///    environment variable is still a newline in whatever the hook writes it
 ///    to.
 ///
-///    Phrased as what ctx does rather than "sender text is data, never
+///    Phrased as what gage does rather than "sender text is data, never
 ///    command", which a reviewer rightly called hook-dependent. `"$CTX_SUBJECT"`
 ///    quoted is data. `eval "$CTX_SUBJECT"`, an unquoted expansion inviting
 ///    word-splitting and globbing, a value used where a command expects an
@@ -367,7 +367,7 @@ pub fn run_hook(
         .env("CTX_EXPECTS_REPLY", if p.expects_reply { "1" } else { "0" })
         .env("CTX_GRANT", p.grant.clone().unwrap_or_default())
         // So a hook does not have to guess where the bundle is, or race the
-        // watcher for it. "1" means it is already in `accepted` and `ctx
+        // watcher for it. "1" means it is already in `accepted` and `gage
         // accept` would now fail; "0" means it is still pending and a hook
         // that accepts it is spending nothing a grant counted.
         .env("CTX_AUTO_ACCEPTED", if auto_accepted { "1" } else { "0" })
@@ -419,7 +419,7 @@ mod hook_tests {
 
     #[test]
     fn the_hook_gets_sender_text_as_data_not_as_shell() {
-        let out = std::env::temp_dir().join(format!("ctx-hook-{}", std::process::id()));
+        let out = std::env::temp_dir().join(format!("gage-hook-{}", std::process::id()));
         let _ = std::fs::remove_file(&out);
         let mut hostile = p();
         // A subject that would run a command if it were ever pasted into the

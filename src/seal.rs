@@ -221,7 +221,7 @@ mod tests {
     #[test]
     fn rejects_items_the_manifest_does_not_declare() {
         let _guard = HOME.lock().unwrap_or_else(|e| e.into_inner());
-        let tmp = std::env::temp_dir().join(format!("ctx-seal-test-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("gage-seal-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         // set_var is unsafe in this edition; HOME serialises the tests that
         // depend on it.
@@ -252,7 +252,7 @@ mod tests {
     #[test]
     fn rejects_a_path_that_escapes_the_bundle() {
         let _guard = HOME.lock().unwrap_or_else(|e| e.into_inner());
-        let tmp = std::env::temp_dir().join(format!("ctx-esc-test-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("gage-esc-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         // set_var is unsafe in this edition; HOME serialises the tests that
         // depend on it.
@@ -262,7 +262,7 @@ mod tests {
         // Declared in the manifest AND present in the package, so the only
         // thing standing between this and a write outside the bundle is
         // path_is_safe.
-        let escape = "items/../../../../tmp/ctx-pwned";
+        let escape = "items/../../../../tmp/gage-pwned";
         let man = manifest_json(&[(escape, b"owned")]);
         let pkg = Package {
             manifest: B64.encode(&man),
@@ -278,7 +278,7 @@ mod tests {
             "escaping path was accepted, or refused for the wrong reason: {err}"
         );
         assert!(
-            !std::path::Path::new("/tmp/ctx-pwned").exists(),
+            !std::path::Path::new("/tmp/gage-pwned").exists(),
             "a file was written outside the bundle"
         );
         let _ = std::fs::remove_dir_all(&tmp);
@@ -300,7 +300,7 @@ mod tests {
         carried: Vec<(String, String)>,
     ) -> (std::path::PathBuf, std::io::Result<()>) {
         let _guard = HOME.lock().unwrap_or_else(|e| e.into_inner());
-        let tmp = std::env::temp_dir().join(format!("ctx-seal-{name}-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("gage-seal-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         unsafe { std::env::set_var("CTX_HOME", tmp.join("home")) };
         let id = crate::identity::Identity::create(name).unwrap();
