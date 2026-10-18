@@ -72,8 +72,13 @@ impl Decision {
     /// One line for the watcher's output. Never includes sender-written text.
     pub fn explain(&self) -> String {
         match self {
-            Decision::Yes { grant, used, max, .. } => {
-                format!("accepted unattended, {} of {max} in this thread ({grant})", used + 1)
+            Decision::Yes {
+                grant, used, max, ..
+            } => {
+                format!(
+                    "accepted unattended, {} of {max} in this thread ({grant})",
+                    used + 1
+                )
             }
             Decision::NoGrant => "no grant covers it, so it stays pending".to_string(),
             Decision::ThreadClaimDisagreesWithParent => {
@@ -139,8 +144,7 @@ pub fn decide(
     if !l.tampered.is_empty() {
         return Decision::NoGrant;
     }
-    let Ok(g) =
-        authority.lookup(contacts, l.trust, &m.from.key, m.msg_type, parent.is_some())
+    let Ok(g) = authority.lookup(contacts, l.trust, &m.from.key, m.msg_type, parent.is_some())
     else {
         return Decision::NoGrant;
     };
@@ -179,7 +183,11 @@ pub fn decide(
     // thread id each time and collect a fresh budget for each.
     let used = used(&parent.thread);
     if used >= max {
-        return Decision::BudgetSpent { grant: rendered, used, max };
+        return Decision::BudgetSpent {
+            grant: rendered,
+            used,
+            max,
+        };
     }
     Decision::Yes {
         grant: rendered,
@@ -199,7 +207,14 @@ pub fn perform(
     id: &str,
     d: &Decision,
 ) -> std::io::Result<std::path::PathBuf> {
-    let Decision::Yes { grant, line, used, max, thread } = d else {
+    let Decision::Yes {
+        grant,
+        line,
+        used,
+        max,
+        thread,
+    } = d
+    else {
         return Err(std::io::Error::other("not an acceptance"));
     };
     let from = crate::routes::pending_dir(home).join(id);
@@ -243,10 +258,13 @@ pub fn perform(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::authority::{parse, Grant};
+    use crate::authority::{Grant, parse};
 
     fn grant(text: &str) -> Grant {
-        parse(text).expect("fixture parses").pop().expect("one grant")
+        parse(text)
+            .expect("fixture parses")
+            .pop()
+            .expect("one grant")
     }
 
     #[test]
@@ -306,7 +324,11 @@ mod tests {
             Decision::NoGrant,
             Decision::ThreadClaimDisagreesWithParent,
             Decision::GrantIsNotAutoAccept("allow codex question".into()),
-            Decision::BudgetSpent { grant: "allow codex question".into(), used: 4, max: 4 },
+            Decision::BudgetSpent {
+                grant: "allow codex question".into(),
+                used: 4,
+                max: 4,
+            },
         ] {
             let s = d.explain();
             assert!(s.contains("stays pending"), "{s}");
@@ -324,7 +346,10 @@ mod tests {
 
     fn loaded(claimed_thread: Option<&str>) -> crate::bundle::Loaded {
         use crate::manifest::*;
-        let p = Peer { handle: "sndr".into(), key: "SNDRKEY".into() };
+        let p = Peer {
+            handle: "sndr".into(),
+            key: "SNDRKEY".into(),
+        };
         crate::bundle::Loaded {
             manifest: Manifest {
                 v: 1,
@@ -381,7 +406,14 @@ mod tests {
         // A reply that keeps its parent's thread, with the budget spent.
         let d = decide(&c, &a, &loaded(Some("PARENT")), Some(parent.clone()), &used);
         assert!(
-            matches!(d, Decision::BudgetSpent { used: 1, max: 1, .. }),
+            matches!(
+                d,
+                Decision::BudgetSpent {
+                    used: 1,
+                    max: 1,
+                    ..
+                }
+            ),
             "a spent budget was not spent: {d:?}"
         );
         // And one that claims a thread of its own is refused before the

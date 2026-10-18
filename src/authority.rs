@@ -81,7 +81,11 @@ impl fmt::Display for Grant {
             Subject::Key(k) => k.as_str(),
             Subject::Name(n) => n.as_str(),
         };
-        write!(f, "allow {who} {}", self.msg_type.map_or("any", |t| t.label()))?;
+        write!(
+            f,
+            "allow {who} {}",
+            self.msg_type.map_or("any", |t| t.label())
+        )?;
         if self.in_reply_only {
             write!(f, " in-reply-only")?;
         }
@@ -133,8 +137,16 @@ impl Authority {
             return Self::default();
         };
         match parse(&text) {
-            Ok(grants) => Self { grants, present: true, error: None },
-            Err(e) => Self { grants: Vec::new(), present: true, error: Some(e) },
+            Ok(grants) => Self {
+                grants,
+                present: true,
+                error: None,
+            },
+            Err(e) => Self {
+                grants: Vec::new(),
+                present: true,
+                error: Some(e),
+            },
         }
     }
 
@@ -221,14 +233,19 @@ pub fn answers_something_i_sent(
     if !crate::manifest::id_is_safe(parent) {
         return None;
     }
-    let p = crate::routes::sent_dir(home).join(parent).join("manifest.json");
+    let p = crate::routes::sent_dir(home)
+        .join(parent)
+        .join("manifest.json");
     let bytes = std::fs::read(&p).ok()?;
     let parent_m = serde_json::from_slice::<crate::manifest::Manifest>(&bytes).ok()?;
     let me = crate::identity::Identity::load().ok()?;
     if parent_m.from.key != me.public_b64() {
         return None;
     }
-    Some(Parent { id: parent.to_string(), thread: parent_m.thread_id().to_string() })
+    Some(Parent {
+        id: parent.to_string(),
+        thread: parent_m.thread_id().to_string(),
+    })
 }
 
 /// A parent message this machine sent, as read from its own `sent/` copy.
@@ -247,7 +264,10 @@ pub struct Parent {
 /// a 20-character handle would be read as a key, match nothing, and grant
 /// nothing.
 fn looks_like_a_key(tok: &str) -> bool {
-    tok.len() >= 20 && tok.chars().all(|c| c.is_ascii_alphanumeric() || "+/=_-".contains(c))
+    tok.len() >= 20
+        && tok
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "+/=_-".contains(c))
 }
 
 pub fn parse(text: &str) -> Result<Vec<Grant>, String> {
@@ -353,16 +373,21 @@ mod tests {
     }
 
     fn authority(text: &str) -> Authority {
-        Authority { grants: parse(text).expect("fixture parses"), present: true, error: None }
+        Authority {
+            grants: parse(text).expect("fixture parses"),
+            present: true,
+            error: None,
+        }
     }
 
     #[test]
     fn a_grant_covers_the_kind_and_the_key_it_names() {
         let a = authority("allow codex review-request\n");
         let c = contacts();
-        assert!(a
-            .lookup(&c, Trust::Known, "CODEXKEY", MsgType::ReviewRequest, false)
-            .is_ok());
+        assert!(
+            a.lookup(&c, Trust::Known, "CODEXKEY", MsgType::ReviewRequest, false)
+                .is_ok()
+        );
         // Same sender, different kind.
         assert_eq!(
             a.lookup(&c, Trust::Known, "CODEXKEY", MsgType::Question, false),
@@ -370,7 +395,13 @@ mod tests {
         );
         // Same kind, different sender.
         assert_eq!(
-            a.lookup(&c, Trust::Known, "STRANGERKEY", MsgType::ReviewRequest, false),
+            a.lookup(
+                &c,
+                Trust::Known,
+                "STRANGERKEY",
+                MsgType::ReviewRequest,
+                false
+            ),
             Err(Denied::NoMatch)
         );
     }
@@ -395,9 +426,10 @@ mod tests {
                 "{t:?} reached a grant"
             );
         }
-        assert!(a
-            .lookup(&c, Trust::Known, "CODEXKEY", MsgType::ReviewRequest, false)
-            .is_ok());
+        assert!(
+            a.lookup(&c, Trust::Known, "CODEXKEY", MsgType::ReviewRequest, false)
+                .is_ok()
+        );
     }
 
     #[test]
@@ -407,9 +439,19 @@ mod tests {
         let text = "allow codex review-request\nallow codex reviewrequest\n";
         let e = parse(text).expect_err("second line is not a kind");
         assert!(e.contains("line 2"), "{e}");
-        let a = Authority { grants: Vec::new(), present: true, error: Some(e) };
+        let a = Authority {
+            grants: Vec::new(),
+            present: true,
+            error: Some(e),
+        };
         assert_eq!(
-            a.lookup(&contacts(), Trust::Known, "CODEXKEY", MsgType::ReviewRequest, false),
+            a.lookup(
+                &contacts(),
+                Trust::Known,
+                "CODEXKEY",
+                MsgType::ReviewRequest,
+                false
+            ),
             Err(Denied::Unreadable)
         );
     }
@@ -421,7 +463,10 @@ mod tests {
         // So the name is looked up in the receiver's contacts, by key.
         let a = authority("allow codex any\n");
         let mut c = contacts();
-        assert!(a.lookup(&c, Trust::Known, "CODEXKEY", MsgType::Share, false).is_ok());
+        assert!(
+            a.lookup(&c, Trust::Known, "CODEXKEY", MsgType::Share, false)
+                .is_ok()
+        );
         // Rename the contact and the grant stops matching that key. The grant
         // follows your label, which is the thing you control.
         c.keys.insert("CODEXKEY".into(), "codex-old".into());
@@ -439,7 +484,10 @@ mod tests {
             a.lookup(&c, Trust::Known, "CODEXKEY", MsgType::Question, false),
             Err(Denied::NoMatch)
         );
-        assert!(a.lookup(&c, Trust::Known, "CODEXKEY", MsgType::Question, true).is_ok());
+        assert!(
+            a.lookup(&c, Trust::Known, "CODEXKEY", MsgType::Question, true)
+                .is_ok()
+        );
     }
 
     #[test]
@@ -463,10 +511,18 @@ mod tests {
     fn a_key_is_accepted_in_place_of_a_name() {
         let a = authority("allow CODEXKEY0000000000000000 answer\n");
         let mut c = contacts();
-        c.keys.insert("CODEXKEY0000000000000000".into(), "whatever".into());
-        assert!(a
-            .lookup(&c, Trust::Known, "CODEXKEY0000000000000000", MsgType::Answer, false)
-            .is_ok());
+        c.keys
+            .insert("CODEXKEY0000000000000000".into(), "whatever".into());
+        assert!(
+            a.lookup(
+                &c,
+                Trust::Known,
+                "CODEXKEY0000000000000000",
+                MsgType::Answer,
+                false
+            )
+            .is_ok()
+        );
     }
 
     #[test]

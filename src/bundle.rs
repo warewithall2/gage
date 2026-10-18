@@ -10,9 +10,11 @@
 //! problem that has broken real signing schemes.
 
 use crate::identity::Identity;
-use crate::manifest::{path_is_safe, AgentInfo, Hop, HopAction, Item, ItemKind, Manifest, Peer, FORMAT_VERSION};
+use crate::manifest::{
+    AgentInfo, FORMAT_VERSION, Hop, HopAction, Item, ItemKind, Manifest, Peer, path_is_safe,
+};
 use crate::trust::{Contacts, Trust};
-use base64::{engine::general_purpose::STANDARD as B64, Engine};
+use base64::{Engine, engine::general_purpose::STANDARD as B64};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -102,15 +104,40 @@ pub fn now_rfc3339() -> String {
     loop {
         let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
         let len = if leap { 366 } else { 365 };
-        if d < len { break }
+        if d < len {
+            break;
+        }
         d -= len;
         y += 1;
     }
     let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
-    let ml = [31, if leap {29} else {28}, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let ml = [
+        31,
+        if leap { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
     let mut m = 0usize;
-    while d >= ml[m] { d -= ml[m]; m += 1; }
-    format!("{y:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", m + 1, d + 1, tod / 3600, (tod % 3600) / 60, tod % 60)
+    while d >= ml[m] {
+        d -= ml[m];
+        m += 1;
+    }
+    format!(
+        "{y:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        m + 1,
+        d + 1,
+        tod / 3600,
+        (tod % 3600) / 60,
+        tod % 60
+    )
 }
 
 pub struct Loaded {
@@ -182,7 +209,10 @@ pub fn create(
         .chain([id.public_b64(), subject.to_string(), now.clone()])
         .collect::<Vec<_>>()
         .join("\u{1f}");
-    let me = Peer { handle: id.handle.clone(), key: id.public_b64() };
+    let me = Peer {
+        handle: id.handle.clone(),
+        key: id.public_b64(),
+    };
     let m = Manifest {
         v: FORMAT_VERSION,
         id: sha256_hex(joined.as_bytes())[..16].to_string(),
@@ -191,7 +221,11 @@ pub fn create(
         from: me.clone(),
         to: to.to_vec(),
         agent,
-        chain: vec![Hop { by: me, at: now, action: HopAction::Created }],
+        chain: vec![Hop {
+            by: me,
+            at: now,
+            action: HopAction::Created,
+        }],
         in_reply_to,
         thread,
         msg_type,
@@ -215,8 +249,8 @@ pub fn load(dir: &Path) -> std::io::Result<Loaded> {
     let manifest: Manifest = serde_json::from_slice(&bytes)?;
     let sig = fs::read_to_string(dir.join("manifest.sig")).unwrap_or_default();
 
-    let sig_ok = !sig.trim().is_empty()
-        && crate::identity::verify(&manifest.from.key, &bytes, &sig);
+    let sig_ok =
+        !sig.trim().is_empty() && crate::identity::verify(&manifest.from.key, &bytes, &sig);
     let contacts = Contacts::load();
     // This machine's own record of having seen these exact signed bytes.
     // Nothing the sender wrote enters the verdict.
@@ -324,7 +358,10 @@ pub fn forward(src: &Path, out: &Path, id: &Identity, to: &[String]) -> std::io:
         if !path_is_safe(&it.path) {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
-                format!("refusing to forward an item with an unsafe path: {}", it.path),
+                format!(
+                    "refusing to forward an item with an unsafe path: {}",
+                    it.path
+                ),
             ));
         }
         if let Some(parent) = std::path::Path::new(&it.path).parent() {
@@ -332,7 +369,10 @@ pub fn forward(src: &Path, out: &Path, id: &Identity, to: &[String]) -> std::io:
         }
         fs::copy(src.join(&it.path), out.join(&it.path))?;
     }
-    m.from = Peer { handle: id.handle.clone(), key: id.public_b64() };
+    m.from = Peer {
+        handle: id.handle.clone(),
+        key: id.public_b64(),
+    };
     m.to = to.to_vec();
     m.chain.push(Hop {
         by: m.from.clone(),

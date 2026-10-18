@@ -91,7 +91,11 @@ fn read_req(stream: &TcpStream) -> std::io::Result<Req> {
     // The cap depends on the route, and the route is already known: the
     // request line was read above. Everything except a send keeps the small
     // cap it has always had.
-    let cap = if target == "/api/send" { MAX_SEND_BYTES } else { MAX_BODY_BYTES };
+    let cap = if target == "/api/send" {
+        MAX_SEND_BYTES
+    } else {
+        MAX_BODY_BYTES
+    };
     let mut host = None;
     let mut origin = None;
     let mut fetch_site = None;
@@ -114,7 +118,9 @@ fn read_req(stream: &TcpStream) -> std::io::Result<Req> {
         if h.is_empty() {
             break;
         }
-        let Some((k, v)) = h.split_once(':') else { continue };
+        let Some((k, v)) = h.split_once(':') else {
+            continue;
+        };
         let (k, v) = (k.trim().to_ascii_lowercase(), v.trim().to_string());
         match k.as_str() {
             "host" => host = Some(v.to_ascii_lowercase()),
@@ -330,44 +336,74 @@ fn handle(stream: TcpStream, port: u16) -> std::io::Result<()> {
     // filesystem lookup, so there is no path to traverse.
     match (method, target) {
         ("GET", "/") => respond(stream, "200 OK", "text/html; charset=utf-8", INDEX),
-        ("GET", "/api/state") => {
-            respond(stream, "200 OK", "application/json", &state_json())
-        }
-        ("GET", "/api/threads") => {
-            respond(stream, "200 OK", "application/json", &threads_json())
-        }
+        ("GET", "/api/state") => respond(stream, "200 OK", "application/json", &state_json()),
+        ("GET", "/api/threads") => respond(stream, "200 OK", "application/json", &threads_json()),
         ("POST", t) if t.starts_with("/api/read/") => {
             let Some(id) = bundle_id(t, "/api/read/") else {
-                return respond(stream, "400 Bad Request", "application/json", "{\"error\":\"bad id\"}");
+                return respond(
+                    stream,
+                    "400 Bad Request",
+                    "application/json",
+                    "{\"error\":\"bad id\"}",
+                );
             };
             let mut st = crate::state::LocalState::load();
             match st.mark_read(id) {
                 Ok(()) => respond(stream, "200 OK", "application/json", "{\"ok\":true}"),
-                Err(e) => respond(stream, "500 Internal Server Error", "application/json",
-                    &serde_json::json!({"error": e.to_string()}).to_string()),
+                Err(e) => respond(
+                    stream,
+                    "500 Internal Server Error",
+                    "application/json",
+                    &serde_json::json!({"error": e.to_string()}).to_string(),
+                ),
             }
         }
         ("POST", t) if t.starts_with("/api/close/") => {
             let Some(id) = bundle_id(t, "/api/close/") else {
-                return respond(stream, "400 Bad Request", "application/json", "{\"error\":\"bad id\"}");
+                return respond(
+                    stream,
+                    "400 Bad Request",
+                    "application/json",
+                    "{\"error\":\"bad id\"}",
+                );
             };
             let mut st = crate::state::LocalState::load();
             match st.close(id) {
                 Ok(()) => respond(stream, "200 OK", "application/json", "{\"ok\":true}"),
-                Err(e) => respond(stream, "500 Internal Server Error", "application/json",
-                    &serde_json::json!({"error": e.to_string()}).to_string()),
+                Err(e) => respond(
+                    stream,
+                    "500 Internal Server Error",
+                    "application/json",
+                    &serde_json::json!({"error": e.to_string()}).to_string(),
+                ),
             }
         }
         ("POST", t) if t.starts_with("/api/accept/") || t.starts_with("/api/reject/") => {
             let accept = t.starts_with("/api/accept/");
-            let Some(id) = bundle_id(t, if accept { "/api/accept/" } else { "/api/reject/" })
-            else {
-                return respond(stream, "400 Bad Request", "application/json", "{\"error\":\"bad id\"}");
+            let Some(id) = bundle_id(
+                t,
+                if accept {
+                    "/api/accept/"
+                } else {
+                    "/api/reject/"
+                },
+            ) else {
+                return respond(
+                    stream,
+                    "400 Bad Request",
+                    "application/json",
+                    "{\"error\":\"bad id\"}",
+                );
             };
             let me = crate::identity::home();
             let from = crate::routes::pending_dir(&me).join(id);
             if !from.is_dir() {
-                return respond(stream, "404 Not Found", "application/json", "{\"error\":\"no such pending bundle\"}");
+                return respond(
+                    stream,
+                    "404 Not Found",
+                    "application/json",
+                    "{\"error\":\"no such pending bundle\"}",
+                );
             }
             let res = if accept {
                 let dest_dir = crate::routes::accepted_dir(&me);
@@ -388,49 +424,84 @@ fn handle(stream: TcpStream, port: u16) -> std::io::Result<()> {
                 ),
             }
         }
-        ("GET", "/api/nearby") => {
-            respond(stream, "200 OK", "application/json", &nearby_json())
-        }
+        ("GET", "/api/nearby") => respond(stream, "200 OK", "application/json", &nearby_json()),
         ("POST", "/api/send") => match send_from_ui(&req.raw) {
-            Ok(lines) => respond(stream, "200 OK", "application/json",
-                &serde_json::json!({ "ok": true, "lines": lines }).to_string()),
-            Err((code, msg)) => respond(stream, code, "application/json",
-                &serde_json::json!({ "error": msg }).to_string()),
+            Ok(lines) => respond(
+                stream,
+                "200 OK",
+                "application/json",
+                &serde_json::json!({ "ok": true, "lines": lines }).to_string(),
+            ),
+            Err((code, msg)) => respond(
+                stream,
+                code,
+                "application/json",
+                &serde_json::json!({ "error": msg }).to_string(),
+            ),
         },
-        ("GET", "/api/buddies") => {
-            respond(stream, "200 OK", "application/json", &buddies_json())
-        }
+        ("GET", "/api/buddies") => respond(stream, "200 OK", "application/json", &buddies_json()),
         ("POST", "/api/connect") => match connect_from_ui(&req.body) {
-            Ok(lines) => respond(stream, "200 OK", "application/json",
-                &serde_json::json!({ "ok": true, "lines": lines }).to_string()),
-            Err((code, msg)) => respond(stream, code, "application/json",
-                &serde_json::json!({ "error": msg }).to_string()),
+            Ok(lines) => respond(
+                stream,
+                "200 OK",
+                "application/json",
+                &serde_json::json!({ "ok": true, "lines": lines }).to_string(),
+            ),
+            Err((code, msg)) => respond(
+                stream,
+                code,
+                "application/json",
+                &serde_json::json!({ "error": msg }).to_string(),
+            ),
         },
         ("POST", "/api/decline") => match decline_from_ui(&req.body) {
-            Ok(msg) => respond(stream, "200 OK", "application/json",
-                &serde_json::json!({ "ok": true, "lines": [msg] }).to_string()),
-            Err((code, msg)) => respond(stream, code, "application/json",
-                &serde_json::json!({ "error": msg }).to_string()),
+            Ok(msg) => respond(
+                stream,
+                "200 OK",
+                "application/json",
+                &serde_json::json!({ "ok": true, "lines": [msg] }).to_string(),
+            ),
+            Err((code, msg)) => respond(
+                stream,
+                code,
+                "application/json",
+                &serde_json::json!({ "error": msg }).to_string(),
+            ),
         },
         ("POST", "/api/pair") => match pair_from_ui(&req.body) {
-            Ok(lines) => respond(stream, "200 OK", "application/json",
-                &serde_json::json!({ "ok": true, "lines": lines }).to_string()),
-            Err((code, msg)) => respond(stream, code, "application/json",
-                &serde_json::json!({ "error": msg }).to_string()),
+            Ok(lines) => respond(
+                stream,
+                "200 OK",
+                "application/json",
+                &serde_json::json!({ "ok": true, "lines": lines }).to_string(),
+            ),
+            Err((code, msg)) => respond(
+                stream,
+                code,
+                "application/json",
+                &serde_json::json!({ "error": msg }).to_string(),
+            ),
         },
         ("POST", "/api/reply") => {
             let out = reply_from_ui(&req.body);
             match out {
-                Ok(id) => respond(stream, "200 OK", "application/json",
-                    &serde_json::json!({ "ok": true, "id": id }).to_string()),
-                Err((code, msg)) => respond(stream, code, "application/json",
-                    &serde_json::json!({ "error": msg }).to_string()),
+                Ok(id) => respond(
+                    stream,
+                    "200 OK",
+                    "application/json",
+                    &serde_json::json!({ "ok": true, "id": id }).to_string(),
+                ),
+                Err((code, msg)) => respond(
+                    stream,
+                    code,
+                    "application/json",
+                    &serde_json::json!({ "error": msg }).to_string(),
+                ),
             }
         }
         _ => respond(stream, "404 Not Found", "text/plain", "not found\n"),
     }
 }
-
 
 /// Who is on this network, as the page shows it.
 ///
@@ -730,10 +801,15 @@ fn safe_upload_name(raw: &str) -> Option<String> {
 /// does in the terminal, and a finding refuses the send. `allow_findings` is
 /// not a field the page can set.
 fn send_from_ui(raw: &[u8]) -> Result<Vec<String>, (&'static str, String)> {
-    use base64::{engine::general_purpose::STANDARD as B64, Engine};
-    let v: serde_json::Value = serde_json::from_slice(raw)
-        .map_err(|e| ("400 Bad Request", format!("bad body: {e}")))?;
-    let to = v.get("to").and_then(|x| x.as_str()).unwrap_or("").trim().to_string();
+    use base64::{Engine, engine::general_purpose::STANDARD as B64};
+    let v: serde_json::Value =
+        serde_json::from_slice(raw).map_err(|e| ("400 Bad Request", format!("bad body: {e}")))?;
+    let to = v
+        .get("to")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
     if to.is_empty() {
         return Err(("400 Bad Request", "no device chosen".into()));
     }
@@ -743,8 +819,16 @@ fn send_from_ui(raw: &[u8]) -> Result<Vec<String>, (&'static str, String)> {
         .unwrap_or("")
         .trim()
         .to_string();
-    let subject = if subject.is_empty() { "(no subject)".to_string() } else { subject };
-    let msg_type = v.get("type").and_then(|x| x.as_str()).unwrap_or("share").to_string();
+    let subject = if subject.is_empty() {
+        "(no subject)".to_string()
+    } else {
+        subject
+    };
+    let msg_type = v
+        .get("type")
+        .and_then(|x| x.as_str())
+        .unwrap_or("share")
+        .to_string();
     let files = v
         .get("files")
         .and_then(|x| x.as_array())
@@ -777,12 +861,14 @@ fn send_from_ui(raw: &[u8]) -> Result<Vec<String>, (&'static str, String)> {
             }
             seen.push(name.clone());
             let b64 = f.get("data").and_then(|x| x.as_str()).unwrap_or("");
-            let bytes = B64
-                .decode(b64)
-                .map_err(|e| ("400 Bad Request", format!("{name}: unreadable contents: {e}")))?;
+            let bytes = B64.decode(b64).map_err(|e| {
+                (
+                    "400 Bad Request",
+                    format!("{name}: unreadable contents: {e}"),
+                )
+            })?;
             let p = tmp.join(&name);
-            std::fs::write(&p, &bytes)
-                .map_err(|e| ("500 Internal Server Error", e.to_string()))?;
+            std::fs::write(&p, &bytes).map_err(|e| ("500 Internal Server Error", e.to_string()))?;
             paths.push(p);
         }
         let m = crate::outbound::send_bundle(crate::outbound::SendArgs {
@@ -807,9 +893,7 @@ fn send_from_ui(raw: &[u8]) -> Result<Vec<String>, (&'static str, String)> {
         .map_err(|e| ("400 Bad Request", e.to_string()))?;
         let from = crate::routes::sent_dir(&crate::identity::home()).join(&m.id);
         let mut out = vec![format!("bundle {} -- {} item(s)", m.id, m.items.len())];
-        out.extend(
-            crate::lan::hand_over(&from, &to).map_err(|e| ("502 Bad Gateway", e))?,
-        );
+        out.extend(crate::lan::hand_over(&from, &to).map_err(|e| ("502 Bad Gateway", e))?);
         Ok(out)
     };
     let r = run(&tmp);
@@ -827,8 +911,18 @@ fn send_from_ui(raw: &[u8]) -> Result<Vec<String>, (&'static str, String)> {
 fn pair_from_ui(body: &str) -> Result<Vec<String>, (&'static str, String)> {
     let v: serde_json::Value =
         serde_json::from_str(body).map_err(|e| ("400 Bad Request", format!("bad body: {e}")))?;
-    let label = v.get("label").and_then(|x| x.as_str()).unwrap_or("").trim().to_string();
-    let name = v.get("name").and_then(|x| x.as_str()).unwrap_or("").trim().to_string();
+    let label = v
+        .get("label")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let name = v
+        .get("name")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
     if name.is_empty() {
         return Err(("400 Bad Request", "no name to file it under".into()));
     }
@@ -837,12 +931,20 @@ fn pair_from_ui(body: &str) -> Result<Vec<String>, (&'static str, String)> {
         .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == ' ')
         || name.len() > 40
     {
-        return Err(("400 Bad Request", "a contact name is letters, digits, spaces, - and _".into()));
+        return Err((
+            "400 Bad Request",
+            "a contact name is letters, digits, spaces, - and _".into(),
+        ));
     }
-    let e = crate::lan::lookup_nearby(&label)
-        .ok_or(("404 Not Found", format!("{label} is not on this network now")))?;
+    let e = crate::lan::lookup_nearby(&label).ok_or((
+        "404 Not Found",
+        format!("{label} is not on this network now"),
+    ))?;
     if crate::lan::now().saturating_sub(e.at) > 60 {
-        return Err(("409 Conflict", "that entry is stale -- is gage lan still running?".into()));
+        return Err((
+            "409 Conflict",
+            "that entry is stale -- is gage lan still running?".into(),
+        ));
     }
     // The page echoes back the fingerprint it displayed, and it has to be the
     // one this key actually renders. Not a security boundary on its own --
@@ -857,7 +959,11 @@ fn pair_from_ui(body: &str) -> Result<Vec<String>, (&'static str, String)> {
         ));
     }
     crate::trust::add_contact(&name, &{
-        if e.boxpub.is_empty() { e.sign.clone() } else { format!("{}.{}", e.sign, e.boxpub) }
+        if e.boxpub.is_empty() {
+            e.sign.clone()
+        } else {
+            format!("{}.{}", e.sign, e.boxpub)
+        }
     })
     .map_err(|e| ("400 Bad Request", e))
 }
@@ -905,7 +1011,8 @@ pub fn is_a_key(s: &str) -> bool {
     // rather than exact-matched on length alone so a future key type is a
     // refusal to render, not a panic.
     (43..=64).contains(&s.len())
-        && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '=')
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '=')
         && crate::bundle::b64_decode_ok(s)
 }
 
@@ -924,9 +1031,24 @@ pub fn asked_pair(sign: &str) -> usize {
 fn connect_from_ui(body: &str) -> Result<Vec<String>, (&'static str, String)> {
     let v: serde_json::Value =
         serde_json::from_str(body).map_err(|e| ("400 Bad Request", format!("bad body: {e}")))?;
-    let key = v.get("key").and_then(|x| x.as_str()).unwrap_or("").trim().to_string();
-    let name = v.get("name").and_then(|x| x.as_str()).unwrap_or("").trim().to_string();
-    let typed = v.get("confirm").and_then(|x| x.as_str()).unwrap_or("").trim().to_lowercase();
+    let key = v
+        .get("key")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let name = v
+        .get("name")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let typed = v
+        .get("confirm")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_lowercase();
     if !crate::bundle::b64_decode_ok(&key) {
         return Err(("400 Bad Request", "that is not a key".into()));
     }
@@ -949,7 +1071,10 @@ fn connect_from_ui(body: &str) -> Result<Vec<String>, (&'static str, String)> {
     }
     let contacts = crate::trust::Contacts::load();
     if let Some(n) = contacts.keys.get(&key) {
-        return Err(("409 Conflict", format!("that key is already on your list as {n}")));
+        return Err((
+            "409 Conflict",
+            format!("that key is already on your list as {n}"),
+        ));
     }
     let pairs = crate::words::pairs(&key, 4);
     let want = &pairs[asked_pair(&key)];
@@ -1003,7 +1128,12 @@ fn connect_from_ui(body: &str) -> Result<Vec<String>, (&'static str, String)> {
 fn decline_from_ui(body: &str) -> Result<String, (&'static str, String)> {
     let v: serde_json::Value =
         serde_json::from_str(body).map_err(|e| ("400 Bad Request", format!("bad body: {e}")))?;
-    let key = v.get("key").and_then(|x| x.as_str()).unwrap_or("").trim().to_string();
+    let key = v
+        .get("key")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
     let undo = v.get("undo").and_then(|x| x.as_bool()).unwrap_or(false);
     if !crate::bundle::b64_decode_ok(&key) {
         return Err(("400 Bad Request", "that is not a key".into()));
@@ -1012,7 +1142,8 @@ fn decline_from_ui(body: &str) -> Result<String, (&'static str, String)> {
     if undo {
         return match c.declined.remove(&key) {
             Some(_) => {
-                c.save().map_err(|e| ("500 Internal Server Error", e.to_string()))?;
+                c.save()
+                    .map_err(|e| ("500 Internal Server Error", e.to_string()))?;
                 Ok("no longer refused -- and still not on your list".to_string())
             }
             None => Err(("409 Conflict", "that key is not refused".into())),
@@ -1021,7 +1152,8 @@ fn decline_from_ui(body: &str) -> Result<String, (&'static str, String)> {
     let seq = crate::state::LocalState::load().seq;
     match c.decline(&key, seq).map_err(|e| ("409 Conflict", e))? {
         true => {
-            c.save().map_err(|e| ("500 Internal Server Error", e.to_string()))?;
+            c.save()
+                .map_err(|e| ("500 Internal Server Error", e.to_string()))?;
             Ok("refused. Its bundles still arrive; you are not asked again".to_string())
         }
         false => Ok("already refused".to_string()),
@@ -1036,9 +1168,17 @@ fn decline_from_ui(body: &str) -> Result<String, (&'static str, String)> {
 fn reply_from_ui(body: &str) -> Result<String, (&'static str, String)> {
     let v: serde_json::Value = serde_json::from_str(body)
         .map_err(|e| ("400 Bad Request", format!("unreadable request: {e}")))?;
-    let thread = v.get("thread").and_then(|t| t.as_str()).unwrap_or("").trim().to_string();
+    let thread = v
+        .get("thread")
+        .and_then(|t| t.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
     let text = v.get("text").and_then(|t| t.as_str()).unwrap_or("");
-    let msg_type = v.get("type").and_then(|t| t.as_str()).map(|s| s.to_string());
+    let msg_type = v
+        .get("type")
+        .and_then(|t| t.as_str())
+        .map(|s| s.to_string());
     if thread.is_empty() || !thread.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err(("400 Bad Request", "bad thread id".into()));
     }
@@ -1046,8 +1186,7 @@ fn reply_from_ui(body: &str) -> Result<String, (&'static str, String)> {
         return Err(("400 Bad Request", "nothing to send".into()));
     }
 
-    let t = crate::outbound::resolve_reply(&thread)
-        .map_err(|e| ("409 Conflict", e.to_string()))?;
+    let t = crate::outbound::resolve_reply(&thread).map_err(|e| ("409 Conflict", e.to_string()))?;
     if crate::routes::Routes::load().home_of(&t.to).is_none() {
         return Err((
             "409 Conflict",
@@ -1126,7 +1265,11 @@ fn verdict_label(observed: bool, l: &crate::bundle::Loaded) -> &'static str {
 /// The same decision over a bare verdict, so it can be tested without a
 /// bundle on disk.
 fn verdict_label_for(observed: bool, t: crate::trust::Trust) -> &'static str {
-    if observed { t.label() } else { crate::trust::VERDICT_UNAVAILABLE }
+    if observed {
+        t.label()
+    } else {
+        crate::trust::VERDICT_UNAVAILABLE
+    }
 }
 
 fn state_json() -> String {
@@ -1205,7 +1348,8 @@ fn threads_json() -> String {
     // Where each bundle lives decides what can be done with it: a pending one
     // can be accepted or rejected, an accepted one read.
     let mut stage_of: std::collections::BTreeMap<String, (&str, String)> = Default::default();
-    let mut trust_of: std::collections::BTreeMap<String, (String, Vec<String>)> = Default::default();
+    let mut trust_of: std::collections::BTreeMap<String, (String, Vec<String>)> =
+        Default::default();
     let mut manifests = Vec::new();
     for (name, dir) in [
         ("pending", crate::routes::pending_dir(&home)),
@@ -1214,11 +1358,16 @@ fn threads_json() -> String {
     ] {
         for (_, l) in crate::routes::list(&dir) {
             let id = l.manifest.id.clone();
-            stage_of.entry(id.clone()).or_insert((name, dir.join(&id).display().to_string()));
+            stage_of
+                .entry(id.clone())
+                .or_insert((name, dir.join(&id).display().to_string()));
             trust_of
                 .entry(id.clone())
                 .or_insert((verdict_label(observed, &l).to_string(), l.tampered.clone()));
-            if !manifests.iter().any(|m: &crate::manifest::Manifest| m.id == id) {
+            if !manifests
+                .iter()
+                .any(|m: &crate::manifest::Manifest| m.id == id)
+            {
                 manifests.push(l.manifest);
             }
         }
@@ -1287,25 +1436,27 @@ fn threads_json() -> String {
                                     the thread does not say who to. Reply to one \
                                     message from a terminal: gage reply <message id>",
                                    t.others.len()) })
-            } else { match parent {
-                None => serde_json::json!({ "can": false,
-                    "why": "every message here is your own" }),
-                Some(p) => match contacts.name_for(&p.from.key) {
+            } else {
+                match parent {
                     None => serde_json::json!({ "can": false,
+                    "why": "every message here is your own" }),
+                    Some(p) => match contacts.name_for(&p.from.key) {
+                        None => serde_json::json!({ "can": false,
                         "why": "the key that signed the last message is not on your list" }),
-                    Some(name) if routes.home_of(name).is_none() => serde_json::json!({
+                        Some(name) if routes.home_of(name).is_none() => serde_json::json!({
                         "can": false, "to": name,
                         "why": format!("{name} has no local route, so a reply has to go out \
                                         through gage push in a terminal") }),
-                    Some(_) if t.unverified.contains(&p.id) => serde_json::json!({
+                        Some(_) if t.unverified.contains(&p.id) => serde_json::json!({
                         "can": false,
                         "why": "the newest message claims this thread while answering \
                                 something you do not hold, so it is not a safe reply \
                                 target" }),
-                    Some(name) => serde_json::json!({ "can": true, "to": name,
+                        Some(name) => serde_json::json!({ "can": true, "to": name,
                         "type": if p.msg_type.expects_reply() { "answer" } else { "share" } }),
-                },
-            } };
+                    },
+                }
+            };
             serde_json::json!({
                 "id": t.id,
                 "subject": t.subject,
@@ -1353,7 +1504,10 @@ mod tests {
                     .collect::<Vec<_>>()
             })
             .collect();
-        assert!(keys.len() >= 7, "could not parse the page's verdict table: {keys:?}");
+        assert!(
+            keys.len() >= 7,
+            "could not parse the page's verdict table: {keys:?}"
+        );
         let all: Vec<&'static str> = crate::trust::ALL
             .iter()
             .map(|t| t.label())
@@ -1362,8 +1516,16 @@ mod tests {
         // Every verdict is matched by exactly one row, so nothing falls
         // through to the fallback and nothing is classified twice.
         for label in &all {
-            let hits: Vec<&String> = keys.iter().filter(|k| label.starts_with(k.as_str())).collect();
-            assert_eq!(hits.len(), 1, "{label:?} matches {} rows: {hits:?}", hits.len());
+            let hits: Vec<&String> = keys
+                .iter()
+                .filter(|k| label.starts_with(k.as_str()))
+                .collect();
+            assert_eq!(
+                hits.len(),
+                1,
+                "{label:?} matches {} rows: {hits:?}",
+                hits.len()
+            );
         }
         // And every row matches a verdict, so a renamed label does not leave
         // a dead row quietly classifying nothing.
@@ -1405,7 +1567,10 @@ mod tests {
             // what used to be persistable into contacts.json.
             &"A".repeat(4096),
         ] {
-            assert!(!is_a_key(bad), "accepted something that is not a key: {bad:?}");
+            assert!(
+                !is_a_key(bad),
+                "accepted something that is not a key: {bad:?}"
+            );
         }
     }
 
@@ -1463,7 +1628,10 @@ mod tests {
             let a = asked_pair(&k);
             assert!((1..4).contains(&a), "asked pair {a} for {k}");
             let pairs = crate::words::pairs(&k, 4);
-            assert_ne!(pairs[a], pairs[0], "the asked pair equals the label for {k}");
+            assert_ne!(
+                pairs[a], pairs[0],
+                "the asked pair equals the label for {k}"
+            );
         }
     }
 
@@ -1481,7 +1649,10 @@ mod tests {
         assert_eq!(bundle_id("/api/read/../../etc", "/api/read/"), None);
         assert_eq!(bundle_id("/api/read/zz", "/api/read/"), None, "hex only");
         assert_eq!(bundle_id("/api/read/abc?x=1", "/api/read/"), None);
-        assert_eq!(bundle_id(&format!("/api/read/{}", "a".repeat(65)), "/api/read/"), None);
+        assert_eq!(
+            bundle_id(&format!("/api/read/{}", "a".repeat(65)), "/api/read/"),
+            None
+        );
         // A prefix that is not this route's.
         assert_eq!(bundle_id("/api/close/abc", "/api/read/"), None);
     }
@@ -1528,7 +1699,11 @@ mod tests {
             "tilde~.md",
             "$HOME.md",
         ] {
-            assert_eq!(safe_upload_name(bad), None, "{bad:?} should not become a filename");
+            assert_eq!(
+                safe_upload_name(bad),
+                None,
+                "{bad:?} should not become a filename"
+            );
         }
         // Length is bounded: a filename is a filename, not a payload.
         assert_eq!(safe_upload_name(&"a".repeat(200)), None);
@@ -1551,7 +1726,13 @@ mod tests {
         // The failure must not be renderable as the mildest verdict, which is
         // the specific way this bug would have hurt: a rejected key reading
         // as "no record either way", or worse, as verified.
-        assert_ne!(crate::trust::VERDICT_UNAVAILABLE, crate::trust::Trust::Known.label());
-        assert_ne!(crate::trust::VERDICT_UNAVAILABLE, crate::trust::Trust::Unwitnessed.label());
+        assert_ne!(
+            crate::trust::VERDICT_UNAVAILABLE,
+            crate::trust::Trust::Known.label()
+        );
+        assert_ne!(
+            crate::trust::VERDICT_UNAVAILABLE,
+            crate::trust::Trust::Unwitnessed.label()
+        );
     }
 }

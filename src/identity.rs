@@ -4,7 +4,7 @@
 //! dependency and makes the one security-critical source of randomness
 //! something a reader can check in four lines.
 
-use base64::{engine::general_purpose::STANDARD as B64, Engine};
+use base64::{Engine, engine::general_purpose::STANDARD as B64};
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use std::fs;
 use std::io::Read;
@@ -36,7 +36,9 @@ impl RetiredSelf {
     }
 
     pub fn sign_b64(&self, msg: &[u8]) -> Option<String> {
-        self.signing.as_ref().map(|k| B64.encode(k.sign(msg).to_bytes()))
+        self.signing
+            .as_ref()
+            .map(|k| B64.encode(k.sign(msg).to_bytes()))
     }
 }
 
@@ -213,7 +215,10 @@ impl Identity {
                 let me = Self::create("unnamed")?;
                 let label = crate::words::label(&me.public_b64());
                 fs::write(home().join("handle"), &label)?;
-                Ok(Self { handle: label, ..me })
+                Ok(Self {
+                    handle: label,
+                    ..me
+                })
             }
         }
     }
@@ -275,7 +280,11 @@ impl Identity {
             B64.encode(new_sealing.public_key().as_bytes())
         );
 
-        let reason = if compromised { "compromised" } else { "rotated" };
+        let reason = if compromised {
+            "compromised"
+        } else {
+            "rotated"
+        };
         // The signed statement binds old key, new key, handle and time
         // together. Omitting any one of them would let a notice be replayed:
         // without the old key it could be aimed at a different contact,
@@ -484,10 +493,20 @@ fn set_private(_p: &Path) -> std::io::Result<()> {
 /// Verify a detached signature. `verify_strict` is deliberate: it rejects
 /// small-order public keys, which the permissive variant accepts.
 pub fn verify(pubkey_b64: &str, msg: &[u8], sig_b64: &str) -> bool {
-    let Ok(pk) = B64.decode(pubkey_b64.trim()) else { return false };
-    let Ok(pk): Result<[u8; 32], _> = pk.try_into() else { return false };
-    let Ok(vk) = VerifyingKey::from_bytes(&pk) else { return false };
-    let Ok(sb) = B64.decode(sig_b64.trim()) else { return false };
-    let Ok(sb): Result<[u8; 64], _> = sb.try_into() else { return false };
+    let Ok(pk) = B64.decode(pubkey_b64.trim()) else {
+        return false;
+    };
+    let Ok(pk): Result<[u8; 32], _> = pk.try_into() else {
+        return false;
+    };
+    let Ok(vk) = VerifyingKey::from_bytes(&pk) else {
+        return false;
+    };
+    let Ok(sb) = B64.decode(sig_b64.trim()) else {
+        return false;
+    };
+    let Ok(sb): Result<[u8; 64], _> = sb.try_into() else {
+        return false;
+    };
     vk.verify_strict(msg, &Signature::from_bytes(&sb)).is_ok()
 }

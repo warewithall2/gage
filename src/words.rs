@@ -29,6 +29,10 @@
 //! comparing a real prefix of the thing that matters, rather than a different
 //! value that happens to look similar.
 
+// Laid out eight to a line on purpose: these are data tables a person
+// proof-reads for duplicates and typos, and one word per line is 256
+// lines that cannot be scanned. rustfmt would do exactly that.
+#[rustfmt::skip]
 pub const ADJECTIVES: [&str; 256] = [
     "amber", "ancient", "arctic", "autumn", "azure", "balmy", "bitter", "blank",
     "bold", "brave", "brick", "bright", "brisk", "bronze", "buoyant", "calm",
@@ -64,6 +68,10 @@ pub const ADJECTIVES: [&str; 256] = [
     "timely", "tiny", "towering", "tranquil", "true", "twilight", "twin", "umber",
 ];
 
+// Laid out eight to a line on purpose: these are data tables a person
+// proof-reads for duplicates and typos, and one word per line is 256
+// lines that cannot be scanned. rustfmt would do exactly that.
+#[rustfmt::skip]
 pub const NOUNS: [&str; 256] = [
     "acorn", "alcove", "almond", "anchor", "anvil", "apple", "arbor", "archer",
     "armour", "arrow", "ashes", "aspen", "atlas", "aurora", "avenue", "awning",
@@ -123,9 +131,7 @@ pub fn fingerprint_of(sign_key_b64: &str, box_key_b64: Option<&str>) -> String {
         // Each half trimmed, not just the concatenation: a key pasted out of
         // a terminal picks up whitespace, and if that changed the words a
         // correct pairing would read as an attack.
-        Some(b) => {
-            pairs(&format!("{}\u{1f}{}", sign_key_b64.trim(), b.trim()), 4).join(" · ")
-        }
+        Some(b) => pairs(&format!("{}\u{1f}{}", sign_key_b64.trim(), b.trim()), 4).join(" · "),
         None => pairs(sign_key_b64, 4).join(" · "),
     }
 }
@@ -205,7 +211,10 @@ mod tests {
         assert_ne!(a, b);
         // And the same key always says the same thing, on every machine:
         // the pairing step is worthless if it is not reproducible.
-        assert_eq!(a, fingerprint("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="));
+        assert_eq!(
+            a,
+            fingerprint("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+        );
     }
 
     #[test]
@@ -242,7 +251,10 @@ mod tests {
         // And covering both is not the same as covering the signing key.
         assert_ne!(fingerprint_of(sign, Some(good)), fingerprint_of(sign, None));
         // The separator stops `a`+`bc` colliding with `ab`+`c`.
-        assert_ne!(fingerprint_of("ab", Some("c")), fingerprint_of("a", Some("bc")));
+        assert_ne!(
+            fingerprint_of("ab", Some("c")),
+            fingerprint_of("a", Some("bc"))
+        );
     }
 
     #[test]

@@ -77,7 +77,9 @@ pub fn scan_inbox_knowing(known: &dyn Fn(&str) -> bool) -> Vec<String> {
     let home = crate::identity::home();
     let mut w = Vec::new();
     for stage in [pending_dir(&home), accepted_dir(&home)] {
-        let Ok(rd) = std::fs::read_dir(&stage) else { continue };
+        let Ok(rd) = std::fs::read_dir(&stage) else {
+            continue;
+        };
         for e in rd.flatten() {
             if e.path().is_dir() {
                 if let Some(x) = crate::bundle::witness_if_sound_unless(&e.path(), known) {
@@ -169,7 +171,9 @@ pub fn deliver(src: &std::path::Path, dest: &std::path::Path) -> std::io::Result
     }
 
     // --- write: into a temp directory beside the destination, then rename ---
-    let parent = dest.parent().ok_or_else(|| bad("destination has no parent".into()))?;
+    let parent = dest
+        .parent()
+        .ok_or_else(|| bad("destination has no parent".into()))?;
     let leaf = dest
         .file_name()
         .ok_or_else(|| bad("destination has no name".into()))?
@@ -250,7 +254,10 @@ pub fn restage(from: &std::path::Path, dest: &std::path::Path) -> std::io::Resul
 /// gating on that would leave exactly those bundles stuck in both stages
 /// forever, which is the state this function exists to clear.
 fn resumable(from: &std::path::Path, dest: &std::path::Path) -> bool {
-    let bytes = match (fs::read(from.join("manifest.json")), fs::read(dest.join("manifest.json"))) {
+    let bytes = match (
+        fs::read(from.join("manifest.json")),
+        fs::read(dest.join("manifest.json")),
+    ) {
         (Ok(x), Ok(y)) if x == y => x,
         _ => return false,
     };
@@ -279,10 +286,14 @@ pub fn find_by_id(ctx_home: &std::path::Path, id: &str) -> Option<PathBuf> {
     if !crate::manifest::id_is_safe(id) {
         return None;
     }
-    [accepted_dir(ctx_home), pending_dir(ctx_home), sent_dir(ctx_home)]
-        .into_iter()
-        .map(|d| d.join(id))
-        .find(|p| p.join("manifest.json").is_file())
+    [
+        accepted_dir(ctx_home),
+        pending_dir(ctx_home),
+        sent_dir(ctx_home),
+    ]
+    .into_iter()
+    .map(|d| d.join(id))
+    .find(|p| p.join("manifest.json").is_file())
 }
 
 /// Bundles waiting in a stage, newest first.
@@ -385,7 +396,11 @@ mod tests {
     #[test]
     fn a_duplicate_item_path_is_refused_rather_than_copied_twice() {
         let t = scratch("dup");
-        let src = src_bundle(&t, &[("items/a", b"one"), ("items/a", b"one")], &[("items/a", b"one")]);
+        let src = src_bundle(
+            &t,
+            &[("items/a", b"one"), ("items/a", b"one")],
+            &[("items/a", b"one")],
+        );
         let dest = t.join("dest");
         let e = deliver(&src, &dest).unwrap_err();
         assert!(e.to_string().contains("twice"), "{e}");
@@ -423,7 +438,10 @@ mod tests {
         let dest = t.join("dest");
         let e = deliver(&src, &dest).unwrap_err();
         assert!(e.to_string().contains("missing"), "{e}");
-        assert!(!dest.exists(), "a refused delivery must not block the retry");
+        assert!(
+            !dest.exists(),
+            "a refused delivery must not block the retry"
+        );
     }
 
     #[test]
@@ -434,7 +452,11 @@ mod tests {
         // A leftover staging directory from an interrupted delivery. It is a
         // directory in a stage, so the lister would have tried to read it.
         fs::create_dir_all(stage.join(".partial-1-abc/items")).unwrap();
-        fs::write(stage.join(".partial-1-abc/manifest.json"), manifest_json(&[])).unwrap();
+        fs::write(
+            stage.join(".partial-1-abc/manifest.json"),
+            manifest_json(&[]),
+        )
+        .unwrap();
         assert!(list(&stage).is_empty());
     }
 
@@ -482,7 +504,11 @@ mod tests {
         // to overwrite mail the recipient may already have been shown.
         let other = t.join("other");
         fs::create_dir_all(other.join("items")).unwrap();
-        fs::write(other.join("manifest.json"), manifest_json(&[("items/a", b"TWO")])).unwrap();
+        fs::write(
+            other.join("manifest.json"),
+            manifest_json(&[("items/a", b"TWO")]),
+        )
+        .unwrap();
         fs::write(other.join("items/a"), b"TWO").unwrap();
 
         let e = restage(&other, &dest).unwrap_err();

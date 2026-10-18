@@ -105,7 +105,11 @@ pub fn take_lock(target: &Path) -> io::Result<Lock> {
     if let Some(d) = lp.parent() {
         fs::create_dir_all(d)?;
     }
-    let f = fs::OpenOptions::new().create(true).write(true).truncate(false).open(&lp)?;
+    let f = fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(&lp)?;
     // Generous, because the retirement path holds this across a scan of the
     // inbox. Nothing here waits on a human or on the network, so a hold that
     // outlasts this really is a stuck process rather than a slow one.
@@ -117,7 +121,10 @@ pub fn take_lock(target: &Path) -> io::Result<Lock> {
         if Instant::now() > deadline {
             return Err(io::Error::new(
                 io::ErrorKind::TimedOut,
-                format!("{} stayed locked; another gage process is stuck", lp.display()),
+                format!(
+                    "{} stayed locked; another gage process is stuck",
+                    lp.display()
+                ),
             ));
         }
         std::thread::sleep(Duration::from_millis(20));
@@ -126,7 +133,10 @@ pub fn take_lock(target: &Path) -> io::Result<Lock> {
 
 #[cfg(not(unix))]
 pub fn take_lock(_target: &Path) -> io::Result<Lock> {
-    Err(io::Error::new(io::ErrorKind::Unsupported, "state locking needs a unix host"))
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "state locking needs a unix host",
+    ))
 }
 
 impl LocalState {
@@ -291,11 +301,10 @@ pub struct Thread {
 /// * a parent that is not held: honoured, because over a relay you may hold
 ///   only part of a thread, but marked unverified. `resolve_reply` refuses to
 ///   take a recipient from one of these, and the viewer says so.
-fn thread_claim(
-    m: &crate::manifest::Manifest,
-    held: &BTreeMap<String, String>,
-) -> (String, bool) {
-    let Some(claim) = m.thread.as_deref() else { return (m.id.clone(), true) };
+fn thread_claim(m: &crate::manifest::Manifest, held: &BTreeMap<String, String>) -> (String, bool) {
+    let Some(claim) = m.thread.as_deref() else {
+        return (m.id.clone(), true);
+    };
     if claim == m.id {
         return (m.id.clone(), true);
     }
@@ -334,14 +343,17 @@ pub fn threads(
     for m in manifests {
         let (tid, ok) = thread_claim(&m, &held);
         if !ok {
-            unverified.entry(tid.clone()).or_default().push(m.id.clone());
+            unverified
+                .entry(tid.clone())
+                .or_default()
+                .push(m.id.clone());
         }
         by.entry(tid).or_default().push(m);
     }
     let mut out: Vec<Thread> = by
         .into_iter()
         .map(|(id, mut msgs)| {
-                // Root first, then by time, then by id so the order is total and
+            // Root first, then by time, then by id so the order is total and
             // stable rather than dependent on directory iteration.
             msgs.sort_by(|a, b| {
                 (a.id != id, &a.created, &a.id).cmp(&(b.id != id, &b.created, &b.id))
@@ -385,12 +397,28 @@ pub fn threads(
                 }
             }
             let unverified = unverified.remove(&id).unwrap_or_default();
-            Thread { id, subject, messages: msgs, unread, state, others, unverified }
+            Thread {
+                id,
+                subject,
+                messages: msgs,
+                unread,
+                state,
+                others,
+                unverified,
+            }
         })
         .collect();
     out.sort_by(|a, b| {
-        let an = a.messages.last().map(|m| m.created.clone()).unwrap_or_default();
-        let bn = b.messages.last().map(|m| m.created.clone()).unwrap_or_default();
+        let an = a
+            .messages
+            .last()
+            .map(|m| m.created.clone())
+            .unwrap_or_default();
+        let bn = b
+            .messages
+            .last()
+            .map(|m| m.created.clone())
+            .unwrap_or_default();
         bn.cmp(&an)
     });
     out

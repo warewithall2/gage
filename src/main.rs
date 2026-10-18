@@ -8,28 +8,28 @@
 
 mod authority;
 mod autoaccept;
-mod journal;
-mod lan;
-mod words;
 mod bundle;
 mod collect;
 mod identity;
+mod journal;
+mod lan;
 mod manifest;
 mod notify;
-mod outbound;
 mod open;
+mod outbound;
 mod relay;
 mod remote;
 mod rotate;
 mod routes;
 mod scrub;
-mod state;
 mod seal;
-mod ui;
+mod state;
 mod trust;
+mod ui;
+mod words;
 
 use clap::{Parser, Subcommand};
-use outbound::{all_manifests, resolve_reply, send_bundle, SendArgs};
+use outbound::{SendArgs, all_manifests, resolve_reply, send_bundle};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -60,7 +60,8 @@ enum Cmd {
     Rotate {
         /// The old key was STOLEN. Drops your copy of its secrets and makes
         /// the notice unsigned by it, because a thief can sign too.
-        #[arg(long)] compromised: bool,
+        #[arg(long)]
+        compromised: bool,
     },
     /// Your key history: what is current, what is retired
     Keys,
@@ -68,16 +69,19 @@ enum Cmd {
     Keychange {
         file: PathBuf,
         /// Actually move the contact onto the new key
-        #[arg(long)] accept: bool,
+        #[arg(long)]
+        accept: bool,
     },
     /// Take a contact's key out of service without a replacement
     Retire {
         name: String,
         /// Their key was stolen, so even their old bundles stop counting
-        #[arg(long)] compromised: bool,
+        #[arg(long)]
+        compromised: bool,
         /// Also condemn every earlier key you held for them. For when you
         /// learn they were compromised long before you found out.
-        #[arg(long)] all: bool,
+        #[arg(long)]
+        all: bool,
     },
     /// Add someone's key to your buddy list (the signpub.boxpub token)
     Add { name: String, key: String },
@@ -95,7 +99,8 @@ enum Cmd {
         relay: Option<String>,
         /// What to call yourself. Only used if you have no identity yet;
         /// with no name, one is derived from your own key
-        #[arg(long)] name: Option<String>,
+        #[arg(long)]
+        name: Option<String>,
     },
     /// Refuse a key, so it stops being offered as a new connection. The
     /// opposite of `add`, and the third state: a list can say yes and an
@@ -118,7 +123,8 @@ enum Cmd {
         /// not carry its sender's encryption key, so someone confirming a
         /// connection request has only the signing half to compare -- and
         /// must compare it against this
-        #[arg(long)] signing_only: bool,
+        #[arg(long)]
+        signing_only: bool,
     },
     /// Show what your authority file pre-authorises. Prints only -- there is
     /// deliberately no command that WRITES a grant, because an agent that
@@ -129,68 +135,99 @@ enum Cmd {
     /// Encrypt a bundle for one recipient. Nothing leaves this machine unsealed.
     Seal {
         dir: PathBuf,
-        #[arg(long)] to: String,
-        #[arg(long)] out: PathBuf,
+        #[arg(long)]
+        to: String,
+        #[arg(long)]
+        out: PathBuf,
     },
     /// Decrypt an envelope back into a bundle directory
     Unseal {
         file: PathBuf,
-        #[arg(long)] out: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
     },
     /// List your contacts and groups
     Contacts,
     /// Build a bundle
     Send {
-        #[arg(long)] to: Vec<String>,
-        #[arg(long)] subject: String,
+        #[arg(long)]
+        to: Vec<String>,
+        #[arg(long)]
+        subject: String,
         /// Where to write it. Omit when --to is a routed local handle.
-        #[arg(long)] out: Option<PathBuf>,
-        #[arg(long)] file: Vec<PathBuf>,
-        #[arg(long)] prompt: Vec<PathBuf>,
-        #[arg(long)] decision: Vec<PathBuf>,
+        #[arg(long)]
+        out: Option<PathBuf>,
+        #[arg(long)]
+        file: Vec<PathBuf>,
+        #[arg(long)]
+        prompt: Vec<PathBuf>,
+        #[arg(long)]
+        decision: Vec<PathBuf>,
         /// An agent's persistent memory (CLAUDE.md, AGENTS.md, memory/*.md).
         /// Fenced hardest on receipt: it outlives the session that accepts it.
-        #[arg(long)] memory: Vec<PathBuf>,
+        #[arg(long)]
+        memory: Vec<PathBuf>,
         /// A whole directory, structure preserved, build dirs and
         /// secret-looking files skipped
-        #[arg(long)] dir: Vec<PathBuf>,
+        #[arg(long)]
+        dir: Vec<PathBuf>,
         /// Include files that look like secrets (.env, *.pem, *.key). Off by
         /// default, and you should have a reason.
-        #[arg(long)] allow_secrets: bool,
+        #[arg(long)]
+        allow_secrets: bool,
         /// Bundle id this one answers. Inherits that bundle's thread.
-        #[arg(long)] reply_to: Option<String>,
+        #[arg(long)]
+        reply_to: Option<String>,
         /// share | question | answer | review-request | ack
-        #[arg(long, default_value = "share")] r#type: String,
+        #[arg(long, default_value = "share")]
+        r#type: String,
         /// Proceed despite findings from the outbound content scan. Prints
         /// what it is overriding.
-        #[arg(long)] allow_findings: bool,
+        #[arg(long)]
+        allow_findings: bool,
         /// Hand it straight to a machine on this network once it is built,
         /// so sending is one command rather than a build and then a push.
         /// --to may be a word-pair from the `gage lan` list.
-        #[arg(long)] lan: bool,
-        #[arg(long)] agent: Option<String>,
-        #[arg(long)] model: Option<String>,
+        #[arg(long)]
+        lan: bool,
+        #[arg(long)]
+        agent: Option<String>,
+        #[arg(long)]
+        model: Option<String>,
     },
     /// Answer a thread without typing its id or working out the recipient
     Reply {
         /// Thread or message id. A unique prefix is enough.
         id: String,
         /// The reply itself, as text. Scanned on the way out like any file.
-        #[arg(long)] text: Option<String>,
-        #[arg(long)] file: Vec<PathBuf>,
-        #[arg(long)] prompt: Vec<PathBuf>,
-        #[arg(long)] decision: Vec<PathBuf>,
-        #[arg(long)] memory: Vec<PathBuf>,
-        #[arg(long)] dir: Vec<PathBuf>,
+        #[arg(long)]
+        text: Option<String>,
+        #[arg(long)]
+        file: Vec<PathBuf>,
+        #[arg(long)]
+        prompt: Vec<PathBuf>,
+        #[arg(long)]
+        decision: Vec<PathBuf>,
+        #[arg(long)]
+        memory: Vec<PathBuf>,
+        #[arg(long)]
+        dir: Vec<PathBuf>,
         /// Override the inferred type (answer for a question, otherwise share)
-        #[arg(long)] r#type: Option<String>,
+        #[arg(long)]
+        r#type: Option<String>,
         /// Override the inferred subject
-        #[arg(long)] subject: Option<String>,
-        #[arg(long)] allow_secrets: bool,
-        #[arg(long)] allow_findings: bool,
-        #[arg(long)] agent: Option<String>,
-        #[arg(long)] model: Option<String>,
-        #[arg(long)] out: Option<PathBuf>,
+        #[arg(long)]
+        subject: Option<String>,
+        #[arg(long)]
+        allow_secrets: bool,
+        #[arg(long)]
+        allow_findings: bool,
+        #[arg(long)]
+        agent: Option<String>,
+        #[arg(long)]
+        model: Option<String>,
+        #[arg(long)]
+        out: Option<PathBuf>,
     },
     /// Summarise a bundle without putting its contents in context
     Inspect { dir: PathBuf },
@@ -198,14 +235,16 @@ enum Cmd {
     Open {
         dir: PathBuf,
         /// Show contents even when the signature does not verify
-        #[arg(long)] reveal: bool,
+        #[arg(long)]
+        reveal: bool,
     },
     /// Map a handle to a local gage home, so --to delivers with no --out
     Route { handle: String, home: PathBuf },
     /// Conversations, grouped, newest activity first
     Threads {
         /// only threads where the ball is in your court
-        #[arg(long)] mine: bool,
+        #[arg(long)]
+        mine: bool,
     },
     /// Every message in one thread, oldest first
     Thread { id: String },
@@ -214,11 +253,14 @@ enum Cmd {
     /// What is waiting for you
     Inbox {
         /// machine-readable, for an agent harness
-        #[arg(long)] json: bool,
+        #[arg(long)]
+        json: bool,
         /// include already-accepted bundles
-        #[arg(long)] all: bool,
+        #[arg(long)]
+        all: bool,
         /// only what you have not opened
-        #[arg(long)] unread: bool,
+        #[arg(long)]
+        unread: bool,
     },
     /// Move a pending bundle to accepted. Arrival is not consent.
     Accept { id: String },
@@ -228,89 +270,112 @@ enum Cmd {
     Relay {
         /// Bind address. Default is the tailnet-only loopback-equivalent:
         /// pass the tailnet IP explicitly rather than 0.0.0.0.
-        #[arg(long, default_value = "127.0.0.1:7788")] bind: String,
-        #[arg(long)] store: Option<PathBuf>,
+        #[arg(long, default_value = "127.0.0.1:7788")]
+        bind: String,
+        #[arg(long)]
+        store: Option<PathBuf>,
         /// megabytes one mailbox may hold before it stops accepting
-        #[arg(long, default_value = "64")] max_mailbox_mb: u64,
+        #[arg(long, default_value = "64")]
+        max_mailbox_mb: u64,
         /// envelopes one mailbox may hold -- a thousand small ones flood as
         /// well as one big one, and cost the recipient more
-        #[arg(long, default_value = "500")] max_mailbox_msgs: usize,
+        #[arg(long, default_value = "500")]
+        max_mailbox_msgs: usize,
         /// megabytes the whole store may hold
-        #[arg(long, default_value = "4096")] max_store_mb: u64,
+        #[arg(long, default_value = "4096")]
+        max_store_mb: u64,
         /// requests per minute from one address
-        #[arg(long, default_value = "120")] rate_per_min: u32,
+        #[arg(long, default_value = "120")]
+        rate_per_min: u32,
         /// mailboxes that may exist on this relay at all. Registration needs
         /// no authentication beyond proving you hold the key you are
         /// registering, which stops squatting and not manufacturing
-        #[arg(long, default_value = "2000")] max_mailboxes: usize,
+        #[arg(long, default_value = "2000")]
+        max_mailboxes: usize,
     },
     /// Point this identity at a relay and register your mailbox
     Join { addr: String },
     /// Push a sealed envelope to the relay for a contact
     Push {
         dir: PathBuf,
-        #[arg(long)] to: String,
+        #[arg(long)]
+        to: String,
         /// Hand it to them over this network instead of the relay. Finds
         /// their address by a signed query, which only they can answer.
-        #[arg(long)] lan: bool,
+        #[arg(long)]
+        lan: bool,
         /// Skip the confirmation. Required for a non-interactive push, so an
         /// agent has to state that it meant to send this off the machine.
-        #[arg(long)] yes: bool,
+        #[arg(long)]
+        yes: bool,
     },
     /// Collect anything waiting for you on the relay into inbox/pending
     Pull {
         /// leave envelopes on the relay instead of deleting them
-        #[arg(long)] keep: bool,
+        #[arg(long)]
+        keep: bool,
     },
     /// Poll the relay and notify when something new arrives
     Watch {
         /// seconds between polls
-        #[arg(long, default_value = "120")] every: u64,
+        #[arg(long, default_value = "120")]
+        every: u64,
         /// check once and exit, for a systemd timer or a cron entry
-        #[arg(long)] once: bool,
+        #[arg(long)]
+        once: bool,
         /// print instead of firing a desktop notification
-        #[arg(long)] quiet: bool,
+        #[arg(long)]
+        quiet: bool,
         /// Run this command when an arrival is covered by a grant in your
         /// authority file. It is given CTX_BUNDLE_ID, CTX_FROM, CTX_FROM_KEY,
         /// CTX_TYPE, CTX_SUBJECT, CTX_EXPECTS_REPLY and CTX_GRANT in its
         /// environment -- never the bundle's contents, and it does not accept
         /// the bundle. Arrivals with no grant notify as usual and run nothing
-        #[arg(long)] on_arrival: Option<String>,
+        #[arg(long)]
+        on_arrival: Option<String>,
         /// seconds before a hook that has not finished is killed
-        #[arg(long, default_value = "300")] hook_timeout: u64,
+        #[arg(long, default_value = "300")]
+        hook_timeout: u64,
         /// Accept arrivals that a grant says may be accepted unattended,
         /// within that grant's max-exchanges for the thread. Only grants
         /// written `auto-accept` qualify, and only replies to something this
         /// machine sent. Every such acceptance records which grant allowed
         /// it. Acceptance moves the bundle; it never opens or runs anything
-        #[arg(long)] auto_accept: bool,
+        #[arg(long)]
+        auto_accept: bool,
     },
     /// What this machine did with what arrived: one line per event
     Journal {
         /// only this bundle
-        #[arg(long)] bundle: Option<String>,
+        #[arg(long)]
+        bundle: Option<String>,
         /// the raw JSONL, for a tool rather than a person
-        #[arg(long)] json: bool,
+        #[arg(long)]
+        json: bool,
         /// how many of the most recent entries to show
-        #[arg(long, default_value = "40")] last: usize,
+        #[arg(long, default_value = "40")]
+        last: usize,
         /// Walk the hash chain and report every break. A clean pass means no
         /// line has been changed, removed or reordered since chaining began
         /// -- unless whoever did it also recomputed every following link,
         /// which anything running as you can do. Evidence against a script
         /// quietly dropping the line that incriminates it; not proof against
         /// a determined local process
-        #[arg(long)] verify: bool,
+        #[arg(long)]
+        verify: bool,
     },
     /// Serve the local viewer on 127.0.0.1
     Ui {
-        #[arg(long, default_value = "7777")] port: u16,
+        #[arg(long, default_value = "7777")]
+        port: u16,
     },
     /// Be on this network: visible, discoverable and reachable, for exactly
     /// as long as this runs. The whole of it in one command -- start it on
     /// both machines and they can see and send to each other. Stop it and
     /// this machine is silent again.
     Lan {
-        #[arg(long, default_value_t = lan::LISTEN_PORT)] port: u16,
+        #[arg(long, default_value_t = lan::LISTEN_PORT)]
+        port: u16,
     },
     /// Who is announcing themselves on this network, right now
     Nearby {
@@ -321,7 +386,8 @@ enum Cmd {
         #[arg(long, value_name = "SECS", num_args = 0..=1, default_missing_value = "60")]
         announce: Option<u64>,
         /// How long to listen
-        #[arg(long, default_value = "10")] r#for: u64,
+        #[arg(long, default_value = "10")]
+        r#for: u64,
     },
     /// Confirm a nearby machine's fingerprint out of band, then add its key.
     /// Not needed to send -- an unpaired machine's bundle arrives as SENDER
@@ -339,20 +405,26 @@ enum Cmd {
         /// compared for you and the pairing fails on any difference -- which
         /// is stricter than a person squinting at a y/n prompt. Omit it to
         /// be shown the words and asked.
-        #[arg(long)] confirm: Option<String>,
-        #[arg(long, default_value = "20")] r#for: u64,
+        #[arg(long)]
+        confirm: Option<String>,
+        #[arg(long, default_value = "20")]
+        r#for: u64,
     },
     /// Be reachable on this network: answer address queries from keys on your
     /// list, and accept a sealed bundle straight from them. No announcing.
     Listen {
-        #[arg(long, default_value = "0.0.0.0")] bind: String,
-        #[arg(long, default_value_t = lan::LISTEN_PORT)] port: u16,
+        #[arg(long, default_value = "0.0.0.0")]
+        bind: String,
+        #[arg(long, default_value_t = lan::LISTEN_PORT)]
+        port: u16,
     },
     /// Re-sign a bundle for someone else, appending to its chain
     Forward {
         dir: PathBuf,
-        #[arg(long)] to: Vec<String>,
-        #[arg(long)] out: PathBuf,
+        #[arg(long)]
+        to: Vec<String>,
+        #[arg(long)]
+        out: PathBuf,
     },
 }
 
@@ -388,7 +460,7 @@ fn register_with_proof(
     let Some(sealed) = v.get("prove").and_then(|p| p.as_str()) else {
         return Ok(());
     };
-    use base64::{engine::general_purpose::STANDARD as B64, Engine};
+    use base64::{Engine, engine::general_purpose::STANDARD as B64};
     let ct = B64
         .decode(sealed.trim())
         .map_err(|e| format!("relay sent an unreadable registration challenge: {e}"))?;
@@ -399,7 +471,7 @@ fn register_with_proof(
         "sign_key": id.public_b64(),
         "box_key": id.box_public_b64(),
         "proof": String::from_utf8_lossy(&nonce) })
-        .to_string();
+    .to_string();
     remote::post(addr, "/register", &again)?;
     Ok(())
 }
@@ -444,7 +516,10 @@ fn pull_inner(keep: bool, quiet: bool) -> Result<(), Box<dyn std::error::Error>>
     let mut boxes = vec![(id.box_public_b64(), String::new())];
     for r in id.retired() {
         if r.can_collect() {
-            boxes.push((r.box_pub.clone(), format!(" (retired key, {})", r.retired_at)));
+            boxes.push((
+                r.box_pub.clone(),
+                format!(" (retired key, {})", r.retired_at),
+            ));
         }
     }
 
@@ -506,12 +581,18 @@ fn fetch_mailbox(
     .to_string();
     let resp = remote::post(addr, "/fetch", &body)?;
     let v: serde_json::Value = serde_json::from_str(&resp)?;
-    let items = v.get("items").and_then(|i| i.as_array()).cloned().unwrap_or_default();
+    let items = v
+        .get("items")
+        .and_then(|i| i.as_array())
+        .cloned()
+        .unwrap_or_default();
     let pending = routes::pending_dir(&identity::home());
     std::fs::create_dir_all(&pending)?;
     let mut n = 0;
     for it in &items {
-        let Some(raw) = it.get("envelope").and_then(|e| e.as_str()) else { continue };
+        let Some(raw) = it.get("envelope").and_then(|e| e.as_str()) else {
+            continue;
+        };
         let env: seal::Envelope = match serde_json::from_str(raw) {
             Ok(e) => e,
             Err(e) => {
@@ -547,7 +628,11 @@ fn fetch_mailbox(
         // here, which is what the trust verdict on read is for -- but mail
         // the relay handed us is ours to refuse.
         if !loaded.tampered.is_empty() {
-            eprintln!("  refused {}: {}", loaded.manifest.id, loaded.tampered.join(", "));
+            eprintln!(
+                "  refused {}: {}",
+                loaded.manifest.id,
+                loaded.tampered.join(", ")
+            );
             let _ = std::fs::remove_dir_all(&tmp);
             continue;
         }
@@ -717,10 +802,12 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 let addr = remote::relay_addr().unwrap();
                 let body = serde_json::json!({
                     "sign_key": id.public_b64(), "box_key": id.box_public_b64() })
-                    .to_string();
+                .to_string();
                 match register_with_proof(&addr, &id, &body) {
                     Ok(_) => println!("\nregistered the new mailbox with {addr}"),
-                    Err(e) => println!("\ncould not register with {addr}: {e}\n  run gage join {addr} once it is reachable"),
+                    Err(e) => println!(
+                        "\ncould not register with {addr}: {e}\n  run gage join {addr} once it is reachable"
+                    ),
                 }
             }
         }
@@ -734,7 +821,11 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     r.sign_pub,
                     r.box_pub,
                     r.reason,
-                    if r.can_collect() { "" } else { " (secrets destroyed)" }
+                    if r.can_collect() {
+                        ""
+                    } else {
+                        " (secrets destroyed)"
+                    }
                 );
             }
         }
@@ -746,7 +837,11 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             let (who, key, boxpub) = match &name {
                 None => {
                     let id = identity::Identity::load()?;
-                    (id.handle.clone(), id.public_b64(), Some(id.box_public_b64()))
+                    (
+                        id.handle.clone(),
+                        id.public_b64(),
+                        Some(id.box_public_b64()),
+                    )
                 }
                 Some(n) => {
                     let c = trust::Contacts::load();
@@ -757,9 +852,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                                 // Said out loud rather than quietly showing
                                 // a narrower value as though it were the
                                 // same one.
-                                println!(
-                                    "note: {n} has no encryption key on file, so these words"
-                                );
+                                println!("note: {n} has no encryption key on file, so these words");
                                 println!("  cover the signing key only. You can verify them and");
                                 println!("  not seal to them; re-add them from a full token to");
                                 println!("  get both.");
@@ -792,7 +885,10 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 eprintln!("  For a full pairing, compare the normal words, which cover both.");
             }
             println!("{who}\t{}", words::fingerprint_of(&key, boxpub.as_deref()));
-            eprintln!("{who}\t{}\t(the label only -- never confirm against this)", words::label(&key));
+            eprintln!(
+                "{who}\t{}\t(the label only -- never confirm against this)",
+                words::label(&key)
+            );
         }
         Cmd::Authority => {
             let a = authority::Authority::load();
@@ -802,7 +898,9 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 println!("nothing is pre-authorised; every request gets reported to you");
             } else if let Some(e) = &a.error {
                 println!("{}", e);
-                println!("the file grants NOTHING while it does not parse, which is the safe direction");
+                println!(
+                    "the file grants NOTHING while it does not parse, which is the safe direction"
+                );
             } else if a.grants.is_empty() {
                 println!("{} is present and grants nothing", p.display());
             } else {
@@ -817,7 +915,9 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                                 // Worth saying out loud: the grant is inert
                                 // rather than wrong, and the usual cause is
                                 // a contact not added yet or renamed.
-                                None => format!("contact {n} -- NO SUCH CONTACT, so this grants nothing"),
+                                None => format!(
+                                    "contact {n} -- NO SUCH CONTACT, so this grants nothing"
+                                ),
                             }
                         }
                     };
@@ -830,13 +930,23 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         }
         Cmd::Keychange { file, accept } => {
             let n: rotate::Notice = serde_json::from_slice(&std::fs::read(&file)?)?;
-            let v = rotate::verify_notice(&n).map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+            let v = rotate::verify_notice(&n)
+                .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
             let mut c = trust::Contacts::load();
             let known = c.name_for(&v.old_sign).map(|s| s.to_string());
             println!("rotation notice");
-            println!("  claims handle : {} (their own text, not identity)", v.claim.handle);
-            println!("  old key       : {}…", v.old_sign.chars().take(16).collect::<String>());
-            println!("  new key       : {}…", v.new_sign.chars().take(16).collect::<String>());
+            println!(
+                "  claims handle : {} (their own text, not identity)",
+                v.claim.handle
+            );
+            println!(
+                "  old key       : {}…",
+                v.old_sign.chars().take(16).collect::<String>()
+            );
+            println!(
+                "  new key       : {}…",
+                v.new_sign.chars().take(16).collect::<String>()
+            );
             println!("  dated         : {}", v.claim.at);
             println!("  reason        : {}", v.claim.reason);
             println!("  new key signed: yes");
@@ -905,7 +1015,11 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                      key, so nothing here shows that {name} authorised it. Confirm the \
                      new key with them over a channel that is not this one, then:\n  \
                      gage retire {name} {}\n  gage add {name} {}",
-                    if v.claim.reason == "compromised" { "--compromised" } else { "" },
+                    if v.claim.reason == "compromised" {
+                        "--compromised"
+                    } else {
+                        ""
+                    },
                     v.claim.new_key
                 )
                 .into());
@@ -1026,7 +1140,10 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             c.save()?;
             println!("\n{name} moved onto the new key.");
             println!("  cutoff recorded at {now}, observation {seq} (this machine's own");
-            println!("  record). They state they rotated at {} -- that is their", v.claim.at);
+            println!(
+                "  record). They state they rotated at {} -- that is their",
+                v.claim.at
+            );
             println!("  claim, and it is not what the verdict uses.");
             // Said because the consequence is surprising: the same bundle can
             // read as attributable on one machine and not on another.
@@ -1036,7 +1153,11 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             println!("  their old bundles stay verifiable, marked as signed with a retired key");
             println!("  anything NEW signed with the old key is now rejected");
         }
-        Cmd::Retire { name, compromised, all } => {
+        Cmd::Retire {
+            name,
+            compromised,
+            all,
+        } => {
             let mut c = trust::Contacts::load();
             if all && !compromised {
                 return Err("--all only makes sense with --compromised: it condemns \
@@ -1047,11 +1168,17 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             // the machine was owned a week after you already retired the key,
             // and there has to be a way to act on that without editing JSON.
             if c.key_for_name(&name).is_none() && all && !c.retired_keys_for(&name).is_empty() {
-                let keys: Vec<String> =
-                    c.retired_keys_for(&name).iter().map(|(k, _)| k.clone()).collect();
+                let keys: Vec<String> = c
+                    .retired_keys_for(&name)
+                    .iter()
+                    .map(|(k, _)| k.clone())
+                    .collect();
                 c.mark_history_compromised(&name, &keys);
                 c.save()?;
-                println!("{name} has no key in service; condemned {} retired key(s)", keys.len());
+                println!(
+                    "{name} has no key in service; condemned {} retired key(s)",
+                    keys.len()
+                );
                 println!("  everything they ever signed now reads as rejected");
                 return Ok(ExitCode::SUCCESS);
             }
@@ -1103,7 +1230,9 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                         "\n  NOTE: {} earlier key(s) you held for {name} are untouched, so",
                         earlier.len()
                     );
-                    println!("  bundles signed with those still read as attributable. A stolen key");
+                    println!(
+                        "  bundles signed with those still read as attributable. A stolen key"
+                    );
                     println!("  is not evidence its predecessor was stolen -- but if you think it");
                     println!("  was, re-run with --compromised --all.");
                 }
@@ -1191,13 +1320,39 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             }
         }
         Cmd::Send {
-            to, subject, out, file, prompt, decision, memory, dir,
-            allow_secrets, reply_to, r#type, allow_findings, lan, agent, model,
+            to,
+            subject,
+            out,
+            file,
+            prompt,
+            decision,
+            memory,
+            dir,
+            allow_secrets,
+            reply_to,
+            r#type,
+            allow_findings,
+            lan,
+            agent,
+            model,
         } => {
             let targets = to.clone();
             let m = send_bundle(SendArgs {
-                to, subject, out, file, prompt, decision, memory, dir,
-                allow_secrets, reply_to, msg_type: r#type, allow_findings, lan, agent, model,
+                to,
+                subject,
+                out,
+                file,
+                prompt,
+                decision,
+                memory,
+                dir,
+                allow_secrets,
+                reply_to,
+                msg_type: r#type,
+                allow_findings,
+                lan,
+                agent,
+                model,
             })?;
             if lan {
                 // Pushed from our own kept copy rather than the staging dir,
@@ -1211,8 +1366,20 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             }
         }
         Cmd::Reply {
-            id, text, file, prompt, decision, memory, dir, r#type, subject,
-            allow_secrets, allow_findings, agent, model, out,
+            id,
+            text,
+            file,
+            prompt,
+            decision,
+            memory,
+            dir,
+            r#type,
+            subject,
+            allow_secrets,
+            allow_findings,
+            agent,
+            model,
+            out,
         } => {
             let t = resolve_reply(&id)?;
             // --text is written to a file rather than handled specially, so a
@@ -1245,13 +1412,18 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 to: vec![t.to.clone()],
                 subject: subject.unwrap_or(t.subject),
                 out,
-                file, prompt, decision, memory, dir,
+                file,
+                prompt,
+                decision,
+                memory,
+                dir,
                 allow_secrets,
                 reply_to: Some(t.parent),
                 msg_type: r#type.unwrap_or(t.msg_type),
                 allow_findings,
                 lan: false,
-                agent, model,
+                agent,
+                model,
             });
             let _ = std::fs::remove_dir_all(&tmp);
             r?;
@@ -1266,7 +1438,11 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             println!("id       : {}", m.id);
             println!("subject  : {}", m.subject);
             println!("trust    : {}", l.trust.label());
-            println!("from     : {} ({}…)", m.from.handle, m.from.key.chars().take(16).collect::<String>());
+            println!(
+                "from     : {} ({}…)",
+                m.from.handle,
+                m.from.key.chars().take(16).collect::<String>()
+            );
             println!("forwarded: {}", if m.is_forwarded() { "yes" } else { "no" });
             println!("to       : {}", m.to.join(", "));
             for it in &m.items {
@@ -1281,23 +1457,22 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             // `gage open <id>` is what the other commands' output invites, so
             // resolve an id to its bundle rather than failing on a path that
             // was never meant to be one.
-            let dir = match dir.to_str() {
-                Some(s) if !dir.exists() && manifest::id_is_safe(s) => {
-                    match routes::find_by_id(&identity::home(), s) {
-                        Some(p) => {
-                            eprintln!("gage: {s} -> {}", p.display());
-                            p
-                        }
-                        None => {
-                            return Err(format!(
+            let dir =
+                match dir.to_str() {
+                    Some(s) if !dir.exists() && manifest::id_is_safe(s) => {
+                        match routes::find_by_id(&identity::home(), s) {
+                            Some(p) => {
+                                eprintln!("gage: {s} -> {}", p.display());
+                                p
+                            }
+                            None => return Err(format!(
                                 "no bundle {s} in this gage home. `gage inbox` lists what is here"
                             )
-                            .into())
+                            .into()),
                         }
                     }
-                }
-                _ => dir,
-            };
+                    _ => dir,
+                };
             // A bundle you only ever `gage open` would otherwise never be
             // witnessed, and would read as ARRIVAL UNRECORDED after a
             // rotation even though it was sitting in your inbox the whole
@@ -1318,7 +1493,10 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 .into()
             })?;
             let l = bundle::load(&dir)?;
-            print!("{}", open::render(&l, reveal).map_err(|e| -> Box<dyn std::error::Error> { e.into() })?);
+            print!(
+                "{}",
+                open::render(&l, reveal).map_err(|e| -> Box<dyn std::error::Error> { e.into() })?
+            );
             // Read state is set by rendering, not by listing: having seen a
             // subject line in an inbox is not having read the thing. It is
             // also bookkeeping, and bookkeeping must not turn a successful
@@ -1358,7 +1536,11 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             observe_or_warn();
             let me = identity::home();
             let pending = routes::list(&routes::pending_dir(&me));
-            let accepted = if all { routes::list(&routes::accepted_dir(&me)) } else { vec![] };
+            let accepted = if all {
+                routes::list(&routes::accepted_dir(&me))
+            } else {
+                vec![]
+            };
             if json {
                 let rows: Vec<serde_json::Value> = pending
                     .iter()
@@ -1433,7 +1615,9 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     }
                 }
                 if !pending.is_empty() {
-                    println!("\n* = unread.  gage accept <id> to stage it, gage reject <id> to drop it unread");
+                    println!(
+                        "\n* = unread.  gage accept <id> to stage it, gage reject <id> to drop it unread"
+                    );
                 }
                 for (_, l) in &accepted {
                     println!("[accepted] {}  {}", l.manifest.id, l.manifest.subject);
@@ -1477,7 +1661,12 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             println!("rejected {id}, deleted unread");
         }
         Cmd::Relay {
-            bind, store, max_mailbox_mb, max_mailbox_msgs, max_store_mb, rate_per_min,
+            bind,
+            store,
+            max_mailbox_mb,
+            max_mailbox_msgs,
+            max_store_mb,
+            rate_per_min,
             max_mailboxes,
         } => {
             let root = store.unwrap_or_else(|| identity::home().join("relaystore"));
@@ -1596,7 +1785,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             let id = identity::Identity::load()?;
             let body = serde_json::json!({
                 "sign_key": id.public_b64(), "box_key": id.box_public_b64() })
-                .to_string();
+            .to_string();
             register_with_proof(&addr, &id, &body)?;
             remote::set_relay(&addr)?;
             println!("registered with {addr} and saved it as your relay");
@@ -1630,7 +1819,9 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                         it.bytes
                     );
                 }
-                return Err("not sent. Re-run with --yes once you have read the list above.".into());
+                return Err(
+                    "not sent. Re-run with --yes once you have read the list above.".into(),
+                );
             }
             if lan {
                 for l in lan::hand_over(&dir, &to)? {
@@ -1650,7 +1841,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                         ),
                         None => format!("no contact named {to}"),
                     }
-                    .into())
+                    .into());
                 }
             };
             let boxpub = c
@@ -1660,7 +1851,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             let env = seal::seal_dir(&dir, boxpub)?;
             let body = serde_json::json!({
                 "to_box": boxpub, "envelope": serde_json::to_string(&env)? })
-                .to_string();
+            .to_string();
             let resp = remote::post(&addr, "/send", &body)?;
             println!("pushed to {to} via {addr}");
             println!("  {}", resp.trim());
@@ -1670,7 +1861,9 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         }
         Cmd::Threads { mine } => {
             let st = state::LocalState::load();
-            let me = identity::Identity::load().map(|i| i.public_b64()).unwrap_or_default();
+            let me = identity::Identity::load()
+                .map(|i| i.public_b64())
+                .unwrap_or_default();
             let contacts = trust::Contacts::load();
             let ts = state::threads(all_manifests(), &st, &me);
             let shown: Vec<_> = ts
@@ -1712,12 +1905,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 } else {
                     String::new()
                 };
-                println!(
-                    "{}  {}  [{}]{flag}",
-                    t.id,
-                    t.subject,
-                    t.state.label()
-                );
+                println!("{}  {}  [{}]{flag}", t.id, t.subject, t.state.label());
                 println!(
                     "      {} message(s){}  between {}",
                     t.messages.len(),
@@ -1728,7 +1916,9 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         }
         Cmd::Thread { id } => {
             let st = state::LocalState::load();
-            let me = identity::Identity::load().map(|i| i.public_b64()).unwrap_or_default();
+            let me = identity::Identity::load()
+                .map(|i| i.public_b64())
+                .unwrap_or_default();
             let contacts = trust::Contacts::load();
             let ts = state::threads(all_manifests(), &st, &me);
             // A message id is what every other command hands you, so accept
@@ -1759,7 +1949,11 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                         None => format!("unlisted {}…", k.chars().take(10).collect::<String>()),
                     })
                     .collect();
-                println!("!! {} correspondents here: {}", t.others.len(), who.join(", "));
+                println!(
+                    "!! {} correspondents here: {}",
+                    t.others.len(),
+                    who.join(", ")
+                );
                 println!("   a reply must name a message, not this thread\n");
             }
             if !t.unverified.is_empty() {
@@ -1782,14 +1976,35 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 // excluded them; the marker did not, so every thread you
                 // started showed your own words as something to catch up on.
                 let mine_msg = m.from.key == me;
-                let mark = if mine_msg || st.is_read(&m.id) { " " } else { "*" };
-                let claim = if t.unverified.contains(&m.id) { "  [thread claim unverified]" } else { "" };
-                println!("{mark} {}  {:<14} {}  {}{claim}", m.created, m.msg_type.label(), who, m.id);
+                let mark = if mine_msg || st.is_read(&m.id) {
+                    " "
+                } else {
+                    "*"
+                };
+                let claim = if t.unverified.contains(&m.id) {
+                    "  [thread claim unverified]"
+                } else {
+                    ""
+                };
+                println!(
+                    "{mark} {}  {:<14} {}  {}{claim}",
+                    m.created,
+                    m.msg_type.label(),
+                    who,
+                    m.id
+                );
                 for it in &m.items {
-                    println!("      {:?}  {}", it.kind, it.path.strip_prefix("items/").unwrap_or(&it.path));
+                    println!(
+                        "      {:?}  {}",
+                        it.kind,
+                        it.path.strip_prefix("items/").unwrap_or(&it.path)
+                    );
                 }
             }
-            println!("\nctx open <path> to read one, gage reply {} --text \"...\" to answer", t.id);
+            println!(
+                "\nctx open <path> to read one, gage reply {} --text \"...\" to answer",
+                t.id
+            );
         }
         Cmd::Close { thread } => {
             let mut st = state::LocalState::load();
@@ -1797,7 +2012,14 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             println!("thread {thread} marked closed locally");
             println!("  (your view only -- the other side decides their own)");
         }
-        Cmd::Watch { every, once, quiet, on_arrival, hook_timeout, auto_accept } => {
+        Cmd::Watch {
+            every,
+            once,
+            quiet,
+            on_arrival,
+            hook_timeout,
+            auto_accept,
+        } => {
             // The interval is a trade: shorter means you hear sooner, and it
             // also tells the relay operator more precisely when you are
             // active, since fetch timing is metadata they can see. Two
@@ -1923,7 +2145,12 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 std::thread::sleep(std::time::Duration::from_secs(every));
             }
         }
-        Cmd::Journal { bundle, json, last, verify } => {
+        Cmd::Journal {
+            bundle,
+            json,
+            last,
+            verify,
+        } => {
             if verify {
                 let r = journal::verify();
                 if !r.problems.is_empty() {
@@ -1941,8 +2168,10 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 if r.chained == 0 {
                     println!("{} entries, none of them chained", r.total);
                 } else {
-                    println!("{} of {} entries are chained, and all of them check out",
-                             r.chained, r.total);
+                    println!(
+                        "{} of {} entries are chained, and all of them check out",
+                        r.chained, r.total
+                    );
                 }
                 if r.chained == 0 {
                     // Not a pass. Saying "intact" over a file nothing has
@@ -1982,7 +2211,10 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 }
             } else if rows.is_empty() {
                 println!("nothing recorded yet.");
-                println!("  {} is written as bundles arrive, are accepted,", journal::path().display());
+                println!(
+                    "  {} is written as bundles arrive, are accepted,",
+                    journal::path().display()
+                );
                 println!("  rejected or opened. It holds hashes and verdicts, never contents.");
             } else {
                 for e in &rows[shown..] {
@@ -2008,7 +2240,11 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     );
                 }
                 println!();
-                println!("{} entr{}", rows.len(), if rows.len() == 1 { "y" } else { "ies" });
+                println!(
+                    "{} entr{}",
+                    rows.len(),
+                    if rows.len() == 1 { "y" } else { "ies" }
+                );
                 println!("  hashes and verdicts only -- never a subject, a filename or a payload,");
                 println!("  because a field a sender can fill is an injection against whatever");
                 println!("  reads this next. Append-only by convention, not tamper-proof: a");
@@ -2025,9 +2261,14 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             let id = identity::Identity::load().ok();
             let secs = announce.unwrap_or(r#for).max(r#for);
             if let Some(n) = announce {
-                let id = id.as_ref().ok_or("gage init first -- announcing needs a key to sign with")?;
+                let id = id
+                    .as_ref()
+                    .ok_or("gage init first -- announcing needs a key to sign with")?;
                 println!("announcing for {n}s, then stopping. What leaves this machine:");
-                println!("  handle \"{}\"  (a string you chose; nobody should trust it)", id.handle);
+                println!(
+                    "  handle \"{}\"  (a string you chose; nobody should trust it)",
+                    id.handle
+                );
                 println!("  signing key {}", id.public_b64());
                 println!("  encryption key {}", id.box_public_b64());
                 println!("  port {}", lan::LISTEN_PORT);
@@ -2063,7 +2304,12 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             println!("the handle is decoration. The words are the key, and the only thing");
             println!("worth comparing with the person sitting at the other machine.");
         }
-        Cmd::Pair { name, r#as, confirm, r#for } => {
+        Cmd::Pair {
+            name,
+            r#as,
+            confirm,
+            r#for,
+        } => {
             let id = identity::Identity::load()?;
             // If `gage lan` is running it has already written down who is
             // here, so pairing needs no second announce window and no timing
@@ -2084,7 +2330,10 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 })
                 .collect();
             let seen = if live.is_empty() {
-                println!("listening for {}s. The other machine wants `gage lan`.", r#for);
+                println!(
+                    "listening for {}s. The other machine wants `gage lan`.",
+                    r#for
+                );
                 lan::nearby(Some(&id), lan::LISTEN_PORT, r#for, false)?
             } else {
                 live
@@ -2092,9 +2341,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             let c = trust::Contacts::load();
             let fresh: Vec<_> = seen.iter().filter(|s| !c.knows(&s.sign)).collect();
             let cand = match fresh.len() {
-                0 if seen.is_empty() => {
-                    return Err("nobody announcing on this network".into())
-                }
+                0 if seen.is_empty() => return Err("nobody announcing on this network".into()),
                 0 => return Err("everyone announcing is already on your list".into()),
                 1 => fresh[0],
                 // No numbered menu, on purpose: picking "2" from a list is
@@ -2120,7 +2367,12 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                         pick[0]
                     } else {
                         for s in &fresh {
-                            println!("  {}  at {}  {}", words::label(&s.sign), s.addr.ip(), words::fingerprint(&s.sign));
+                            println!(
+                                "  {}  at {}  {}",
+                                words::label(&s.sign),
+                                s.addr.ip(),
+                                words::fingerprint(&s.sign)
+                            );
                         }
                         return Err(format!(
                             "{n} unpaired machines are here. Say which, by the word-pair \
@@ -2174,7 +2426,9 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 println!("{l}");
             }
             println!();
-            println!("paired. With `gage lan` running on both: gage send --to {name} --file <path> --lan");
+            println!(
+                "paired. With `gage lan` running on both: gage send --to {name} --file <path> --lan"
+            );
         }
         Cmd::Listen { bind, port } => {
             lan::listen(&bind, port)?;
@@ -2185,7 +2439,12 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 return Err("no recipient: pass --to".into());
             }
             let m = bundle::forward(&dir, &out, &id, &to)?;
-            println!("forwarded {} as {} hop(s) to {}", m.id, m.chain.len(), to.join(", "));
+            println!(
+                "forwarded {} as {} hop(s) to {}",
+                m.id,
+                m.chain.len(),
+                to.join(", ")
+            );
         }
     }
     Ok(ExitCode::SUCCESS)

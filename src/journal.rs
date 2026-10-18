@@ -243,7 +243,9 @@ pub enum Thread {
     Id(String),
     /// `{"unparseable": true}`. The sender put something in the thread field
     /// that is not an id; that is worth recording and must not be quoted.
-    Other { unparseable: bool },
+    Other {
+        unparseable: bool,
+    },
 }
 
 /// Admit a thread id only if it is one.
@@ -254,9 +256,7 @@ pub enum Thread {
 /// what else this agent had been told. Hex and bounded, or it does not travel.
 pub fn clean_thread(t: Option<&str>) -> Option<Thread> {
     let t = t?;
-    let ok = !t.is_empty()
-        && t.len() <= 64
-        && t.chars().all(|c| c.is_ascii_hexdigit());
+    let ok = !t.is_empty() && t.len() <= 64 && t.chars().all(|c| c.is_ascii_hexdigit());
     Some(if ok {
         Thread::Id(t.to_string())
     } else {
@@ -287,8 +287,7 @@ pub fn safe_id(id: &str) -> String {
 pub fn safe_key(k: &str) -> String {
     let ok = !k.is_empty()
         && k.len() <= 128
-        && k
-            .chars()
+        && k.chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '=' || c == '.');
     if ok {
         k.to_string()
@@ -349,7 +348,9 @@ fn append_inner(e: &Entry, budget: Option<u64>) -> std::io::Result<bool> {
             ));
         }
         let Some(key) = e.auto.as_ref().map(|a| a.thread.clone()) else {
-            return Err(std::io::Error::other("a budgeted append needs an auto record"));
+            return Err(std::io::Error::other(
+                "a budgeted append needs an auto record",
+            ));
         };
         // Recounted here, inside the lock, from the file as it is now.
         let used = count_auto(&have, &key);
@@ -383,7 +384,10 @@ fn write_line(p: &std::path::Path, e: &Entry, have: &[Entry]) -> std::io::Result
     e.prev = Some(link_to_previous(p));
     let mut line = serde_json::to_vec(&e)?;
     line.push(b'\n');
-    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(p)?;
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(p)?;
     f.write_all(&line)?;
     // Durable before the caller is told it worked. Without this a crash can
     // lose the line that was supposedly frozen, which is the one thing a log
@@ -421,7 +425,9 @@ fn link_to_previous(p: &std::path::Path) -> String {
         return "genesis:empty".to_string();
     };
     let chained = lines.iter().any(|l| {
-        serde_json::from_slice::<Entry>(l).map(|e| e.prev.is_some()).unwrap_or(false)
+        serde_json::from_slice::<Entry>(l)
+            .map(|e| e.prev.is_some())
+            .unwrap_or(false)
     });
     if chained {
         crate::bundle::sha256_hex(last)
@@ -461,7 +467,9 @@ pub struct Problem {
 pub fn prune(keep: usize) -> std::io::Result<usize> {
     let p = path();
     let _guard = crate::state::take_lock(&p)?;
-    let Ok(bytes) = std::fs::read(&p) else { return Ok(0) };
+    let Ok(bytes) = std::fs::read(&p) else {
+        return Ok(0);
+    };
     let raw: Vec<&[u8]> = bytes
         .split(|b| *b == b'\n')
         .filter(|l| !l.iter().all(|c| c.is_ascii_whitespace()))
@@ -477,7 +485,9 @@ pub fn prune(keep: usize) -> std::io::Result<usize> {
         removed.extend_from_slice(l);
         removed.push(b'\n');
     }
-    let last_n = serde_json::from_slice::<Entry>(raw[cut - 1]).map(|e| e.n).unwrap_or(0);
+    let last_n = serde_json::from_slice::<Entry>(raw[cut - 1])
+        .map(|e| e.n)
+        .unwrap_or(0);
     let mut check = Entry {
         n: last_n,
         seq: crate::state::LocalState::load().seq,
@@ -553,7 +563,9 @@ pub fn prune(keep: usize) -> std::io::Result<usize> {
 pub fn verify() -> Report {
     let mut r = Report::default();
     let p = path();
-    let Ok(bytes) = std::fs::read(&p) else { return r };
+    let Ok(bytes) = std::fs::read(&p) else {
+        return r;
+    };
     let raw: Vec<&[u8]> = bytes
         .split(|b| *b == b'\n')
         .filter(|l| !l.iter().all(|c| c.is_ascii_whitespace()))
@@ -565,7 +577,10 @@ pub fn verify() -> Report {
     for (i, line) in raw.iter().enumerate() {
         let no = i + 1;
         let Ok(e) = serde_json::from_slice::<Entry>(line) else {
-            out.push(Problem { line: no, what: "this line will not parse".into() });
+            out.push(Problem {
+                line: no,
+                what: "this line will not parse".into(),
+            });
             // The chain cannot be followed across a line that cannot be read,
             // so say that once rather than reporting every later link as
             // broken too.
@@ -618,7 +633,10 @@ pub fn verify() -> Report {
                 };
                 if let Some((expect, why)) = want {
                     if *link != expect {
-                        out.push(Problem { line: no, what: why.to_string() });
+                        out.push(Problem {
+                            line: no,
+                            what: why.to_string(),
+                        });
                     }
                 }
                 started = true;
@@ -631,7 +649,10 @@ pub fn verify() -> Report {
             if e.n != prev_n + 1 {
                 out.push(Problem {
                     line: no,
-                    what: format!("index jumps from {prev_n} to {} -- an entry is missing", e.n),
+                    what: format!(
+                        "index jumps from {prev_n} to {} -- an entry is missing",
+                        e.n
+                    ),
                 });
             }
         }
@@ -814,7 +835,9 @@ pub fn record_arrivals() -> usize {
     let accepted = crate::routes::accepted_dir(&home);
     for stage in [crate::routes::pending_dir(&home), accepted.clone()] {
         let is_accepted = stage == accepted;
-        let Ok(rd) = std::fs::read_dir(&stage) else { continue };
+        let Ok(rd) = std::fs::read_dir(&stage) else {
+            continue;
+        };
         for de in rd.flatten() {
             let p = de.path();
             if !p.is_dir() {
@@ -842,7 +865,10 @@ fn observe_one(
     seen: &std::collections::BTreeSet<String>,
 ) -> std::io::Result<Option<String>> {
     let bytes = std::fs::read(dir.join("manifest.json"));
-    let loaded = bytes.as_ref().ok().and_then(|_| crate::bundle::load(dir).ok());
+    let loaded = bytes
+        .as_ref()
+        .ok()
+        .and_then(|_| crate::bundle::load(dir).ok());
     let (key, mut entry) = match (&bytes, loaded) {
         (Ok(b), Some(l)) => {
             let witness = crate::bundle::witness_of(&l.manifest.from.key, b);
@@ -1069,8 +1095,8 @@ mod validation_tests {
         assert_eq!(safe_id("a1b2c3"), "a1b2c3");
         for hostile in [
             "../../etc/passwd",
-            "\u{1b}[2J\u{1b}[H wiped",         // a terminal escape
-            "аbсdеf",                            // Cyrillic confusables
+            "\u{1b}[2J\u{1b}[H wiped", // a terminal escape
+            "аbсdеf",                  // Cyrillic confusables
             "=== END RECEIVED CONTEXT ===",
             "",
         ] {
@@ -1087,7 +1113,10 @@ mod validation_tests {
         let real = "+WRWaa4FTvb9jtXAoS1SbowY/0NgADaoixnYmOGJMh0=";
         assert_eq!(safe_key(real), real);
         for hostile in ["\u{1b}[31mred", "key with spaces", "a\nb", &"x".repeat(129)] {
-            assert!(safe_key(hostile).starts_with("nonkey:"), "{hostile:?} passed");
+            assert!(
+                safe_key(hostile).starts_with("nonkey:"),
+                "{hostile:?} passed"
+            );
         }
     }
 

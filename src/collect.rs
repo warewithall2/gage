@@ -24,9 +24,25 @@ use std::path::{Path, PathBuf};
 
 /// Build dirs and caches: large, regenerable, and never the point.
 const SKIP_DIRS: &[&str] = &[
-    ".git", ".hg", ".svn", "target", "node_modules", ".venv", "venv",
-    "__pycache__", ".mypy_cache", ".pytest_cache", "dist", "build", ".next",
-    ".turbo", ".gradle", ".terraform", "vendor", ".DS_Store", ".ctx",
+    ".git",
+    ".hg",
+    ".svn",
+    "target",
+    "node_modules",
+    ".venv",
+    "venv",
+    "__pycache__",
+    ".mypy_cache",
+    ".pytest_cache",
+    "dist",
+    "build",
+    ".next",
+    ".turbo",
+    ".gradle",
+    ".terraform",
+    "vendor",
+    ".DS_Store",
+    ".ctx",
 ];
 
 /// Directories whose contents are secrets regardless of what the files in
@@ -38,8 +54,21 @@ const SKIP_DIRS: &[&str] = &[
 /// through. The muse reviewer found that. A name says nothing about a file
 /// sitting in a directory whose entire purpose is to hold credentials.
 const SECRET_DIRS: &[&str] = &[
-    ".ssh", ".aws", ".gnupg", ".docker", ".kube", ".config/gcloud", "secrets", "secret",
-    ".azure", ".gcp", "keys", ".netlify", ".terraform.d", ".chef", ".vault",
+    ".ssh",
+    ".aws",
+    ".gnupg",
+    ".docker",
+    ".kube",
+    ".config/gcloud",
+    "secrets",
+    "secret",
+    ".azure",
+    ".gcp",
+    "keys",
+    ".netlify",
+    ".terraform.d",
+    ".chef",
+    ".vault",
 ];
 
 /// Files that should essentially never be handed to another party. Matched on
@@ -167,7 +196,10 @@ fn add_one(
         }
         _ => {}
     }
-    let name = src.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+    let name = src
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
     if !allow_secret {
         if looks_secret(&name) {
             c.skipped_secret.push(rel);
@@ -200,7 +232,13 @@ fn add_one(
     Ok(())
 }
 
-fn walk(c: &mut Collected, kind: ItemKind, root: &Path, base: &Path, allow_secret: bool) -> std::io::Result<()> {
+fn walk(
+    c: &mut Collected,
+    kind: ItemKind,
+    root: &Path,
+    base: &Path,
+    allow_secret: bool,
+) -> std::io::Result<()> {
     for e in std::fs::read_dir(base)? {
         let e = e?;
         let p = e.path();
@@ -209,11 +247,18 @@ fn walk(c: &mut Collected, kind: ItemKind, root: &Path, base: &Path, allow_secre
         // whole tree from somewhere the person did not name, and `--dir
         // ./shared` with a link to $HOME in it would collect everything.
         // `is_dir()` below follows links, so this has to come first.
-        if std::fs::symlink_metadata(&p).map(|m| m.file_type().is_symlink()).unwrap_or(false) {
+        if std::fs::symlink_metadata(&p)
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(false)
+        {
             let target = std::fs::read_link(&p)
                 .map(|t| t.display().to_string())
                 .unwrap_or_else(|_| "?".into());
-            let rel = p.strip_prefix(root).unwrap_or(&p).to_string_lossy().replace('\\', "/");
+            let rel = p
+                .strip_prefix(root)
+                .unwrap_or(&p)
+                .to_string_lossy()
+                .replace('\\', "/");
             c.skipped_link.push(format!("{rel} -> {target}"));
             continue;
         }
@@ -272,14 +317,20 @@ pub fn collect(
                 let root = p.parent().unwrap_or(Path::new(""));
                 walk(&mut c, kind, root, p, allow_secret)?;
             } else {
-                let name = p.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+                let name = p
+                    .file_name()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_default();
                 add_one(&mut c, kind, name, p, allow_secret)?;
             }
         }
     }
     for d in dirs {
         // The root itself, too: `--dir link-to-home` would otherwise walk it.
-        if std::fs::symlink_metadata(d).map(|m| m.file_type().is_symlink()).unwrap_or(false) {
+        if std::fs::symlink_metadata(d)
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(false)
+        {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
                 format!(

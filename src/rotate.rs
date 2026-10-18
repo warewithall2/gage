@@ -55,8 +55,8 @@ pub struct Verified {
 }
 
 pub fn verify_notice(n: &Notice) -> Result<Verified, String> {
-    let claim: Claim = serde_json::from_str(&n.claim)
-        .map_err(|e| format!("notice claim is not readable: {e}"))?;
+    let claim: Claim =
+        serde_json::from_str(&n.claim).map_err(|e| format!("notice claim is not readable: {e}"))?;
     if claim.v != 1 {
         return Err(format!("notice format v{} is not understood", claim.v));
     }
@@ -74,17 +74,25 @@ pub fn verify_notice(n: &Notice) -> Result<Verified, String> {
         None => false,
     };
     if n.sig_old.is_some() && !old_signed {
-        return Err("a countersignature from the old key is present but does NOT \
+        return Err(
+            "a countersignature from the old key is present but does NOT \
                     verify. Treat this notice as forged."
-            .into());
+                .into(),
+        );
     }
-    Ok(Verified { claim, old_sign, new_sign, new_box, old_signed })
+    Ok(Verified {
+        claim,
+        old_sign,
+        new_sign,
+        new_box,
+        old_signed,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use base64::{engine::general_purpose::STANDARD as B64, Engine};
+    use base64::{Engine, engine::general_purpose::STANDARD as B64};
     use ed25519_dalek::{Signer, SigningKey};
 
     fn key(seed: u8) -> SigningKey {
@@ -122,7 +130,10 @@ mod tests {
     #[test]
     fn an_uncountersigned_notice_verifies_but_claims_nothing() {
         let v = verify_notice(&notice(&key(1), &key(2), false, "compromised")).unwrap();
-        assert!(!v.old_signed, "no old signature must not read as authorised");
+        assert!(
+            !v.old_signed,
+            "no old signature must not read as authorised"
+        );
     }
 
     #[test]

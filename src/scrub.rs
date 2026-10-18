@@ -85,7 +85,10 @@ fn scan_line(line: &str, policy: &Policy) -> Option<(String, String)> {
     }
     // A PEM header is unambiguous and worth catching before anything else.
     if !disabled("private_key") && line.contains("-----BEGIN") && line.contains("PRIVATE KEY") {
-        return Some(("private_key".into(), "-----BEGIN ... PRIVATE KEY-----".into()));
+        return Some((
+            "private_key".into(),
+            "-----BEGIN ... PRIVATE KEY-----".into(),
+        ));
     }
     for (name, prefix) in [
         ("aws_key", "AKIA"),
@@ -101,7 +104,10 @@ fn scan_line(line: &str, policy: &Policy) -> Option<(String, String)> {
             continue;
         }
         if let Some(i) = line.find(prefix) {
-            let tok: String = line[i..].chars().take_while(|c| !c.is_whitespace() && *c != '"' && *c != '\'').collect();
+            let tok: String = line[i..]
+                .chars()
+                .take_while(|c| !c.is_whitespace() && *c != '"' && *c != '\'')
+                .collect();
             // A bare prefix in prose is not a credential; a long token is.
             if tok.len() >= prefix.len() + 8 {
                 return Some((name.to_string(), redact(&tok)));
@@ -110,14 +116,19 @@ fn scan_line(line: &str, policy: &Policy) -> Option<(String, String)> {
     }
     if !disabled("bearer") {
         if let Some(i) = lower.find("bearer ") {
-            let tok: String = line[i + 7..].chars().take_while(|c| !c.is_whitespace()).collect();
+            let tok: String = line[i + 7..]
+                .chars()
+                .take_while(|c| !c.is_whitespace())
+                .collect();
             if tok.len() >= 16 {
                 return Some(("bearer".into(), redact(&tok)));
             }
         }
     }
     if !disabled("email") {
-        for word in line.split(|c: char| c.is_whitespace() || c == ',' || c == ';' || c == '<' || c == '>' || c == '"') {
+        for word in line.split(|c: char| {
+            c.is_whitespace() || c == ',' || c == ';' || c == '<' || c == '>' || c == '"'
+        }) {
             let w = word.trim_end_matches(|c: char| c == '.' || c == ')' || c == ']');
             if let Some(at) = w.find('@') {
                 let (u, d) = (&w[..at], &w[at + 1..]);
@@ -168,7 +179,9 @@ pub fn scan(specs: &[(crate::manifest::ItemKind, String, std::path::PathBuf)]) -
     let policy = Policy::load();
     let mut out = Vec::new();
     for (_, rel, src) in specs {
-        let Ok(raw) = std::fs::read(src) else { continue };
+        let Ok(raw) = std::fs::read(src) else {
+            continue;
+        };
         let text = String::from_utf8_lossy(&raw);
         for (n, line) in text.lines().enumerate() {
             if let Some((rule, preview)) = scan_long_line(line, &policy) {
@@ -279,18 +292,36 @@ mod tests {
 
     #[test]
     fn catches_credentials_in_otherwise_innocent_text() {
-        assert_eq!(hit("export KEY=sk-ant-api03-abcdefghijklmnop").as_deref(), Some("anthropic_key"));
-        assert_eq!(hit("Authorization: Bearer abcdefghijklmnopqrstuvwx").as_deref(), Some("bearer"));
-        assert_eq!(hit("aws id AKIAIOSFODNN7EXAMPLE here").as_deref(), Some("aws_key"));
-        assert_eq!(hit("-----BEGIN OPENSSH PRIVATE KEY-----").as_deref(), Some("private_key"));
-        assert_eq!(hit("ping dana.smith@acmecorp.co.uk about it").as_deref(), Some("email"));
+        assert_eq!(
+            hit("export KEY=sk-ant-api03-abcdefghijklmnop").as_deref(),
+            Some("anthropic_key")
+        );
+        assert_eq!(
+            hit("Authorization: Bearer abcdefghijklmnopqrstuvwx").as_deref(),
+            Some("bearer")
+        );
+        assert_eq!(
+            hit("aws id AKIAIOSFODNN7EXAMPLE here").as_deref(),
+            Some("aws_key")
+        );
+        assert_eq!(
+            hit("-----BEGIN OPENSSH PRIVATE KEY-----").as_deref(),
+            Some("private_key")
+        );
+        assert_eq!(
+            hit("ping dana.smith@acmecorp.co.uk about it").as_deref(),
+            Some("email")
+        );
     }
 
     #[test]
     fn does_not_fire_on_ordinary_prose() {
         assert!(hit("we decided against tokio-retry for the backoff").is_none());
         assert!(hit("see docs at example.com or mail me@example.com").is_none());
-        assert!(hit("the sk-ant- prefix identifies an Anthropic key").is_none(), "a bare prefix in prose is not a credential");
+        assert!(
+            hit("the sk-ant- prefix identifies an Anthropic key").is_none(),
+            "a bare prefix in prose is not a credential"
+        );
         assert!(hit("bearer of bad news").is_none());
     }
 
@@ -303,20 +334,34 @@ mod tests {
         let (a, b) = (redact(tok), redact(short));
         assert!(!a.contains("0123"), "the tail survived: {a}");
         assert!(!a.contains("aAbBcCdD"), "the body survived: {a}");
-        assert_eq!(a.chars().count(), b.chars().count(), "the mask leaks the length");
-        assert!(a.starts_with("gh"), "the prefix should stay recognisable: {a}");
+        assert_eq!(
+            a.chars().count(),
+            b.chars().count(),
+            "the mask leaks the length"
+        );
+        assert!(
+            a.starts_with("gh"),
+            "the prefix should stay recognisable: {a}"
+        );
     }
 
     #[test]
     fn a_finding_never_exposes_the_secret() {
-        let (_, prev) = scan_line("KEY=sk-ant-api03-SUPERSECRETVALUE1234", &Policy::default()).unwrap();
-        assert!(!prev.contains("SUPERSECRETVALUE"), "preview leaked the secret: {prev}");
+        let (_, prev) =
+            scan_line("KEY=sk-ant-api03-SUPERSECRETVALUE1234", &Policy::default()).unwrap();
+        assert!(
+            !prev.contains("SUPERSECRETVALUE"),
+            "preview leaked the secret: {prev}"
+        );
         assert!(prev.contains('*'), "preview was not redacted: {prev}");
     }
 
     #[test]
     fn literal_never_send_entries_match_case_insensitively() {
-        let p = Policy { never_send: vec!["ProjectHalibut".into()], disable: vec![] };
+        let p = Policy {
+            never_send: vec!["ProjectHalibut".into()],
+            disable: vec![],
+        };
         assert!(scan_line("notes on projecthalibut rollout", &p).is_some());
     }
 }

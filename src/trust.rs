@@ -97,12 +97,22 @@ impl Trust {
     pub fn label(&self) -> &'static str {
         match self {
             Trust::Known => "SENDER VERIFIED (signature valid, key is on your list)",
-            Trust::Unknown => "SENDER NOT ON YOUR LIST (signature valid, you have never accepted this key)",
-            Trust::Declined => "SENDER REFUSED BEFORE (signature valid, and you declined this key rather than adding it)",
+            Trust::Unknown => {
+                "SENDER NOT ON YOUR LIST (signature valid, you have never accepted this key)"
+            }
+            Trust::Declined => {
+                "SENDER REFUSED BEFORE (signature valid, and you declined this key rather than adding it)"
+            }
             Trust::Unverified => "SENDER UNVERIFIABLE (signature missing or invalid)",
-            Trust::Retired => "SENDER KEY RETIRED (signature valid; you saw this bundle before you retired that key)",
-            Trust::Revoked => "SENDER KEY REJECTED (signature valid, but this bundle reached you after you retired that key)",
-            Trust::Unwitnessed => "ARRIVAL UNRECORDED (signature valid under a retired key, and no record of this bundle reaching you before then)",
+            Trust::Retired => {
+                "SENDER KEY RETIRED (signature valid; you saw this bundle before you retired that key)"
+            }
+            Trust::Revoked => {
+                "SENDER KEY REJECTED (signature valid, but this bundle reached you after you retired that key)"
+            }
+            Trust::Unwitnessed => {
+                "ARRIVAL UNRECORDED (signature valid under a retired key, and no record of this bundle reaching you before then)"
+            }
         }
     }
 }
@@ -115,8 +125,7 @@ impl Trust {
 /// instead of showing a verdict computed from state that could not be
 /// refreshed. Either way the rule is the same: never show a verdict that
 /// could read milder than the truth.
-pub const VERDICT_UNAVAILABLE: &str =
-    "VERDICT UNAVAILABLE (your inbox could not be recorded, so a verdict here could \
+pub const VERDICT_UNAVAILABLE: &str = "VERDICT UNAVAILABLE (your inbox could not be recorded, so a verdict here could \
      read milder than the truth)";
 
 /// A contact key you have taken out of service.
@@ -241,7 +250,10 @@ impl Contacts {
         }
         self.declined.insert(
             pubkey.to_string(),
-            Declined { at: crate::bundle::now_rfc3339(), seq },
+            Declined {
+                at: crate::bundle::now_rfc3339(),
+                seq,
+            },
         );
         Ok(true)
     }
@@ -363,9 +375,17 @@ impl Contacts {
     }
 
     /// Take a key out of service. Returns false if it was not a live contact.
-    pub fn retire(&mut self, pubkey: &str, at: &str, seq: u64, compromised: bool,
-                  replaced_by: Option<String>) -> bool {
-        let Some(name) = self.keys.remove(pubkey) else { return false };
+    pub fn retire(
+        &mut self,
+        pubkey: &str,
+        at: &str,
+        seq: u64,
+        compromised: bool,
+        replaced_by: Option<String>,
+    ) -> bool {
+        let Some(name) = self.keys.remove(pubkey) else {
+            return false;
+        };
         self.box_keys.remove(pubkey);
         self.retired.insert(
             pubkey.to_string(),
@@ -407,7 +427,13 @@ mod tests {
     fn with_retired(compromised: bool) -> Contacts {
         let mut c = Contacts::default();
         c.keys.insert("OLD".into(), "bob".into());
-        c.retire("OLD", "2026-10-14T12:00:00Z", 10, compromised, Some("NEW".into()));
+        c.retire(
+            "OLD",
+            "2026-10-14T12:00:00Z",
+            10,
+            compromised,
+            Some("NEW".into()),
+        );
         c.keys.insert("NEW".into(), "bob".into());
         c
     }
@@ -451,8 +477,13 @@ mod tests {
         // earlier. There is now no timestamp in the signature of this
         // function for a sender to aim at.
         let c = with_retired(false);
-        for forged in ["", "2026-10-14T12:00:00", "2026-10-14T12:00:00.9Z",
-                       "2026-10-14T01:00:00-14:00", "0000-01-01T00:00:00Z"] {
+        for forged in [
+            "",
+            "2026-10-14T12:00:00",
+            "2026-10-14T12:00:00.9Z",
+            "2026-10-14T01:00:00-14:00",
+            "0000-01-01T00:00:00Z",
+        ] {
             let _ = forged; // nothing to pass it to, which is the assertion
         }
         assert_eq!(c.verdict("OLD", None), Trust::Unwitnessed);
@@ -508,7 +539,9 @@ mod tests {
                 if a != b {
                     assert!(
                         !a.label().starts_with(b.label()) && !a.label().contains(b.label()),
-                        "{:?} starts with or contains {:?}", a, b
+                        "{:?} starts with or contains {:?}",
+                        a,
+                        b
                     );
                 }
             }
@@ -528,11 +561,11 @@ mod tests {
                     && !VERDICT_UNAVAILABLE.starts_with(a.label())
                     && !a.label().contains(VERDICT_UNAVAILABLE)
                     && !VERDICT_UNAVAILABLE.contains(a.label()),
-                "VERDICT UNAVAILABLE collides with {:?}", a
+                "VERDICT UNAVAILABLE collides with {:?}",
+                a
             );
         }
     }
-
 }
 
 /// Put a key on the list, with every guard `gage add` has always had.
@@ -625,7 +658,9 @@ pub fn add_contact(name: &str, key: &str) -> Result<Vec<String>, String> {
     if let Some(w) = words {
         out.push(String::new());
         out.push(format!("  this key says : {w}"));
-        out.push(format!("  Check that with {name} over a channel that is not this one."));
+        out.push(format!(
+            "  Check that with {name} over a channel that is not this one."
+        ));
         out.push("  If their machine says anything else, you have the wrong key.".to_string());
     }
     Ok(out)

@@ -198,18 +198,25 @@ impl Default for Limits {
 
 /// Bytes currently stored under a directory, one level deep.
 fn dir_bytes(p: &std::path::Path) -> u64 {
-    let Ok(rd) = std::fs::read_dir(p) else { return 0 };
-    rd.flatten().filter_map(|e| e.metadata().ok()).map(|m| m.len()).sum()
+    let Ok(rd) = std::fs::read_dir(p) else {
+        return 0;
+    };
+    rd.flatten()
+        .filter_map(|e| e.metadata().ok())
+        .map(|m| m.len())
+        .sum()
 }
 
 fn dir_count(p: &std::path::Path) -> usize {
-    std::fs::read_dir(p).map(|rd| rd.flatten().count()).unwrap_or(0)
+    std::fs::read_dir(p)
+        .map(|rd| rd.flatten().count())
+        .unwrap_or(0)
 }
 
 static STATE: Mutex<Option<State>> = Mutex::new(None);
 
 fn b64_ok(s: &str) -> bool {
-    use base64::{engine::general_purpose::STANDARD as B64, Engine};
+    use base64::{Engine, engine::general_purpose::STANDARD as B64};
     matches!(B64.decode(s), Ok(v) if v.len() == 32)
 }
 
@@ -276,7 +283,11 @@ pub fn serve_with(bind: &str, root: PathBuf, limits: Limits) -> std::io::Result<
             // cap was meant to cure. The refusal thread is short-lived and
             // deliberately not counted against the cap.
             std::thread::spawn(move || {
-                let _ = reply(s, "503 Service Unavailable", r#"{"error":"relay busy, retry"}"#);
+                let _ = reply(
+                    s,
+                    "503 Service Unavailable",
+                    r#"{"error":"relay busy, retry"}"#,
+                );
             });
             continue;
         }
@@ -413,7 +424,8 @@ fn over_rate(peer: &str) -> bool {
     let per_min = st.limits.per_min;
     let now = std::time::Instant::now();
     let window = std::time::Duration::from_secs(60);
-    st.rate.retain(|_, (_, at)| now.duration_since(*at) < window);
+    st.rate
+        .retain(|_, (_, at)| now.duration_since(*at) < window);
     let e = st.rate.entry(ip).or_insert((0, now));
     if now.duration_since(e.1) >= window {
         *e = (0, now);
@@ -475,10 +487,18 @@ fn handle(stream: TcpStream) -> std::io::Result<()> {
         }
         headers += 1;
         if headers > MAX_HEADERS {
-            return reply(stream, "431 Request Header Fields Too Large", r#"{"error":"too many headers"}"#);
+            return reply(
+                stream,
+                "431 Request Header Fields Too Large",
+                r#"{"error":"too many headers"}"#,
+            );
         }
         if started.elapsed() > DEADLINE {
-            return reply(stream, "408 Request Timeout", r#"{"error":"took too long"}"#);
+            return reply(
+                stream,
+                "408 Request Timeout",
+                r#"{"error":"took too long"}"#,
+            );
         }
         if let Some(v) = h.to_ascii_lowercase().strip_prefix("content-length:") {
             len = v.trim().parse().unwrap_or(0);
@@ -496,7 +516,7 @@ fn handle(stream: TcpStream) -> std::io::Result<()> {
                 stream,
                 "503 Service Unavailable",
                 r#"{"error":"relay is busy with other transfers, retry"}"#,
-            )
+            );
         }
     };
     let mut body = vec![0u8; len];
@@ -532,7 +552,7 @@ fn handle(stream: TcpStream) -> std::io::Result<()> {
 /// holding the box secret. Unreachable on a healthy host, and a silent
 /// catastrophic default is still the wrong shape.
 fn new_nonce() -> Option<String> {
-    use base64::{engine::general_purpose::STANDARD as B64, Engine};
+    use base64::{Engine, engine::general_purpose::STANDARD as B64};
     let mut buf = [0u8; 24];
     let mut f = std::fs::File::open("/dev/urandom").ok()?;
     f.read_exact(&mut buf).ok()?;
@@ -540,12 +560,16 @@ fn new_nonce() -> Option<String> {
 }
 
 fn do_register(stream: TcpStream, body: &[u8]) -> std::io::Result<()> {
-    use base64::{engine::general_purpose::STANDARD as B64, Engine};
+    use base64::{Engine, engine::general_purpose::STANDARD as B64};
     let Ok(reg) = serde_json::from_slice::<Registration>(body) else {
         return reply(stream, "400 Bad Request", r#"{"error":"bad body"}"#);
     };
     if !b64_ok(&reg.sign_key) || !b64_ok(&reg.box_key) {
-        return reply(stream, "400 Bad Request", r#"{"error":"keys must be 32-byte base64"}"#);
+        return reply(
+            stream,
+            "400 Bad Request",
+            r#"{"error":"keys must be 32-byte base64"}"#,
+        );
     }
     let mut g = STATE.lock().unwrap();
     let st = g.as_mut().unwrap();
@@ -560,7 +584,11 @@ fn do_register(stream: TcpStream, body: &[u8]) -> std::io::Result<()> {
                 r#"{"error":"mailbox already registered to another signing key"}"#,
             );
         }
-        return reply(stream, "200 OK", r#"{"ok":true,"note":"already registered"}"#);
+        return reply(
+            stream,
+            "200 OK",
+            r#"{"ok":true,"note":"already registered"}"#,
+        );
     }
 
     let key = (reg.box_key.clone(), reg.sign_key.clone());
@@ -621,7 +649,10 @@ fn do_register(stream: TcpStream, body: &[u8]) -> std::io::Result<()> {
             // EMPTY map -- so an interrupted write silently unregistered
             // every mailbox on the relay.
             let tmp = path.with_extension("json.tmp");
-            if std::fs::write(&tmp, &data).and_then(|_| std::fs::rename(&tmp, &path)).is_err() {
+            if std::fs::write(&tmp, &data)
+                .and_then(|_| std::fs::rename(&tmp, &path))
+                .is_err()
+            {
                 let _ = std::fs::remove_file(&tmp);
                 return reply(
                     stream,
@@ -660,7 +691,11 @@ fn do_register(stream: TcpStream, body: &[u8]) -> std::io::Result<()> {
             };
             let pk = crypto_box::PublicKey::from_bytes(raw);
             let Ok(ct) = pk.seal(&mut crypto_box::aead::OsRng, nonce.as_bytes()) else {
-                return reply(stream, "500 Internal Server Error", r#"{"error":"seal failed"}"#);
+                return reply(
+                    stream,
+                    "500 Internal Server Error",
+                    r#"{"error":"seal failed"}"#,
+                );
             };
             st.pending.insert(key, (nonce, std::time::Instant::now()));
             // Evict by AGE, oldest first, never wholesale. Clearing the whole
@@ -668,7 +703,8 @@ fn do_register(stream: TcpStream, body: &[u8]) -> std::io::Result<()> {
             // the first leg needs no proof of anything, so 10,001 junk claims
             // wiped every legitimate proof in flight, and sustained flooding
             // kept the window shut.
-            st.pending.retain(|_, (_, at)| at.elapsed() < std::time::Duration::from_secs(600));
+            st.pending
+                .retain(|_, (_, at)| at.elapsed() < std::time::Duration::from_secs(600));
             while st.pending.len() > 10_000 {
                 if let Some(oldest) = st
                     .pending
@@ -705,7 +741,11 @@ fn do_send(stream: TcpStream, body: &[u8]) -> std::io::Result<()> {
         return reply(stream, "400 Bad Request", r#"{"error":"bad body"}"#);
     };
     let Some(dir) = key_to_dirname(&req.to_box) else {
-        return reply(stream, "400 Bad Request", r#"{"error":"bad recipient key"}"#);
+        return reply(
+            stream,
+            "400 Bad Request",
+            r#"{"error":"bad recipient key"}"#,
+        );
     };
     let g = STATE.lock().unwrap();
     let st = g.as_ref().unwrap();
@@ -716,7 +756,11 @@ fn do_send(stream: TcpStream, body: &[u8]) -> std::io::Result<()> {
     }
     let box_dir = st.root.join("mail").join(&dir);
     if std::fs::create_dir_all(&box_dir).is_err() {
-        return reply(stream, "500 Internal Server Error", r#"{"error":"store failed"}"#);
+        return reply(
+            stream,
+            "500 Internal Server Error",
+            r#"{"error":"store failed"}"#,
+        );
     }
     // Three bounds, checked here because `/send` is deliberately open: a
     // stranger has to be able to send a first message, so the protection
@@ -727,10 +771,18 @@ fn do_send(stream: TcpStream, body: &[u8]) -> std::io::Result<()> {
     // the recipient, when they collect.
     let incoming = req.envelope.len() as u64;
     if dir_bytes(&box_dir) + incoming > st.limits.mailbox_bytes {
-        return reply(stream, "507 Insufficient Storage", r#"{"error":"mailbox is full"}"#);
+        return reply(
+            stream,
+            "507 Insufficient Storage",
+            r#"{"error":"mailbox is full"}"#,
+        );
     }
     if dir_count(&box_dir) >= st.limits.mailbox_msgs {
-        return reply(stream, "507 Insufficient Storage", r#"{"error":"mailbox is full"}"#);
+        return reply(
+            stream,
+            "507 Insufficient Storage",
+            r#"{"error":"mailbox is full"}"#,
+        );
     }
     // The backstop, for when many mailboxes are each individually under their
     // own limit. Walked per send, which is fine for a letterbox and would not
@@ -740,7 +792,11 @@ fn do_send(stream: TcpStream, body: &[u8]) -> std::io::Result<()> {
         .map(|rd| rd.flatten().map(|e| dir_bytes(&e.path())).sum())
         .unwrap_or(0);
     if total + incoming > st.limits.store_bytes {
-        return reply(stream, "507 Insufficient Storage", r#"{"error":"relay store is full"}"#);
+        return reply(
+            stream,
+            "507 Insufficient Storage",
+            r#"{"error":"relay store is full"}"#,
+        );
     }
     // `.gageb` -- a gage bundle, the direct analog of the `.ctxb` this wrote
     // before the rename. Not `.gage`, which is the home directory's name and
@@ -761,7 +817,11 @@ fn do_send(stream: TcpStream, body: &[u8]) -> std::io::Result<()> {
     );
     match std::fs::write(box_dir.join(&name), req.envelope.as_bytes()) {
         Ok(()) => reply(stream, "200 OK", &format!(r#"{{"ok":true,"id":"{name}"}}"#)),
-        Err(_) => reply(stream, "500 Internal Server Error", r#"{"error":"store failed"}"#),
+        Err(_) => reply(
+            stream,
+            "500 Internal Server Error",
+            r#"{"error":"store failed"}"#,
+        ),
     }
 }
 
@@ -775,14 +835,19 @@ fn do_challenge(stream: TcpStream, body: &[u8]) -> std::io::Result<()> {
         return reply(stream, "400 Bad Request", r#"{"error":"bad body"}"#);
     };
     let Some(nonce) = new_nonce() else {
-        return reply(stream, "500 Internal Server Error", r#"{"error":"no randomness available"}"#);
+        return reply(
+            stream,
+            "500 Internal Server Error",
+            r#"{"error":"no randomness available"}"#,
+        );
     };
     let mut g = STATE.lock().unwrap();
     let st = g.as_mut().unwrap();
     // Issued even for an unknown mailbox, and with the same shape, so the
     // endpoint does not become an oracle for which keys are registered.
     st.challenges.insert(nonce.clone(), req.box_key);
-    st.challenge_age.insert(nonce.clone(), std::time::Instant::now());
+    st.challenge_age
+        .insert(nonce.clone(), std::time::Instant::now());
     // Age-based, oldest-first, for the same reason as `pending`: /challenge
     // needs no authentication at all, so a flood that cleared the map took
     // every legitimate fetch down with it.
@@ -825,16 +890,28 @@ fn do_fetch(stream: TcpStream, body: &[u8]) -> std::io::Result<()> {
     // One use per challenge. A replayable signature is a stolen credential
     // with a longer life.
     let Some(issued_for) = st.challenges.remove(&req.nonce) else {
-        return reply(stream, "401 Unauthorized", r#"{"error":"unknown or used challenge"}"#);
+        return reply(
+            stream,
+            "401 Unauthorized",
+            r#"{"error":"unknown or used challenge"}"#,
+        );
     };
     if issued_for != req.box_key {
-        return reply(stream, "401 Unauthorized", r#"{"error":"challenge was for another mailbox"}"#);
+        return reply(
+            stream,
+            "401 Unauthorized",
+            r#"{"error":"challenge was for another mailbox"}"#,
+        );
     }
     let Some(sign_key) = st.owners.get(&req.box_key).cloned() else {
         return reply(stream, "401 Unauthorized", r#"{"error":"not registered"}"#);
     };
     if !crate::identity::verify(&sign_key, req.nonce.as_bytes(), &req.sig) {
-        return reply(stream, "401 Unauthorized", r#"{"error":"signature does not verify"}"#);
+        return reply(
+            stream,
+            "401 Unauthorized",
+            r#"{"error":"signature does not verify"}"#,
+        );
     }
     let Some(dir) = key_to_dirname(&req.box_key) else {
         return reply(stream, "400 Bad Request", r#"{"error":"bad key"}"#);

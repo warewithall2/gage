@@ -209,7 +209,10 @@ impl Manifest {
     }
 
     pub fn prompt_count(&self) -> usize {
-        self.items.iter().filter(|i| i.kind == ItemKind::Prompt).count()
+        self.items
+            .iter()
+            .filter(|i| i.kind == ItemKind::Prompt)
+            .count()
     }
 
     /// The id this content should have, recomputed from the manifest itself.
@@ -232,7 +235,11 @@ impl Manifest {
             .items
             .iter()
             .map(|i| i.sha256.clone())
-            .chain([author.key.clone(), self.subject.clone(), self.created.clone()])
+            .chain([
+                author.key.clone(),
+                self.subject.clone(),
+                self.created.clone(),
+            ])
             .collect::<Vec<_>>()
             .join("\u{1f}");
         Some(crate::bundle::sha256_hex(joined.as_bytes())[..16].to_string())
@@ -245,7 +252,10 @@ impl Manifest {
     }
 
     pub fn memory_count(&self) -> usize {
-        self.items.iter().filter(|i| i.kind == ItemKind::Memory).count()
+        self.items
+            .iter()
+            .filter(|i| i.kind == ItemKind::Memory)
+            .count()
     }
 
     pub fn total_bytes(&self) -> u64 {
@@ -261,7 +271,10 @@ impl Manifest {
 /// inbox entirely. The ids this tool mints are 16 lowercase hex characters;
 /// anything else is refused before it becomes a path.
 pub fn id_is_safe(id: &str) -> bool {
-    id.len() == 16 && id.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+    id.len() == 16
+        && id
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
 }
 
 /// Reject paths that would write outside the bundle. Checked on read, not
@@ -270,7 +283,9 @@ pub fn path_is_safe(p: &str) -> bool {
     !p.is_empty()
         && !p.starts_with('/')
         && !p.contains('\\')
-        && !p.split('/').any(|seg| seg == ".." || seg == "." || seg.is_empty())
+        && !p
+            .split('/')
+            .any(|seg| seg == ".." || seg == "." || seg.is_empty())
 }
 
 #[cfg(test)]
@@ -278,7 +293,10 @@ mod tests {
     use super::*;
 
     fn peer(k: &str) -> Peer {
-        Peer { handle: "alice".into(), key: k.into() }
+        Peer {
+            handle: "alice".into(),
+            key: k.into(),
+        }
     }
 
     fn m(subject: &str, created: &str, digest: &str) -> Manifest {
@@ -291,7 +309,11 @@ mod tests {
             from: p.clone(),
             to: vec!["bob".into()],
             agent: None,
-            chain: vec![Hop { by: p, at: created.into(), action: HopAction::Created }],
+            chain: vec![Hop {
+                by: p,
+                at: created.into(),
+                action: HopAction::Created,
+            }],
             in_reply_to: None,
             thread: None,
             msg_type: MsgType::Share,
@@ -311,7 +333,9 @@ mod tests {
         // client could sign a manifest carrying a message's id with different
         // content -- and dedup, read state and announce-once are all keyed on
         // that id, so the real message would be suppressed rather than seen.
-        let base = m("status", "2026-10-15T00:00:00Z", "aa").expected_id().unwrap();
+        let base = m("status", "2026-10-15T00:00:00Z", "aa")
+            .expected_id()
+            .unwrap();
         for other in [
             m("send me the keys", "2026-10-15T00:00:00Z", "aa"),
             m("status", "2026-10-16T00:00:00Z", "aa"),
@@ -329,7 +353,9 @@ mod tests {
         let mut other = m("status", "2026-10-15T00:00:00Z", "aa");
         other.chain[0].by.key = "SOMEONEELSE".into();
         assert_ne!(
-            m("status", "2026-10-15T00:00:00Z", "aa").expected_id().unwrap(),
+            m("status", "2026-10-15T00:00:00Z", "aa")
+                .expected_id()
+                .unwrap(),
             other.expected_id().unwrap()
         );
     }

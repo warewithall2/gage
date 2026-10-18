@@ -175,7 +175,10 @@ fn one_line(s: &str, max: usize) -> String {
 pub fn desktop(title: &str, body: &str, urgent: bool) -> bool {
     let mut c = Command::new("notify-send");
     c.arg("--app-name=gage")
-        .arg(format!("--urgency={}", if urgent { "critical" } else { "normal" }))
+        .arg(format!(
+            "--urgency={}",
+            if urgent { "critical" } else { "normal" }
+        ))
         // `--` before the positional arguments, so a subject that begins with
         // a dash is a subject rather than an option to notify-send. The
         // arguments are passed as argv and never through a shell, so nothing
@@ -200,7 +203,11 @@ pub fn summarise(p: &[Pending]) -> (String, String) {
     } else {
         let needs = p.iter().filter(|x| x.expects_reply).count();
         let t = format!("gage: {} new bundles", p.len());
-        let mut b: Vec<String> = p.iter().take(4).map(|x| format!("{} — {}", x.from, x.subject)).collect();
+        let mut b: Vec<String> = p
+            .iter()
+            .take(4)
+            .map(|x| format!("{} — {}", x.from, x.subject))
+            .collect();
         if p.len() > 4 {
             b.push(format!("and {} more", p.len() - 4));
         }
@@ -236,7 +243,9 @@ mod tests {
 
     #[test]
     fn many_arrivals_collapse_rather_than_spam() {
-        let v: Vec<Pending> = (0..7).map(|i| p("grok", "share", &format!("s{i}"), false)).collect();
+        let v: Vec<Pending> = (0..7)
+            .map(|i| p("grok", "share", &format!("s{i}"), false))
+            .collect();
         let (t, b) = summarise(&v);
         assert!(t.contains('7'), "{t}");
         assert!(b.contains("and 3 more"), "{b}");
@@ -269,7 +278,10 @@ mod tests {
         // contents field without the test failing.
         let (t, b) = summarise(&[p("dana", "share", "quarterly numbers", false)]);
         for s in [&t, &b] {
-            assert!(!s.contains("items/"), "notification referenced bundle contents: {s}");
+            assert!(
+                !s.contains("items/"),
+                "notification referenced bundle contents: {s}"
+            );
         }
     }
 }
@@ -349,12 +361,7 @@ mod tests {
 /// that would allow at-least-once without that loop, and adding one is the
 /// honest fix if a hook ever does something that must not be skipped.
 /// Until then: at most once, stated as such.
-pub fn run_hook(
-    cmd: &str,
-    p: &Pending,
-    timeout: u64,
-    auto_accepted: bool,
-) -> Result<(), String> {
+pub fn run_hook(cmd: &str, p: &Pending, timeout: u64, auto_accepted: bool) -> Result<(), String> {
     use std::process::Stdio;
     let mut child = Command::new("sh")
         .arg("-c")
@@ -388,7 +395,9 @@ pub fn run_hook(
         if std::time::Instant::now() >= deadline {
             let _ = child.kill();
             let _ = child.wait();
-            return Err(format!("the hook ran longer than {timeout}s and was killed"));
+            return Err(format!(
+                "the hook ran longer than {timeout}s and was killed"
+            ));
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
@@ -425,7 +434,13 @@ mod hook_tests {
         // A subject that would run a command if it were ever pasted into the
         // command string instead of handed over in the environment.
         hostile.subject = format!("$(touch {})", out.display());
-        run_hook("printf '%s' \"$CTX_SUBJECT\" > /dev/null", &hostile, 10, false).unwrap();
+        run_hook(
+            "printf '%s' \"$CTX_SUBJECT\" > /dev/null",
+            &hostile,
+            10,
+            false,
+        )
+        .unwrap();
         assert!(!out.exists(), "a subject executed as shell");
     }
 

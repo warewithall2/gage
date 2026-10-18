@@ -68,7 +68,10 @@ pub const LISTEN_PORT: u16 = 7791;
 /// Nothing about who may be answered, or what a signature must cover, can be
 /// reached from here.
 fn env_u16(k: &str, default: u16) -> u16 {
-    std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+    std::env::var(k)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
 }
 
 /// Where announcements are heard, and where they are sent. The same port on
@@ -189,7 +192,10 @@ fn signed_bytes(p: &Packet) -> Vec<u8> {
 }
 
 pub fn now() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 /// What a wanted key looks like on the wire, hashed with the query's nonce.
@@ -203,7 +209,7 @@ pub fn want_tag(sign_key: &str, nonce: &str) -> String {
 /// value per recipient, which is the leak the hash exists to prevent, and
 /// would let a recorded `here` be replayed as an answer to a later query.
 pub fn new_nonce() -> Option<String> {
-    use base64::{engine::general_purpose::STANDARD as B64, Engine};
+    use base64::{Engine, engine::general_purpose::STANDARD as B64};
     let mut buf = [0u8; 18];
     let mut f = std::fs::File::open("/dev/urandom").ok()?;
     f.read_exact(&mut buf).ok()?;
@@ -324,7 +330,9 @@ pub fn nearby(
             }
         }
         let mut buf = [0u8; MAX_PACKET];
-        let Ok((n, from)) = sock.recv_from(&mut buf) else { continue };
+        let Ok((n, from)) = sock.recv_from(&mut buf) else {
+            continue;
+        };
         let Some(p) = parse(&buf[..n]) else { continue };
         if p.t != "announce" {
             continue;
@@ -401,7 +409,9 @@ pub fn resolve(id: &Identity, want_sign: &str, secs: u64) -> std::io::Result<Opt
             last = std::time::Instant::now();
         }
         let mut buf = [0u8; MAX_PACKET];
-        let Ok((n, from)) = sock.recv_from(&mut buf) else { continue };
+        let Ok((n, from)) = sock.recv_from(&mut buf) else {
+            continue;
+        };
         let Some(a) = parse(&buf[..n]) else { continue };
         // Three checks, and all three matter: the right shape of packet, from
         // the key we asked about, answering THIS query. Without the nonce an
@@ -432,7 +442,9 @@ fn answer_queries(listen_port: u16) -> std::io::Result<()> {
     let me = id.public_b64();
     loop {
         let mut buf = [0u8; MAX_PACKET];
-        let Ok((n, from)) = sock.recv_from(&mut buf) else { continue };
+        let Ok((n, from)) = sock.recv_from(&mut buf) else {
+            continue;
+        };
         let Some(q) = parse(&buf[..n]) else { continue };
         if q.t != "query" || q.nonce.is_empty() {
             continue;
@@ -477,7 +489,10 @@ fn answer_queries(listen_port: u16) -> std::io::Result<()> {
 pub fn listen(bind: &str, port: u16) -> std::io::Result<()> {
     let id = Identity::load()?;
     let l = TcpListener::bind((bind, port))?;
-    println!("gage listen on {bind}:{port} (tcp) and 0.0.0.0:{} (udp queries)", query_bind());
+    println!(
+        "gage listen on {bind}:{port} (tcp) and 0.0.0.0:{} (udp queries)",
+        query_bind()
+    );
     println!("  it answers a query only when the query is signed by a key on your list");
     println!("  an envelope that arrives lands in inbox/pending -- arrival is not consent");
     std::thread::spawn(move || {
@@ -558,7 +573,10 @@ fn handle_inbound(stream: TcpStream, id: &Identity) -> std::io::Result<()> {
 /// route -- which the sender writes directly -- this one is ours to refuse.
 fn accept_envelope(body: &[u8], id: &Identity) -> Result<String, String> {
     let v: serde_json::Value = serde_json::from_slice(body).map_err(|e| e.to_string())?;
-    let raw = v.get("envelope").and_then(|e| e.as_str()).ok_or("no envelope")?;
+    let raw = v
+        .get("envelope")
+        .and_then(|e| e.as_str())
+        .ok_or("no envelope")?;
     let env: crate::seal::Envelope =
         serde_json::from_str(raw).map_err(|e| format!("unreadable envelope: {e}"))?;
     if env.to_box.trim() != id.box_public_b64() {
@@ -577,7 +595,10 @@ fn accept_envelope(body: &[u8], id: &Identity) -> Result<String, String> {
         }
         let dest = crate::routes::pending_dir(&crate::identity::home()).join(&loaded.manifest.id);
         if dest.exists() {
-            return Ok(format!("already have {} -- left in place", loaded.manifest.id));
+            return Ok(format!(
+                "already have {} -- left in place",
+                loaded.manifest.id
+            ));
         }
         std::fs::create_dir_all(dest.parent().unwrap()).map_err(|e| e.to_string())?;
         crate::routes::deliver(tmp, &dest).map_err(|e| e.to_string())?;
@@ -668,7 +689,10 @@ mod tests {
         // sends to the same recipient.
         assert_eq!(tag, want_tag(k, "nonce-one"));
         assert_ne!(tag, want_tag(k, "nonce-two"));
-        assert_ne!(tag, want_tag("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", "nonce-one"));
+        assert_ne!(
+            tag,
+            want_tag("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", "nonce-one")
+        );
     }
 
     #[test]
@@ -715,7 +739,10 @@ mod tests {
             port: 7791,
         };
         assert_eq!(s.token(), "SIGN.BOX");
-        let bare = Seen { boxpub: String::new(), ..s };
+        let bare = Seen {
+            boxpub: String::new(),
+            ..s
+        };
         assert_eq!(bare.token(), "SIGN");
     }
 }
@@ -803,7 +830,10 @@ pub fn run(port: u16) -> std::io::Result<()> {
         Err(_) => {
             let i = Identity::create_named(None)?;
             println!("new identity, named after its own key: {}", i.handle);
-            println!("  {}", crate::words::fingerprint_of(&i.public_b64(), Some(&i.box_public_b64())));
+            println!(
+                "  {}",
+                crate::words::fingerprint_of(&i.public_b64(), Some(&i.box_public_b64()))
+            );
             println!();
             i
         }
@@ -1011,7 +1041,11 @@ pub fn hand_over(dir: &std::path::Path, who: &str) -> Result<Vec<String>, String
                 Some(n) => format!("paired, on your list as {n}"),
                 None => "NOT PAIRED -- it will arrive as SENDER NOT ON YOUR LIST".to_string(),
             };
-            (e.boxpub.clone(), e.addr.clone(), format!("{} ({known})", e.label))
+            (
+                e.boxpub.clone(),
+                e.addr.clone(),
+                format!("{} ({known})", e.label),
+            )
         }
         None => {
             let sign = c.key_for_name(who).ok_or_else(|| {
@@ -1034,7 +1068,11 @@ pub fn hand_over(dir: &std::path::Path, who: &str) -> Result<Vec<String>, String
                          a key they do not know is ignored, deliberately and silently."
                     )
                 })?;
-            (boxpub, format!("{}:{}", seen.addr.ip(), seen.port), who.to_string())
+            (
+                boxpub,
+                format!("{}:{}", seen.addr.ip(), seen.port),
+                who.to_string(),
+            )
         }
     };
 
@@ -1042,7 +1080,7 @@ pub fn hand_over(dir: &std::path::Path, who: &str) -> Result<Vec<String>, String
     let body = serde_json::json!({
         "to_box": boxpub,
         "envelope": serde_json::to_string(&env).map_err(|e| e.to_string())? })
-        .to_string();
+    .to_string();
     let sa: SocketAddr = addr
         .parse()
         .map_err(|e| format!("{who} announced an address that is not one ({addr}): {e}"))?;

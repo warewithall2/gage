@@ -39,7 +39,10 @@ static TRUNCATED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool:
 
 pub fn relay_addr() -> Option<String> {
     let p = crate::identity::home().join("relay");
-    std::fs::read_to_string(p).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+    std::fs::read_to_string(p)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
 }
 
 pub fn set_relay(addr: &str) -> std::io::Result<()> {
@@ -189,7 +192,11 @@ pub fn post(addr: &str, path: &str, body: &str) -> std::io::Result<String> {
     // used to claim was already happening.
     if let Some(want) = head
         .lines()
-        .find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse::<usize>()))
+        .find_map(|l| {
+            l.to_ascii_lowercase()
+                .strip_prefix("content-length:")
+                .map(|v| v.trim().parse::<usize>())
+        })
         .and_then(|r| r.ok())
     {
         if rest.len() < want {

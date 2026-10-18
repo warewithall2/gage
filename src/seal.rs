@@ -21,7 +21,7 @@
 //! It costs about a third in size and avoids a tar dependency for a payload
 //! already capped at 25 MB, and what comes out of `unseal` is inspectable.
 
-use base64::{engine::general_purpose::STANDARD as B64, Engine};
+use base64::{Engine, engine::general_purpose::STANDARD as B64};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -54,7 +54,10 @@ pub fn seal_dir(dir: &Path, to_box_b64: &str) -> std::io::Result<Envelope> {
                 format!("unsafe path: {}", it.path),
             ));
         }
-        items.push((it.path.clone(), B64.encode(std::fs::read(dir.join(&it.path))?)));
+        items.push((
+            it.path.clone(),
+            B64.encode(std::fs::read(dir.join(&it.path))?),
+        ));
     }
     let pkg = serde_json::to_vec(&Package {
         manifest: B64.encode(&manifest),
@@ -72,7 +75,11 @@ pub fn seal_dir(dir: &Path, to_box_b64: &str) -> std::io::Result<Envelope> {
     let ct = pk
         .seal(&mut crypto_box::aead::OsRng, &pkg)
         .map_err(|_| std::io::Error::new(std::io::ErrorKind::Other, "sealing failed"))?;
-    Ok(Envelope { v: 1, to_box: to_box_b64.trim().to_string(), ct: B64.encode(ct) })
+    Ok(Envelope {
+        v: 1,
+        to_box: to_box_b64.trim().to_string(),
+        ct: B64.encode(ct),
+    })
 }
 
 /// Decrypt an envelope back into a bundle directory.
@@ -160,11 +167,17 @@ pub fn unseal_to_dir(
         writes.push((path.clone(), data));
     }
     if seen.len() != declared.len() {
-        let missing: Vec<&str> =
-            declared.keys().filter(|k| !seen.contains(*k)).copied().collect();
+        let missing: Vec<&str> = declared
+            .keys()
+            .filter(|k| !seen.contains(*k))
+            .copied()
+            .collect();
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
-            format!("envelope is missing declared item(s): {}", missing.join(", ")),
+            format!(
+                "envelope is missing declared item(s): {}",
+                missing.join(", ")
+            ),
         ));
     }
 
@@ -191,7 +204,11 @@ mod tests {
     fn seal_raw(pkg: &Package, to: &crypto_box::PublicKey) -> Envelope {
         let bytes = serde_json::to_vec(pkg).unwrap();
         let ct = to.seal(&mut crypto_box::aead::OsRng, &bytes).unwrap();
-        Envelope { v: 1, to_box: B64.encode(to.as_bytes()), ct: B64.encode(ct) }
+        Envelope {
+            v: 1,
+            to_box: B64.encode(to.as_bytes()),
+            ct: B64.encode(ct),
+        }
     }
 
     /// `paths` is (bundle path, contents), so the fixture's digests are real.
@@ -238,9 +255,12 @@ mod tests {
                 ("items/evil.txt".into(), B64.encode(b"no")),
             ],
         };
-        let env = seal_raw(&pkg, &crypto_box::PublicKey::from_bytes(
-            B64.decode(id.box_public_b64()).unwrap().try_into().unwrap(),
-        ));
+        let env = seal_raw(
+            &pkg,
+            &crypto_box::PublicKey::from_bytes(
+                B64.decode(id.box_public_b64()).unwrap().try_into().unwrap(),
+            ),
+        );
         let err = unseal_to_dir(&env, &id, &tmp.join("out")).unwrap_err();
         assert!(
             err.to_string().contains("does not declare"),
@@ -269,9 +289,12 @@ mod tests {
             sig: String::new(),
             items: vec![(escape.into(), B64.encode(b"owned"))],
         };
-        let env = seal_raw(&pkg, &crypto_box::PublicKey::from_bytes(
-            B64.decode(id.box_public_b64()).unwrap().try_into().unwrap(),
-        ));
+        let env = seal_raw(
+            &pkg,
+            &crypto_box::PublicKey::from_bytes(
+                B64.decode(id.box_public_b64()).unwrap().try_into().unwrap(),
+            ),
+        );
         let err = unseal_to_dir(&env, &id, &tmp.join("out")).unwrap_err();
         assert!(
             err.to_string().contains("escapes the bundle"),
@@ -305,10 +328,17 @@ mod tests {
         unsafe { std::env::set_var("CTX_HOME", tmp.join("home")) };
         let id = crate::identity::Identity::create(name).unwrap();
         let man = manifest_json(declared);
-        let pkg = Package { manifest: B64.encode(&man), sig: String::new(), items: carried };
-        let env = seal_raw(&pkg, &crypto_box::PublicKey::from_bytes(
-            B64.decode(id.box_public_b64()).unwrap().try_into().unwrap(),
-        ));
+        let pkg = Package {
+            manifest: B64.encode(&man),
+            sig: String::new(),
+            items: carried,
+        };
+        let env = seal_raw(
+            &pkg,
+            &crypto_box::PublicKey::from_bytes(
+                B64.decode(id.box_public_b64()).unwrap().try_into().unwrap(),
+            ),
+        );
         let out = tmp.join("out");
         let r = unseal_to_dir(&env, &id, &out);
         (out, r)
@@ -346,8 +376,14 @@ mod tests {
             ],
         );
         assert!(r.is_err());
-        assert!(!out.join("manifest.json").exists(), "the manifest was written anyway");
-        assert!(!out.join("items/ok.txt").exists(), "an item was written anyway");
+        assert!(
+            !out.join("manifest.json").exists(),
+            "the manifest was written anyway"
+        );
+        assert!(
+            !out.join("items/ok.txt").exists(),
+            "an item was written anyway"
+        );
     }
 
     #[test]
@@ -358,7 +394,10 @@ mod tests {
             vec![("items/a.txt".into(), B64.encode(b"substituted"))],
         );
         let err = r.unwrap_err();
-        assert!(err.to_string().contains("does not match the digest"), "got: {err}");
+        assert!(
+            err.to_string().contains("does not match the digest"),
+            "got: {err}"
+        );
         assert!(!out.join("items/a.txt").exists());
     }
 
@@ -372,7 +411,10 @@ mod tests {
             vec![("items/a.txt".into(), B64.encode(b"a"))],
         );
         let err = r.unwrap_err();
-        assert!(err.to_string().contains("missing declared item"), "got: {err}");
+        assert!(
+            err.to_string().contains("missing declared item"),
+            "got: {err}"
+        );
     }
 
     #[test]

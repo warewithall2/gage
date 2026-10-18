@@ -25,7 +25,10 @@ fn main() {
         .map(|o| !o.stdout.is_empty())
         .unwrap_or(false);
 
-    println!("cargo:rustc-env=CTX_BUILD_REV={rev}{}", if dirty { "-dirty" } else { "" });
+    println!(
+        "cargo:rustc-env=CTX_BUILD_REV={rev}{}",
+        if dirty { "-dirty" } else { "" }
+    );
     println!("cargo:rerun-if-changed=.git/HEAD");
     println!("cargo:rerun-if-changed=.git/index");
 }
