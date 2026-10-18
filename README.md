@@ -287,6 +287,27 @@ them. It did not before, which meant the unattended path — the one the journal
 exists for — was leaving the thinnest record: an `accepted` entry with no
 `observed` entry in front of it.
 
+## Giving it to someone else
+
+    scripts/release.sh owens-macbook-air     # build on every machine reachable
+    cat dist/SHA256SUMS
+
+Binaries land in `dist/`, one per platform, each built on the machine it runs
+on — cross-compiling needs a C toolchain per target because rustls brings C,
+and a binary built where it runs is one fewer thing to be wrong about. Every
+binary reports the commit it came from, `ctx --version` prints it, and the
+release refuses to build from a dirty tree: a binary that names a commit it
+does not match is worse than one with no version at all, and the journal
+freezes verdicts, so "which ctx decided this" needs an exact answer. The stamp
+is checked by asking the binary — on the host that built it, when it cannot
+run here.
+
+[INSTALL.md](INSTALL.md) is written from the other person's side, including
+the two places they are most likely to give up: the macOS quarantine dialog on
+an unsigned binary, which looks like the software is broken, and the word-pair
+confirmation feeling like a chore when it is the only step that cannot be
+automated.
+
 ## Use
 
     ctx init owen                      # make your keypair
