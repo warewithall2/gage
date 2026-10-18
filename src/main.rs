@@ -18,6 +18,7 @@ mod manifest;
 mod notify;
 mod open;
 mod outbound;
+mod quickstart;
 mod relay;
 mod remote;
 mod rotate;
@@ -66,6 +67,13 @@ enum Cmd {
         #[arg(long)]
         compromised: bool,
     },
+    /// Nothing to a first verified handoff, one step at a time
+    ///
+    /// Makes an identity if you have none, shows your word-pairs and the line
+    /// you send a colleague, then offers to add their key and send one bundle.
+    /// Every step is skippable and nothing here does anything the individual
+    /// commands do not.
+    Quickstart,
     /// Your key history: what is current, what is retired
     Keys,
     /// Write your identity to a passphrase-encrypted file you keep yourself
@@ -796,6 +804,9 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             eprintln!("  When you pair with another machine, both screens must show");
             eprintln!("  the same four pairs. The short label is only for telling");
             eprintln!("  devices apart in a list -- never confirm against it alone.");
+        }
+        Cmd::Quickstart => {
+            quickstart::run().map_err(|e| std::io::Error::other(e.to_string()))?;
         }
         Cmd::ExportIdentity { out } => {
             backup::export(&out).map_err(std::io::Error::other)?;

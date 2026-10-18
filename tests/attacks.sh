@@ -3717,6 +3717,55 @@ printf '%s\nsomething else entirely\n' "$PASS" | CTX_HOME=$T/bk2 $CTX export-ide
 code export-mismatch $? 1
 if [ -e "$T/bk2.bak" ]; then bad "wrote a backup despite the passphrases not matching"; else ok; fi
 
+echo "--- quickstart composes the existing commands and nothing else"
+
+# `gage quickstart` is a guided tour, so the thing to pin is that it really
+# does reach a verified handoff from an empty home, driven by a pipe -- and
+# that every prompt is skippable, because a wizard you cannot get out of is
+# worse than no wizard.
+QSW=$T/qsw; mkdir -p "$QSW"
+CTX_HOME=$T/qsb $CTX init qsbob >/dev/null 2>&1
+QSBLINE=$(CTX_HOME=$T/qsb $CTX whoami 2>/dev/null | awk 'NR==1{print "gage add qsbob " $2}')
+
+# Side A: name itself, paste B's line, send a first bundle with no file given.
+( cd "$QSW" && printf 'qsalice\ny\n%s\ny\nfirst handoff\n\n' "$QSBLINE" \
+  | CTX_HOME=$T/qsa $CTX quickstart ) > "$T/qs.out" 2>&1
+code quickstart $? 0
+want "$T/qs.out" "you are   : qsalice"
+want "$T/qs.out" "this key says :"
+want "$T/qs.out" "added qsbob"
+# The add line it prints must be runnable, which is the whole reason the
+# handle is shell-quoted.
+want "$T/qs.out" "gage add qsalice "
+if [ -d "$QSW/gage-first-handoff" ]; then ok; else bad "quickstart built no bundle"; fi
+
+# B puts A on the list too, then opens it: the verdict is the product.
+QSAKEY=$(CTX_HOME=$T/qsa $CTX whoami 2>/dev/null | cut -f2)
+CTX_HOME=$T/qsb $CTX add qsalice "$QSAKEY" >/dev/null 2>&1
+CTX_HOME=$T/qsb $CTX open "$QSW/gage-first-handoff" > "$T/qs.open" 2>&1
+code quickstart-open $? 0
+want "$T/qs.open" "SENDER VERIFIED"
+want "$T/qs.open" "first gage handoff"
+
+# Every step skippable: a bare "no" to both offers still exits 0 and leaves
+# an identity behind, and declining everything builds nothing.
+printf 'qssolo\nn\nn\n' | CTX_HOME=$T/qsc $CTX quickstart > "$T/qs.skip" 2>&1
+code quickstart-skipped $? 0
+want "$T/qs.skip" "you are   : qssolo"
+if [ -f "$T/qsc/identity.key" ]; then ok; else bad "quickstart made no identity"; fi
+
+# Run against a home that already has an identity, it must not touch it.
+BEFORE=$(sha256sum "$T/qsc/identity.key" | cut -d' ' -f1)
+printf 'n\nn\n' | CTX_HOME=$T/qsc $CTX quickstart > "$T/qs.again" 2>&1
+code quickstart-existing $? 0
+want "$T/qs.again" "already have an identity"
+if [ "$(sha256sum "$T/qsc/identity.key" | cut -d' ' -f1)" = "$BEFORE" ]; then ok
+else bad "quickstart replaced an existing identity"; fi
+
+# And EOF -- a script that runs out of input -- is a skip, not an error.
+: | CTX_HOME=$T/qsd $CTX quickstart > "$T/qs.eof" 2>&1
+code quickstart-eof $? 0
+
 echo "a good bundle exits 0"
 CTX_HOME=$T/b $CTX open "$T/b1" >/dev/null 2>&1; code good $? 0
 
