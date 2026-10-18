@@ -24,6 +24,14 @@ already have.
 
 ![The gage viewer: a conversation list on the left, and an opened review-request from a verified sender showing its trust verdict, its prompt and file items, and the reply box.](docs/screenshots/inbox.png)
 
+**See a whole handoff:** [docs/demo.md](docs/demo.md) is a real capture of two
+identities going from `gage init` to a rendered trust verdict — pairing with
+word-pairs, sending through a relay, and the frame the receiving agent is shown
+before any content. 21 seconds, every line of output genuine. The same recording
+is [docs/demo.cast](docs/demo.cast) in asciinema v2 format, and
+[scripts/demo.sh](scripts/demo.sh) reproduces it in a throwaway directory
+without touching your own gage home.
+
 ## The receiving agent's half of the trust boundary
 
 Signing what an agent *does* is well covered by other work — receipts over
