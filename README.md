@@ -40,6 +40,14 @@ tool calls, verified at the server that executes them. See
 *reading* a message is told about it, in the seconds before it decides what to
 do.
 
+**The wire reality and the limits:** [docs/spec.md](docs/spec.md) is what is
+actually on disk and on the network — the bundle layout, what is signed, how a
+receiver computes trust, the relay protocol — derived from the code rather than
+from intent. [docs/threat-model.md](docs/threat-model.md) is the adversaries,
+the mitigation for each, and the **non-goals**: the things gage deliberately
+does not protect against, including the central one, that nothing here can
+make a language model obey the frame.
+
 That matters because the reader is different. A receipt's verdict is read by a
 program at an admission check, which cannot be talked out of its conclusion. A
 bundle's verdict is read by a language model whose next tokens are the payload

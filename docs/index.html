@@ -109,12 +109,22 @@ gage lan                     # be reachable on this network</pre>
   </figure>
 
   <h2>Where it is</h2>
-  <p>v0.1.0, the first release. 108 unit tests and 708 adversarial checks pass, and the
-  full self-check — build, unit tests, attack suite, viewer end-to-end — is green on the
-  commit this was released from. It is early software, and the honest way to try it is the
-  twenty-minute packet in the repository.</p>
+  <p>v0.1.0, the first release. 110 unit tests and 724 adversarial checks pass, and the
+  full self-check — build, unit tests, attack suite, viewer end-to-end — is green. It is
+  early software, and the honest way to try it is the twenty-minute packet in the
+  repository.</p>
+
+  <p>Two documents say what this actually is rather than what it hopes to be. The
+  <a href="https://github.com/warewithall2/gage/blob/master/docs/spec.md">spec</a> is the
+  wire reality, derived from the code. The
+  <a href="https://github.com/warewithall2/gage/blob/master/docs/threat-model.md">threat
+  model</a> lists the adversaries, the mitigation for each, and the non-goals — including
+  that nothing here can make a language model obey the frame, and that the security review
+  so far has been self-review.</p>
 
   <ul class="links">
+    <li><a href="https://github.com/warewithall2/gage/blob/master/docs/spec.md">Spec</a></li>
+    <li><a href="https://github.com/warewithall2/gage/blob/master/docs/threat-model.md">Threat model</a></li>
     <li><a href="https://github.com/warewithall2/gage">GitHub</a></li>
     <li><a href="https://crates.io/crates/gage">crates.io</a></li>
     <li><a href="https://docs.rs/gage">docs.rs</a></li>
