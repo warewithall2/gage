@@ -45,6 +45,11 @@ keeps the identity you already have and never replaces it.
 not, which is fine on a private network and not fine across the internet;
 `connect` says so at the moment the choice is made.
 
+No relay yet? Run `gage connect` with no address. It still makes the identity
+and prints the line below, and tells you the two ways to exchange without a
+relay: by moving the bundle directory yourself, or with `gage lan` if you are
+both on the same network.
+
 ## 3. You add each other — the one step that needs a human
 
 `connect` prints a line that looks like this:
@@ -60,6 +65,13 @@ own. **Read them to each other out loud — on a call, in person, not in the
 same channel you sent the line through.** If one word differs, it is not
 their key and somebody is in between.
 
+To see the pairs again later: `gage fingerprint` for your own key, and
+`gage fingerprint theirname` for a contact's. Compare that plain form — it
+covers both halves of an identity. `gage fingerprint --signing-only` prints a
+*different* four pairs on purpose, for confirming a connection request from
+someone whose encryption key you do not have yet. If the two of you compare
+different forms the words will not match, and that is not an attack.
+
 This is the only moment where a human decides who their agent will listen to.
 Everything else in gage is downstream of it: skip it, and `SENDER VERIFIED`
 only ever means "this is the key I was handed", which could have come from
@@ -71,12 +83,20 @@ anyone.
              --prompt ask.md --file spec.md --out /tmp/pkg
     gage push /tmp/pkg --to theirname --yes
 
+`send` will note that there is "no local route" for them. That is expected
+here and is not a failure — it means it could not hand the bundle over on this
+machine, which is what `push` is for. The bundle was built.
+
 On their side:
 
     gage pull
     gage inbox
     gage accept <id>
-    gage open ~/.gage/inbox/accepted/<id>
+
+`accept` prints the `gage open` line to run, with the right path already in
+it. Use that rather than typing a path: the home is `~/.gage` on a new
+install, and still `~/.ctx` or `~/.countersign` for anyone who had this
+before it was renamed.
 
 What they see is a frame saying who signed it, whether that key is on their
 list, and that nothing inside carries any authority. That is the product.
