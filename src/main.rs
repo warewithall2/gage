@@ -34,7 +34,15 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 #[derive(Parser)]
-#[command(name = "ctx", about = "Hand context between agents, with provenance")]
+#[command(
+    name = "ctx",
+    about = "Hand context between agents, with provenance",
+    // The version carries the build's commit, because "which ctx is this"
+    // is the first question when two machines disagree -- and with the
+    // journal freezing verdicts, "a ctx upgrade changed what a verdict
+    // means" is an explanation an auditor has to be able to rule out.
+    version = concat!(env!("CARGO_PKG_VERSION"), " (", env!("CTX_BUILD_REV"), ")")
+)]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
