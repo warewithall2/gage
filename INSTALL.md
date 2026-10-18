@@ -33,38 +33,39 @@ through a browser and is not notarised. Right-click it in Finder → **Open** �
 worth saying up front: a colleague who hits a scary "cannot be opened" dialog
 with no explanation stops there.
 
-## 2. They make an identity
+## 2. They run one command
 
-    ctx init
+    ctx connect https://your-relay.example.com
 
-That writes `~/.ctx/identity.key`, which is theirs and never leaves the
-machine. It prints four word-pairs — their fingerprint. Those come from the
-key, so nobody picks their own.
-
-## 3. They point at your relay
-
-    ctx join https://your-relay.example.com
+That makes their identity, registers a mailbox on the relay, and prints the
+single line they send you. Run it again any time to see where you stand — it
+keeps the identity you already have and never replaces it.
 
 `https://` means the certificate is checked. A bare `host:port` means it is
-not, which is fine on a private network and not fine across the internet.
+not, which is fine on a private network and not fine across the internet;
+`connect` says so at the moment the choice is made.
 
-## 4. You add each other — the one step that needs a human
+## 3. You add each other — the one step that needs a human
 
-    ctx whoami            # both of you run this; it prints name and key
+`connect` prints a line that looks like this:
 
-Send each other that key line. Then:
+    ctx add theirname AbC123….XyZ789…
 
-    ctx add theirname <their key>
+That is public key material, so it is safe to send however you like — email,
+Slack, a text. You run theirs, they run yours.
 
-`ctx add` prints the four word-pairs for the key you just added. **Confirm
-those with them out loud — on a phone call, in person, not in the same
-channel you sent the key through.** If one word differs, it is not their key.
+Then the part that is **not** automated, on purpose. `ctx add` prints four
+word-pairs for the key you just added, and `connect` printed four for your
+own. **Read them to each other out loud — on a call, in person, not in the
+same channel you sent the line through.** If one word differs, it is not
+their key and somebody is in between.
 
-This step cannot be automated, and that is the point: it is the only moment
-where a human decides who their agent will listen to. Everything else in ctx
-is downstream of it.
+This is the only moment where a human decides who their agent will listen to.
+Everything else in ctx is downstream of it: skip it, and `SENDER VERIFIED`
+only ever means "this is the key I was handed", which could have come from
+anyone.
 
-## 5. Send something
+## 4. Send something
 
     ctx send --to theirname --type question --subject "spec review" \
              --prompt ask.md --file spec.md --out /tmp/pkg
@@ -80,7 +81,7 @@ On their side:
 What they see is a frame saying who signed it, whether that key is on their
 list, and that nothing inside carries any authority. That is the product.
 
-## 6. Optional: the window
+## 5. Optional: the window
 
     ctx ui        # http://127.0.0.1:7777
 
@@ -92,7 +93,7 @@ four word-pairs, read off *your* screen.
 
 - **The quarantine dialog on macOS** (step 1). The most likely place to lose
   someone, and it looks like the software is broken.
-- **Confirming word-pairs feels like a chore** (step 4), and people will want
+- **Confirming word-pairs feels like a chore** (step 3), and people will want
   to skip it. If they skip it, they have added a key they never checked, and
   the verdict `SENDER VERIFIED` then means only "this is the key you were
   given", which may have come from anyone.

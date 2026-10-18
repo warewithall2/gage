@@ -287,6 +287,20 @@ them. It did not before, which meant the unattended path — the one the journal
 exists for — was leaving the thinnest record: an `accepted` entry with no
 `observed` entry in front of it.
 
+## Getting started, and getting someone else started
+
+    ctx connect https://relay.example.com
+
+Three steps that have no decisions in them — make an identity, register a
+mailbox, work out what to share — and then a deliberate stop at the one that
+does. It prints the line the other person runs, and the four word-pairs you
+have to read to them out loud. That last part is not automated because
+automating it would be removing the only thing ctx does.
+
+Run it again whenever: it keeps the identity you have. A command whose job is
+to get you started must not be the one that silently throws away the key
+everything you have already exchanged was built on.
+
 ## Giving it to someone else
 
     scripts/release.sh owens-macbook-air     # build on every machine reachable
@@ -1185,7 +1199,7 @@ in the message. See [Authority](#authority-the-one-thing-that-says-you-may-act).
     cargo build --release && cargo test --release && bash tests/attacks.sh
     bash tests/ui-e2e.sh      # optional: drives the viewer in a real browser
 
-664 checks plus 106 Rust unit tests, and one end-to-end test that opens the
+680 checks plus 106 Rust unit tests, and one end-to-end test that opens the
 viewer in a browser and completes a connection request.
 
 That last one exists because of a gap the other two could not see. The buddy
