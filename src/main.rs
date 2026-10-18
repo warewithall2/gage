@@ -81,6 +81,22 @@ enum Cmd {
     },
     /// Add someone's key to your buddy list (the signpub.boxpub token)
     Add { name: String, key: String },
+    /// Get set up and get the one line you send to the other person.
+    ///
+    /// Does the three steps that have no decisions in them -- make an
+    /// identity, register a mailbox on a relay, work out what to share --
+    /// and then stops at the one step that does: confirming the other
+    /// party's word-pairs with them, out loud, over a channel that is not
+    /// this one. That step is not automated here because automating it
+    /// would be removing the only thing ctx actually does
+    Connect {
+        /// The relay to register with, e.g. https://relay.example.com.
+        /// Omit it to see where you stand and get your share line again
+        relay: Option<String>,
+        /// What to call yourself. Only used if you have no identity yet;
+        /// with no name, one is derived from your own key
+        #[arg(long)] name: Option<String>,
+    },
     /// Refuse a key, so it stops being offered as a new connection. The
     /// opposite of `add`, and the third state: a list can say yes and an
     /// absence says "not asked yet", but neither can say no. A declined key's
@@ -1425,6 +1441,79 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     per_min: rate_per_min,
                 },
             )?;
+        }
+        Cmd::Connect { relay, name } => {
+            // Step 1: an identity, if there is not one. Never replaces an
+            // existing one -- `init` refuses that, and so does this: a
+            // command whose job is to get you started must not be the one
+            // that silently throws away the key everything you have already
+            // exchanged was built on.
+            let id = match identity::Identity::load() {
+                Ok(id) => {
+                    println!("you already have an identity, so this kept it.");
+                    id
+                }
+                Err(_) => {
+                    let id = identity::Identity::create_named(name.as_deref())?;
+                    println!("made you an identity in {}", identity::home().display());
+                    id
+                }
+            };
+            println!();
+
+            // Step 2: the relay, if one was named.
+            match &relay {
+                Some(addr) => {
+                    let body = serde_json::json!({
+                        "sign_key": id.public_b64(), "box_key": id.box_public_b64() })
+                    .to_string();
+                    register_with_proof(addr, &id, &body)?;
+                    remote::set_relay(addr)?;
+                    println!("registered a mailbox on {addr}");
+                    if !addr.starts_with("https://") {
+                        // Said here, not only in the docs, because this is
+                        // the moment the choice is made.
+                        // One println per output line. A wrapped literal has
+                        // now shipped its own source indentation four times;
+                        // the rule here is one line of source per line of output.
+                        println!("  note: no https, so the connection to the relay is not");
+                        println!("  verified. That is fine on a private network, and not");
+                        println!("  fine across the internet.");
+                    }
+                }
+                None => match remote::relay_addr() {
+                    Some(a) => println!("your relay is {a}"),
+                    None => {
+                        println!("no relay yet. `ctx connect <address>` registers one.");
+                        println!("  Until then you can still exchange bundles by file, or");
+                        println!("  on your own network with `ctx lan`.");
+                    }
+                },
+            }
+            println!();
+
+            // Step 3: the line to share, which is literally the command the
+            // other person runs. The fingerprint goes with it so they have
+            // something to compare against -- NOT so they can skip the
+            // comparison, which the wording below has to earn.
+            let token = format!("{}.{}", id.public_b64(), id.box_public_b64());
+            println!("Send this line to the person you want to exchange with:");
+            println!();
+            println!("    ctx add {} {}", id.handle, token);
+            println!();
+            println!("Ask them for theirs, and run it. Then one thing is left, and it is");
+            println!("the only part of this that cannot be done for you:");
+            println!();
+            println!("    {}", words::fingerprint(&id.public_b64()));
+            println!();
+            println!("  Those four word-pairs come from your key, so nobody picks their own.");
+            println!("  When they add you, their screen shows four pairs for your key.");
+            println!("  Read yours to them out loud -- on a call, in person, NOT in the");
+            println!("  same place you sent the line above. If one word differs, it is not");
+            println!("  your key, and somebody is between you.");
+            println!();
+            println!("  Doing this is what makes SENDER VERIFIED mean anything later. Skip");
+            println!("  it and that verdict only ever says \"this is the key I was handed\".");
         }
         Cmd::Join { addr } => {
             let id = identity::Identity::load()?;

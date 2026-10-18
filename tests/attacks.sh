@@ -3196,6 +3196,57 @@ PY4
 then ok; else bad "the per-address rate limit did not hold at 10/min"; fi
 kill $rl2pid 2>/dev/null; wait $rl2pid 2>/dev/null
 
+echo
+echo "--- ctx connect: the first five minutes, where a second person is won or lost"
+mkdir -p "$T"/{cn, cnr}
+CTX_HOME=$T/cnr $CTX relay --bind 127.0.0.1:7913 --store "$T/cnr/store" >/dev/null 2>&1 &
+cnpid=$!
+sleep 1
+CTX_HOME=$T/cn $CTX connect 127.0.0.1:7913 --name newbie > "$T/cno" 2>&1
+code connect $? 0
+want "$T/cno" "made you an identity"
+want "$T/cno" "registered a mailbox"
+# The share line is literally the command the other person runs.
+want "$T/cno" "ctx add newbie "
+# And the step that cannot be automated is stated as such, with the reason.
+want "$T/cno" "cannot be done for you"
+want "$T/cno" "NOT in the"
+want "$T/cno" "this is the key I was handed"
+# No https means saying so at the moment the choice is made, not only in docs.
+want "$T/cno" "the connection to the relay is not"
+
+# No line of this output carries baked-in indentation. The fingerprint and
+# the share line are allowed to be indented; prose is not. This has shipped
+# four times, every time from a wrapped string literal, and it is the first
+# thing a new person reads.
+if grep -nE "^ {6,}" "$T/cno" | grep -vE "ctx add |·" | head -3 | grep -q .; then
+  bad "connect printed prose with baked-in indentation: $(grep -nE '^ {6,}' "$T/cno" | grep -vE 'ctx add |·' | head -1)"
+else ok; fi
+
+# Running it again must NOT replace the identity. A command whose job is to
+# get you started must not be the one that throws away the key everything
+# already exchanged was built on.
+K1=$(CTX_HOME=$T/cn $CTX whoami | cut -f2)
+CTX_HOME=$T/cn $CTX connect 127.0.0.1:7913 > "$T/cno2" 2>&1
+want "$T/cno2" "already have an identity"
+K2=$(CTX_HOME=$T/cn $CTX whoami | cut -f2)
+if [ "$K1" = "$K2" ]; then ok; else bad "connect replaced an existing identity"; fi
+
+# With no relay it says where you stand rather than failing.
+mkdir -p "$T/cn2"
+CTX_HOME=$T/cn2 $CTX connect --name solo > "$T/cno3" 2>&1
+code connect_norelay $? 0
+want "$T/cno3" "no relay yet"
+want "$T/cno3" "ctx add solo "
+
+# The share line it prints actually works on the other side, which is the
+# only thing that makes it a share line and not a decoration.
+SHARE=$(grep -o "ctx add newbie [A-Za-z0-9+/=.]*" "$T/cno" | head -1)
+if [ -n "$SHARE" ]; then ok; else bad "no usable share line in connect output"; fi
+if CTX_HOME=$T/cn2 $CTX $(echo "$SHARE" | sed 's/^ctx //') >/dev/null 2>&1; then ok
+else bad "the share line connect printed was not accepted by ctx add"; fi
+kill $cnpid 2>/dev/null; wait $cnpid 2>/dev/null
+
 echo "a good bundle exits 0"
 CTX_HOME=$T/b $CTX open "$T/b1" >/dev/null 2>&1; code good $? 0
 
