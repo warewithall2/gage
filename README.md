@@ -48,6 +48,11 @@ the mitigation for each, and the **non-goals**: the things gage deliberately
 does not protect against, including the central one, that nothing here can
 make a language model obey the frame.
 
+**On A2A:** [docs/a2a.md](docs/a2a.md) says how this maps onto Google's
+Agent2Agent protocol, and what gage deliberately is not — not a transport, not
+a registry, not an identity provider. It is a design position, not code: gage
+speaks no A2A today.
+
 That matters because the reader is different. A receipt's verdict is read by a
 program at an admission check, which cannot be talked out of its conclusion. A
 bundle's verdict is read by a language model whose next tokens are the payload
