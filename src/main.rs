@@ -239,6 +239,10 @@ enum Cmd {
         #[arg(long, default_value = "4096")] max_store_mb: u64,
         /// requests per minute from one address
         #[arg(long, default_value = "120")] rate_per_min: u32,
+        /// mailboxes that may exist on this relay at all. Registration needs
+        /// no authentication beyond proving you hold the key you are
+        /// registering, which stops squatting and not manufacturing
+        #[arg(long, default_value = "2000")] max_mailboxes: usize,
     },
     /// Point this identity at a relay and register your mailbox
     Join { addr: String },
@@ -562,11 +566,26 @@ fn fetch_mailbox(
         // this manifest and not merely this id. A sender resending in good
         // faith produces a new manifest -- different `created` at minimum --
         // and is unaffected.
-        let seen_before = std::fs::read(tmp.join("manifest.json"))
-            .ok()
-            .map(|bytes| bundle::witness_of(&loaded.manifest.from.key, &bytes))
-            .and_then(|w| state::LocalState::load().witnessed(&w))
-            .is_some();
+        // Fails CLOSED. The first version was a chain of `.ok()` and
+        // `.and_then`, so an unreadable manifest or an unloadable state file
+        // collapsed to "never seen" and staged the replay -- a reviewer put
+        // it exactly: the protection that matters most on a damaged machine
+        // was the one that silently disabled itself. If this machine cannot
+        // tell whether it has seen a bundle, it does not accept it.
+        let seen_before = match std::fs::read(tmp.join("manifest.json")) {
+            Ok(bytes) => {
+                let w = bundle::witness_of(&loaded.manifest.from.key, &bytes);
+                state::LocalState::load().witnessed(&w).is_some()
+            }
+            Err(e) => {
+                eprintln!(
+                    "  refused {}: cannot read its manifest back to check for a replay ({e})",
+                    loaded.manifest.id
+                );
+                let _ = std::fs::remove_dir_all(&tmp);
+                continue;
+            }
+        };
         if seen_before && !dest.exists() {
             println!(
                 "  refused {} -- this machine has already seen this exact message.",
@@ -1457,7 +1476,10 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             std::fs::remove_dir_all(&p)?;
             println!("rejected {id}, deleted unread");
         }
-        Cmd::Relay { bind, store, max_mailbox_mb, max_mailbox_msgs, max_store_mb, rate_per_min } => {
+        Cmd::Relay {
+            bind, store, max_mailbox_mb, max_mailbox_msgs, max_store_mb, rate_per_min,
+            max_mailboxes,
+        } => {
             let root = store.unwrap_or_else(|| identity::home().join("relaystore"));
             // Said once, loudly, because the difference between a tailnet
             // relay and a public one is the whole of its threat model and
@@ -1479,6 +1501,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     mailbox_msgs: max_mailbox_msgs,
                     store_bytes: max_store_mb * 1024 * 1024,
                     per_min: rate_per_min,
+                    mailboxes: max_mailboxes,
                 },
             )?;
         }
@@ -1504,13 +1527,24 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             // Step 2: the relay, if one was named.
             match &relay {
                 Some(addr) => {
+                    // Warned BEFORE registering, not after. A reviewer
+                    // caught that the note came after `register_with_proof`,
+                    // so the keys had already gone to an unverified,
+                    // impersonable endpoint by the time the person was told
+                    // the connection was unverified. "Said at the moment the
+                    // choice is made" was said after the choice took effect.
+                    if !addr.trim().to_ascii_lowercase().starts_with("https://") {
+                        println!("  note: no https, so the connection to the relay is not");
+                        println!("  verified. That is fine on a private network, and not");
+                        println!("  fine across the internet.");
+                    }
                     let body = serde_json::json!({
                         "sign_key": id.public_b64(), "box_key": id.box_public_b64() })
                     .to_string();
                     register_with_proof(addr, &id, &body)?;
                     remote::set_relay(addr)?;
                     println!("registered a mailbox on {addr}");
-                    if !addr.starts_with("https://") {
+                    if false {
                         // Said here, not only in the docs, because this is
                         // the moment the choice is made.
                         // One println per output line. A wrapped literal has

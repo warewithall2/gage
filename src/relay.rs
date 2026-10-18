@@ -175,6 +175,8 @@ pub struct Limits {
     pub store_bytes: u64,
     /// Requests per minute from one address.
     pub per_min: u32,
+    /// Mailboxes that may exist on this relay at all.
+    pub mailboxes: usize,
 }
 
 impl Default for Limits {
@@ -187,6 +189,9 @@ impl Default for Limits {
             mailbox_msgs: 500,
             store_bytes: 4 * 1024 * 1024 * 1024,
             per_min: 120,
+            // Generous for people, small enough that manufacturing mailboxes
+            // is not a way to make every registration expensive.
+            mailboxes: 2_000,
         }
     }
 }
@@ -247,6 +252,7 @@ pub fn serve_with(bind: &str, root: PathBuf, limits: Limits) -> std::io::Result<
         limits.store_bytes / (1024 * 1024),
         limits.per_min
     );
+    println!("  at most {} mailboxes", limits.mailboxes);
     let live = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     for s in l.incoming() {
         let s = match s {
@@ -512,11 +518,45 @@ fn do_register(stream: TcpStream, body: &[u8]) -> std::io::Result<()> {
                     r#"{"error":"proof does not match"}"#,
                 );
             }
+            // A cap on how many mailboxes exist at all.
+            //
+            // There was none. The first leg of registration needs no
+            // authentication, and an attacker holds the secrets for keys it
+            // has just generated -- so the possession proof, which stops
+            // mailbox SQUATTING, does nothing to stop mailbox
+            // MANUFACTURING. A reviewer traced where that bites: every
+            // registration re-serialises the whole owners map and writes it,
+            // so each one costs more than the last and every other request
+            // waits behind it.
+            if !st.owners.contains_key(&reg.box_key) && st.owners.len() >= st.limits.mailboxes {
+                return reply(
+                    stream,
+                    "507 Insufficient Storage",
+                    r#"{"error":"this relay is full"}"#,
+                );
+            }
             st.pending.remove(&key);
             st.owners.insert(reg.box_key.clone(), reg.sign_key.clone());
             let path = st.root.join("owners.json");
             let data = serde_json::to_vec_pretty(&st.owners).unwrap_or_default();
-            let _ = std::fs::write(path, data);
+            // Released BEFORE the disk write. Holding the one global mutex
+            // across a filesystem write that grows with the number of
+            // mailboxes is how a slow disk becomes everyone's outage.
+            drop(g);
+            // Written to a temp file and renamed, so a kill or a power cut
+            // leaves either the old map or the new one. `fs::write`
+            // truncates in place, and startup turns invalid JSON into an
+            // EMPTY map -- so an interrupted write silently unregistered
+            // every mailbox on the relay.
+            let tmp = path.with_extension("json.tmp");
+            if std::fs::write(&tmp, &data).and_then(|_| std::fs::rename(&tmp, &path)).is_err() {
+                let _ = std::fs::remove_file(&tmp);
+                return reply(
+                    stream,
+                    "500 Internal Server Error",
+                    r#"{"error":"could not record the registration"}"#,
+                );
+            }
             reply(stream, "200 OK", r#"{"ok":true}"#)
         }
         // First leg: issue a nonce the holder of the box secret can read and

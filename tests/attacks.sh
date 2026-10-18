@@ -3118,6 +3118,40 @@ sys.exit(0 if busy and back else 1)
 PY4
 then ok; else bad "the relay did not refuse politely past its cap, or did not recover"; fi
 
+# Mailbox MANUFACTURING, as distinct from mailbox squatting. The possession
+# proof stops a stranger claiming YOUR mailbox; it does nothing against one
+# generating its own keys, because it holds those secrets. Without a cap,
+# every registration re-serialised a growing owners map under the one global
+# lock, so each cost more than the last and everything else queued behind it.
+RP3=7915
+mkdir -p "$T/rl3"
+CTX_HOME=$T/rl $CTX relay --bind 127.0.0.1:$RP3 --store "$T/rl3/store" \
+  --max-mailboxes 2 --rate-per-min 400 >"$T/rl3/log" 2>&1 &
+rl3pid=$!
+sleep 1
+want "$T/rl3/log" "at most 2 mailboxes"
+made=0; refused=0
+for i in 1 2 3 4; do
+  mkdir -p "$T/rl3/m$i"
+  CTX_HOME=$T/rl3/m$i $CTX init "m$i" >/dev/null 2>&1
+  if CTX_HOME=$T/rl3/m$i $CTX join "127.0.0.1:$RP3" >/dev/null 2>&1; then
+    made=$((made+1))
+  else refused=$((refused+1)); fi
+done
+if [ "$made" = 2 ] && [ "$refused" = 2 ]; then ok
+else bad "mailbox cap let $made through and refused $refused, wanted 2 and 2"; fi
+# The registry survives as valid JSON, written by rename rather than a
+# truncating write that an interrupted run turns into an EMPTY map -- which
+# would silently unregister every mailbox on the relay.
+if python3 -c "
+import json,sys
+json.load(open('$T/rl3/store/owners.json')); sys.exit(0)" 2>/dev/null; then ok
+else bad "owners.json is not valid JSON after registrations"; fi
+if [ -f "$T/rl3/store/owners.json.tmp" ]; then
+  bad "a temp registry file was left behind"
+else ok; fi
+kill $rl3pid 2>/dev/null; wait $rl3pid 2>/dev/null
+
 # A header line that never ends. `read_line` appends until a newline with no
 # limit of its own, and the socket timeout is per-READ, so a client that keeps
 # streaming bytes keeps every read succeeding while the buffer grows until the
@@ -3276,6 +3310,28 @@ want "$T/cno" "NOT in the"
 want "$T/cno" "this is the key I was handed"
 # No https means saying so at the moment the choice is made, not only in docs.
 want "$T/cno" "the connection to the relay is not"
+# And that warning comes BEFORE the registration, not after -- otherwise the
+# keys have already gone to an unverified, impersonable endpoint by the time
+# the person is told the connection is unverified.
+if python3 - "$T/cno" <<'PY4'
+import sys
+L=open(sys.argv[1]).read().split("\n")
+w=next((i for i,l in enumerate(L) if "connection to the relay is not" in l), None)
+r=next((i for i,l in enumerate(L) if "registered a mailbox" in l), None)
+sys.exit(0 if w is not None and r is not None and w < r else 1)
+PY4
+then ok; else bad "connect warned about plaintext only after registering"; fi
+# And that warning comes BEFORE the registration, not after: otherwise the
+# keys have already gone to an unverified, impersonable endpoint by the time
+# the person is told the connection is unverified.
+if python3 - "$T/cno" <<'PY4'
+import sys
+lines=open(sys.argv[1]).read().split("\n")
+warn=next((i for i,l in enumerate(lines) if "connection to the relay is not" in l), None)
+reg =next((i for i,l in enumerate(lines) if "registered a mailbox" in l), None)
+sys.exit(0 if warn is not None and reg is not None and warn < reg else 1)
+PY4
+then ok; else bad "connect warned about plaintext only after registering"; fi
 
 # No line of this output carries baked-in indentation. The fingerprint and
 # the share line are allowed to be indented; prose is not. This has shipped

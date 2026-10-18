@@ -43,7 +43,7 @@ import sys,json
 r=json.load(sys.stdin)['requests']
 if len(r)!=1: raise SystemExit('expected exactly one request, got %d' % len(r))
 print(r[0]['key'], r[0]['ask_pair'])")" || { echo "ui-e2e: fixture is wrong"; exit 1; }
-WANT=$(CTX_HOME=$T/u3 $CTX fingerprint 2>/dev/null | head -1 | cut -f2 \
+WANT=$(CTX_HOME=$T/u3 $CTX fingerprint --signing-only 2>/dev/null | head -1 | cut -f2 \
        | awk -F' · ' -v n="$PAIR" '{print $n}')
 
 RUN=$T/run; mkdir -p "$RUN"; ln -s "$MOD" "$RUN/node_modules"

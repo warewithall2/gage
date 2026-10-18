@@ -21,7 +21,7 @@
 //!
 //! Signatures cover content; they never covered delivery. So the scheme in
 //! the relay address decides: `https://relay.example.com` verifies a
-//! certificate against the system roots, `host:port` does not and is for a
+//! certificate against Mozilla's root list, compiled in, `host:port` does not and is for a
 //! tailnet or a loopback test. The address is written by the person, so the
 //! choice is theirs and it is visible in `ctx whoami`-shaped output rather
 //! than buried in a default.
@@ -32,6 +32,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 const IO_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Whether the last TLS read ended without a `close_notify`, so the error
+/// message for a short body can say which kind of cut it was.
+static TRUNCATED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 pub fn relay_addr() -> Option<String> {
     let p = crate::identity::home().join("relay");
@@ -150,14 +154,26 @@ pub fn post(addr: &str, path: &str, body: &str) -> std::io::Result<String> {
             tls.write_all(body.as_bytes())?;
             tls.flush()?;
             let mut raw = Vec::new();
-            // A server that closes without `close_notify` is common and is
-            // not an error worth losing a reply over -- the response has its
-            // own Content-Length and the body below is checked. Anything
-            // else propagates.
+            // A server that closes without `close_notify` is common, so it
+            // is tolerated -- but it is RECORDED, because the justification
+            // the first version gave for swallowing it was false. It said
+            // "the response has its own Content-Length and the body below is
+            // checked"; nothing below checked any length. A network attacker
+            // who cannot forge a certificate could still cut the connection
+            // and have a partial body under a 200 status accepted as the
+            // relay's whole answer. Verifying the channel says nothing about
+            // the completeness of what arrived on it.
+            let mut truncated = false;
             match tls.read_to_end(&mut raw) {
                 Ok(_) => {}
-                Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {}
+                Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => truncated = true,
                 Err(e) => return Err(e),
+            }
+            if truncated {
+                // Checked against the declared length below rather than
+                // trusted. `raw` is returned and the caller's parse will
+                // reject a short body; this flag makes the reason sayable.
+                TRUNCATED.store(true, std::sync::atomic::Ordering::Relaxed);
             }
             raw
         }
@@ -167,6 +183,31 @@ pub fn post(addr: &str, path: &str, body: &str) -> std::io::Result<String> {
     let (head, rest) = text
         .split_once("\r\n\r\n")
         .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "no http body"))?;
+    // The body is checked against the length the server declared. Without
+    // this, a cut connection delivered a partial body under a `200` and it
+    // was accepted as the whole answer -- which is what the comment above
+    // used to claim was already happening.
+    if let Some(want) = head
+        .lines()
+        .find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse::<usize>()))
+        .and_then(|r| r.ok())
+    {
+        if rest.len() < want {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                format!(
+                    "the relay's answer was cut short: {} of {want} bytes{}",
+                    rest.len(),
+                    if TRUNCATED.swap(false, std::sync::atomic::Ordering::Relaxed) {
+                        " (the connection closed without a TLS close_notify)"
+                    } else {
+                        ""
+                    }
+                ),
+            ));
+        }
+    }
+    TRUNCATED.store(false, std::sync::atomic::Ordering::Relaxed);
     let status = head.lines().next().unwrap_or("");
     if !status.contains(" 200") {
         return Err(std::io::Error::other(format!(

@@ -562,7 +562,7 @@ means before it serves a byte.
 
 ### TLS, and why it is here despite the payload being sealed
 
-    ctx join https://relay.example.com      # verified against the system roots
+    ctx join https://relay.example.com      # certificate verified
     ctx join 100.102.84.72:7788             # no TLS: a tailnet or a loopback test
 
 The scheme decides, and the address is written by a person, so the choice is
@@ -577,7 +577,9 @@ return `{"ok":true}` and drop it: nothing readable, nothing delivered, and the
 sender has been told it worked. **Signatures cover content; they never covered
 delivery.**
 
-Verification is the system root store, and the suite asserts it in both
+Verification uses a compiled-in copy of Mozilla's root list — **not** the
+system store, so a relay behind a private CA will fail rather than silently
+work, and the suite asserts it in both
 directions against `badssl.com`: expired, self-signed, wrong-host and
 untrusted-root certificates are each refused *for their own reason*, and a
 valid certificate completes a handshake. That last check is not decoration —
