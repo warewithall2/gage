@@ -20,7 +20,12 @@ OUT=$REPO/dist
 fail() { echo "release: $*" >&2; exit 1; }
 
 [ -z "$(git status --porcelain)" ] || fail "the tree is dirty; commit or stash first"
+# FULL hashes for comparison. Git auto-sizes abbreviated hashes as a repo
+# grows, so the two machines returned 7 and 8 characters for the same commit
+# and the string comparison below silently decided they were different
+# commits. It had been working by luck.
 REV=$(git rev-parse --short HEAD)
+FULLREV=$(git rev-parse HEAD)
 VER=$(sed -n 's/^version *= *"\(.*\)"/\1/p' Cargo.toml | head -1)
 echo "release: ctx $VER at $REV"
 mkdir -p "$OUT"
@@ -58,10 +63,10 @@ for h in "$@"; do
     continue
   fi
   ssh -o BatchMode=yes "$h" "cd ~/ctx && git fetch -q origin 2>/dev/null; \
-    git rev-parse --short HEAD" > "$OUT/.rev.$h" 2>/dev/null
+    git rev-parse HEAD" > "$OUT/.rev.$h" 2>/dev/null
   RREV=$(tr -d '[:space:]' < "$OUT/.rev.$h"); rm -f "$OUT/.rev.$h"
-  if [ "$RREV" != "$REV" ]; then
-    echo "  skipped: $h is at ${RREV:-unknown}, not $REV -- sync it first" >&2
+  if [ "$RREV" != "$FULLREV" ]; then
+    echo "  skipped: $h is at ${RREV:-unknown}, not $FULLREV -- sync it first" >&2
     continue
   fi
   ssh -o BatchMode=yes "$h" "cd ~/ctx && . ~/.cargo/env 2>/dev/null; \
@@ -94,4 +99,4 @@ echo "dist/:"
 ls -1sh "$OUT" | sed 's/^/  /'
 echo
 echo "Checksums are in dist/SHA256SUMS. Each binary reports its commit:"
-echo "  ctx --version   ->  ctx $VER ($REV)"
+echo "  countersign --version   ->  countersign $VER ($REV)"
