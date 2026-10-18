@@ -87,11 +87,23 @@ anyone.
 here and is not a failure — it means it could not hand the bundle over on this
 machine, which is what `push` is for. The bundle was built.
 
-On their side:
+**No relay?** Then skip `push` entirely — it will tell you there is nowhere to
+push to. `/tmp/pkg` is the whole bundle and it is signed, so move that
+directory however you already move things: a shared folder, git, email, a USB
+stick. They run `gage open <wherever-it-landed>` and get exactly the same
+frame. The relay is a convenience for when you are not on the same machine or
+network; it is never what makes the bundle trustworthy.
+
+On their side, if it came through a relay:
 
     gage pull
     gage inbox
     gage accept <id>
+
+If you handed the directory over yourself, there is nothing to pull and
+nothing to accept — `gage open <dir>` renders it directly. `inbox` stays empty
+because nothing arrived through a relay or a route, which is correct and not a
+sign anything went wrong.
 
 `accept` prints the `gage open` line to run, with the right path already in
 it. Use that rather than typing a path: the home is `~/.gage` on a new
