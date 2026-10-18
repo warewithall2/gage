@@ -2,7 +2,7 @@
 # Adversarial test suite. Every case here is an attack that worked, or nearly
 # worked, during development -- not a hypothetical. Run from the repo root.
 set -u
-CTX="${CTX:-$PWD/target/release/ctx}"
+CTX="${CTX:-$PWD/target/release/countersign}"
 T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT
 pass=0; fail=0
@@ -3303,7 +3303,7 @@ code connect $? 0
 want "$T/cno" "made you an identity"
 want "$T/cno" "registered a mailbox"
 # The share line is literally the command the other person runs.
-want "$T/cno" "ctx add newbie "
+want "$T/cno" "countersign add newbie "
 # And the step that cannot be automated is stated as such, with the reason.
 want "$T/cno" "cannot be done for you"
 want "$T/cno" "NOT in the"
@@ -3337,8 +3337,8 @@ then ok; else bad "connect warned about plaintext only after registering"; fi
 # the share line are allowed to be indented; prose is not. This has shipped
 # four times, every time from a wrapped string literal, and it is the first
 # thing a new person reads.
-if grep -nE "^ {6,}" "$T/cno" | grep -vE "ctx add |·" | head -3 | grep -q .; then
-  bad "connect printed prose with baked-in indentation: $(grep -nE '^ {6,}' "$T/cno" | grep -vE 'ctx add |·' | head -1)"
+if grep -nE "^ {6,}" "$T/cno" | grep -vE "countersign add |·" | head -3 | grep -q .; then
+  bad "connect printed prose with baked-in indentation: $(grep -nE '^ {6,}' "$T/cno" | grep -vE 'countersign add |·' | head -1)"
 else ok; fi
 
 # Running it again must NOT replace the identity. A command whose job is to
@@ -3355,15 +3355,43 @@ mkdir -p "$T/cn2"
 CTX_HOME=$T/cn2 $CTX connect --name solo > "$T/cno3" 2>&1
 code connect_norelay $? 0
 want "$T/cno3" "no relay yet"
-want "$T/cno3" "ctx add solo "
+want "$T/cno3" "countersign add solo "
 
 # The share line it prints actually works on the other side, which is the
 # only thing that makes it a share line and not a decoration.
-SHARE=$(grep -o "ctx add newbie [A-Za-z0-9+/=.]*" "$T/cno" | head -1)
+SHARE=$(grep -o "countersign add newbie [A-Za-z0-9+/=.]*" "$T/cno" | head -1)
 if [ -n "$SHARE" ]; then ok; else bad "no usable share line in connect output"; fi
-if CTX_HOME=$T/cn2 $CTX $(echo "$SHARE" | sed 's/^ctx //') >/dev/null 2>&1; then ok
-else bad "the share line connect printed was not accepted by ctx add"; fi
+if CTX_HOME=$T/cn2 $CTX $(echo "$SHARE" | sed 's/^countersign //') >/dev/null 2>&1; then ok
+else bad "the share line connect printed was not accepted by countersign add"; fi
 kill $cnpid 2>/dev/null; wait $cnpid 2>/dev/null
+
+echo
+echo "--- the rename must not be able to mislay an identity"
+# Every contact who confirmed your word-pairs confirmed that KEY. A rename
+# that lost the file would silently turn a working install into a stranger,
+# so nothing moves: the new home is used when it exists, the old one when it
+# is the only one, and neither is ever copied into the other.
+RN=$T/rename
+mkdir -p "$RN"
+# An install from before the rename: only ~/.ctx exists.
+HOME=$RN CTX_HOME= COUNTERSIGN_HOME= $CTX init renamed >/dev/null 2>&1 || true
+if [ -d "$RN/.countersign" ]; then ok; else bad "a fresh install did not use the new home"; fi
+RK=$(HOME=$RN CTX_HOME= COUNTERSIGN_HOME= $CTX whoami 2>/dev/null | cut -f2)
+mv "$RN/.countersign" "$RN/.ctx"
+# Same binary, old home, same identity -- no copy, no new key.
+RK2=$(HOME=$RN CTX_HOME= COUNTERSIGN_HOME= $CTX whoami 2>/dev/null | cut -f2)
+if [ -n "$RK" ] && [ "$RK" = "$RK2" ]; then ok
+else bad "the old home was not found after the rename ($RK vs $RK2)"; fi
+if [ -d "$RN/.countersign" ]; then bad "the old home was copied into a new one"; else ok; fi
+# And an install that has already moved on is never dragged back.
+mkdir -p "$RN/.countersign"
+HOME=$RN CTX_HOME= COUNTERSIGN_HOME= $CTX init moved >/dev/null 2>&1 || true
+RK3=$(HOME=$RN CTX_HOME= COUNTERSIGN_HOME= $CTX whoami 2>/dev/null | cut -f2)
+if [ -n "$RK3" ] && [ "$RK3" != "$RK" ]; then ok
+else bad "a machine with a new home was dragged back to the old one"; fi
+# The old environment variable still works, because scripts and units use it.
+if [ "$(CTX_HOME=$RN/.ctx $CTX whoami 2>/dev/null | cut -f2)" = "$RK" ]; then ok
+else bad "CTX_HOME stopped working after the rename"; fi
 
 echo "a good bundle exits 0"
 CTX_HOME=$T/b $CTX open "$T/b1" >/dev/null 2>&1; code good $? 0

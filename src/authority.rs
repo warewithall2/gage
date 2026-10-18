@@ -8,7 +8,7 @@
 //!
 //! 1. **Nothing a sender can influence reaches this file.** It is local, the
 //!    receiver's human writes it, and no command in ctx adds a line to it --
-//!    see `ctx authority`, which only prints. A `ctx allow` subcommand would
+//!    see `countersign authority`, which only prints. A `countersign allow` subcommand would
 //!    be a privilege escalation reachable by prompt injection: an agent that
 //!    can be talked into running a command could be talked into granting
 //!    itself the authority to obey the thing that talked it into it.
@@ -241,7 +241,7 @@ pub struct Parent {
     pub thread: String,
 }
 
-/// A key as `ctx whoami` prints it, versus a handle you chose. Keys are long
+/// A key as `countersign whoami` prints it, versus a handle you chose. Keys are long
 /// and base64; handles are short words. Guessing between them is only a
 /// convenience, so the test is deliberately crude and the failure is benign:
 /// a 20-character handle would be read as a key, match nothing, and grant

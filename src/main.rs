@@ -35,7 +35,7 @@ use std::process::ExitCode;
 
 #[derive(Parser)]
 #[command(
-    name = "ctx",
+    name = "countersign",
     about = "Hand context between agents, with provenance",
     // The version carries the build's commit, because "which ctx is this"
     // is the first question when two machines disagree -- and with the
@@ -166,7 +166,7 @@ enum Cmd {
         #[arg(long)] allow_findings: bool,
         /// Hand it straight to a machine on this network once it is built,
         /// so sending is one command rather than a build and then a push.
-        /// --to may be a word-pair from the `ctx lan` list.
+        /// --to may be a word-pair from the `countersign lan` list.
         #[arg(long)] lan: bool,
         #[arg(long)] agent: Option<String>,
         #[arg(long)] model: Option<String>,
@@ -332,7 +332,7 @@ enum Cmd {
     Pair {
         /// What to call them on YOUR list
         name: String,
-        /// Which machine, by the word-pair `ctx lan` shows. Only needed when
+        /// Which machine, by the word-pair `countersign lan` shows. Only needed when
         /// more than one unpaired machine is on the network.
         r#as: Option<String>,
         /// The four word-pairs the other machine shows. Given here, they are
@@ -374,7 +374,7 @@ fn observe_or_warn() {
 /// Both legs of registration: claim a mailbox, then prove it by opening a
 /// nonce the relay sealed to it.
 ///
-/// Naming a box key proves nothing -- it is in every `ctx whoami` line -- so
+/// Naming a box key proves nothing -- it is in every `countersign whoami` line -- so
 /// a relay that took the claim at face value could have its mailboxes squatted
 /// by anyone who had seen one.
 fn register_with_proof(
@@ -429,7 +429,7 @@ fn pull_once(keep: bool) -> Result<(), Box<dyn std::error::Error>> {
 /// and a line per poll turns its journal into noise that hides the one entry
 /// that mattered.
 fn pull_inner(keep: bool, quiet: bool) -> Result<(), Box<dyn std::error::Error>> {
-    let addr = remote::relay_addr().ok_or("no relay set; ctx join <addr> first")?;
+    let addr = remote::relay_addr().ok_or("no relay set; countersign join <addr> first")?;
     let id = identity::Identity::load()?;
     let mut total = 0;
     let mut saw_any = false;
@@ -469,7 +469,7 @@ fn pull_inner(keep: bool, quiet: bool) -> Result<(), Box<dyn std::error::Error>>
         println!("nothing waiting on {addr}");
     }
     if total > 0 {
-        println!("\n{total} bundle(s) in inbox/pending -- ctx inbox, then accept or reject");
+        println!("\n{total} bundle(s) in inbox/pending -- countersign inbox, then accept or reject");
     }
     Ok(())
 }
@@ -483,7 +483,7 @@ fn fetch_mailbox(
     label: &str,
 ) -> Result<(usize, bool), Box<dyn std::error::Error>> {
     // Prove possession of the signing key registered for this mailbox.
-    // Naming a key is not proof: anyone who has seen a `ctx whoami`
+    // Naming a key is not proof: anyone who has seen a `countersign whoami`
     // line knows it.
     let ch = remote::post(
         addr,
@@ -637,7 +637,7 @@ fn fetch_mailbox(
 
 fn main() -> ExitCode {
     // Rust sets SIGPIPE to ignore, so writing to a closed pipe returns an
-    // error that `println!` turns into a panic. `ctx threads | head` then
+    // error that `println!` turns into a panic. `countersign threads | head` then
     // prints a Rust backtrace instead of just stopping. Restoring the default
     // makes the process die quietly when its reader goes away, which is what
     // every other command-line tool does.
@@ -709,10 +709,10 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 println!("  but a notice with no countersignature at all proves even less.");
             } else {
                 println!("\n  the old secrets are kept so mail already sealed to them can");
-                println!("  still be collected. ctx pull drains both mailboxes.");
+                println!("  still be collected. countersign pull drains both mailboxes.");
             }
             println!("\nnotice written to {}", np.display());
-            println!("  send it to each contact; they run: ctx keychange <file>");
+            println!("  send it to each contact; they run: countersign keychange <file>");
             if remote::relay_addr().is_some() {
                 let addr = remote::relay_addr().unwrap();
                 let body = serde_json::json!({
@@ -720,7 +720,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     .to_string();
                 match register_with_proof(&addr, &id, &body) {
                     Ok(_) => println!("\nregistered the new mailbox with {addr}"),
-                    Err(e) => println!("\ncould not register with {addr}: {e}\n  run ctx join {addr} once it is reachable"),
+                    Err(e) => println!("\ncould not register with {addr}: {e}\n  run countersign join {addr} once it is reachable"),
                 }
             }
         }
@@ -781,7 +781,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 }
             };
             // One line on stdout, and the short form on stderr. The same
-            // shape as `whoami`, for the same reason: `ctx fingerprint x |
+            // shape as `whoami`, for the same reason: `countersign fingerprint x |
             // cut -f2` is the obvious thing to write, and `cut` passes a
             // second line straight through, so two lines here turn one value
             // into two. Found by writing exactly that in the LAN test.
@@ -891,7 +891,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             let Some(name) = known.or(resuming.clone()) else {
                 return Err("you have never accepted the old key, so this notice \
                             upgrades nothing. If you trust the new key, confirm it \
-                            with them directly and run: ctx add <name> <newkey>"
+                            with them directly and run: countersign add <name> <newkey>"
                     .into());
             };
             if !v.old_signed {
@@ -904,7 +904,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     "NOT APPLIED: this notice is not countersigned by {name}'s current \
                      key, so nothing here shows that {name} authorised it. Confirm the \
                      new key with them over a channel that is not this one, then:\n  \
-                     ctx retire {name} {}\n  ctx add {name} {}",
+                     countersign retire {name} {}\n  countersign add {name} {}",
                     if v.claim.reason == "compromised" { "--compromised" } else { "" },
                     v.claim.new_key
                 )
@@ -917,7 +917,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 return Ok(ExitCode::SUCCESS);
             }
             // The destination key is chosen by whoever wrote the notice, so
-            // it gets the checks `ctx add` already applies to a key a person
+            // it gets the checks `countersign add` already applies to a key a person
             // typed -- and one more, because a person typing a key has
             // decided something and a notice has not.
             if let Some(r) = c.retired_record(&v.new_sign) {
@@ -931,7 +931,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 // Refused here rather than fixed in `verdict`, which was the
                 // other candidate: reordering `verdict` would stop this class
                 // of reactivation but change what every verdict means, and
-                // `ctx add` deliberately *removes* a non-compromised retired
+                // `countersign add` deliberately *removes* a non-compromised retired
                 // record when a person re-adds a key by hand. So the
                 // contradictory state should not exist at all, and this is
                 // the only path that creates it.
@@ -941,7 +941,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                      retirement still stands, and bundles you had rejected would \
                      read as verified again. If you really mean to trust that key \
                      again, that is a decision to make by hand and in the open:\n  \
-                     ctx add {name} {}",
+                     countersign add {name} {}",
                     r.retired_at,
                     if r.compromised { " as COMPROMISED" } else { "" },
                     v.claim.new_key
@@ -1125,7 +1125,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     println!("  {sign}");
                     println!("  its bundles still arrive and still need accepting; what");
                     println!("  changes is that you are not offered this decision again.");
-                    println!("  ctx undecline <key> takes it back.");
+                    println!("  countersign undecline <key> takes it back.");
                 }
                 false => println!("already declined"),
             }
@@ -1137,7 +1137,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 Some(d) => {
                     c.save()?;
                     println!("undeclined {} (was declined {})", words::label(&sign), d.at);
-                    println!("  it is NOT on your list. ctx add <name> <key> does that.");
+                    println!("  it is NOT on your list. countersign add <name> <key> does that.");
                 }
                 None => println!("that key is not declined"),
             }
@@ -1149,18 +1149,18 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     Some((_, r)) => format!(
                         "{to}'s key was retired on {}{}. Sealing to a retired key would \
                          send mail only its old holder can open; get their current \
-                         `ctx whoami` token and add it first.",
+                         `countersign whoami` token and add it first.",
                         r.retired_at,
                         if r.compromised { " as compromised" } else { "" }
                     ),
-                    None => format!("no contact named {to}; ctx add {to} <key>"),
+                    None => format!("no contact named {to}; countersign add {to} <key>"),
                 }
                 .into());
             };
             let Some(boxpub) = c.box_keys.get(&sign) else {
                 return Err(format!(
                     "{to} has no encryption key on file. Get their current \
-                     `ctx whoami` token (signpub.boxpub) and re-add them."
+                     `countersign whoami` token (signpub.boxpub) and re-add them."
                 )
                 .into());
             };
@@ -1175,7 +1175,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             let env: seal::Envelope = serde_json::from_slice(&std::fs::read(&file)?)?;
             seal::unseal_to_dir(&env, &id, &out)?;
             println!("unsealed -> {}", out.display());
-            println!("  decryption proves nothing about the sender; run ctx open to see the");
+            println!("  decryption proves nothing about the sender; run countersign open to see the");
             println!("  signature verdict, which is what attributes it");
         }
         Cmd::Contacts => {
@@ -1278,7 +1278,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             }
         }
         Cmd::Open { dir, reveal } => {
-            // `ctx open <id>` is what the other commands' output invites, so
+            // `countersign open <id>` is what the other commands' output invites, so
             // resolve an id to its bundle rather than failing on a path that
             // was never meant to be one.
             let dir = match dir.to_str() {
@@ -1290,7 +1290,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                         }
                         None => {
                             return Err(format!(
-                                "no bundle {s} in this ctx home. `ctx inbox` lists what is here"
+                                "no bundle {s} in this ctx home. `countersign inbox` lists what is here"
                             )
                             .into())
                         }
@@ -1298,7 +1298,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 }
                 _ => dir,
             };
-            // A bundle you only ever `ctx open` would otherwise never be
+            // A bundle you only ever `countersign open` would otherwise never be
             // witnessed, and would read as ARRIVAL UNRECORDED after a
             // rotation even though it was sitting in your inbox the whole
             // time.
@@ -1433,7 +1433,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     }
                 }
                 if !pending.is_empty() {
-                    println!("\n* = unread.  ctx accept <id> to stage it, ctx reject <id> to drop it unread");
+                    println!("\n* = unread.  countersign accept <id> to stage it, countersign reject <id> to drop it unread");
                 }
                 for (_, l) in &accepted {
                     println!("[accepted] {}  {}", l.manifest.id, l.manifest.subject);
@@ -1457,7 +1457,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 eprintln!("ctx: could not journal this acceptance: {e}");
             }
             println!("accepted {id}");
-            println!("  ctx open {}", dest.display());
+            println!("  countersign open {}", dest.display());
         }
         Cmd::Reject { id } => {
             let p = routes::pending_dir(&identity::home()).join(&id);
@@ -1487,7 +1487,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             if !bind.starts_with("127.") && !bind.starts_with("100.") && !bind.starts_with("[::1]")
             {
                 eprintln!(
-                    "ctx relay: binding {bind}, which may be reachable beyond your own \
+                    "countersign relay: binding {bind}, which may be reachable beyond your own \
                      network.\n  Anyone who can reach it may push to any REGISTERED \
                      mailbox -- that is deliberate, so a stranger can send you a first \
                      message -- within the limits below. It still cannot read anything."
@@ -1558,9 +1558,9 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 None => match remote::relay_addr() {
                     Some(a) => println!("your relay is {a}"),
                     None => {
-                        println!("no relay yet. `ctx connect <address>` registers one.");
+                        println!("no relay yet. `countersign connect <address>` registers one.");
                         println!("  Until then you can still exchange bundles by file, or");
-                        println!("  on your own network with `ctx lan`.");
+                        println!("  on your own network with `countersign lan`.");
                     }
                 },
             }
@@ -1573,7 +1573,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             let token = format!("{}.{}", id.public_b64(), id.box_public_b64());
             println!("Send this line to the person you want to exchange with:");
             println!();
-            println!("    ctx add {} {}", id.handle, token);
+            println!("    countersign add {} {}", id.handle, token);
             println!();
             println!("Ask them for theirs, and run it. Then one thing is left, and it is");
             println!("the only part of this that cannot be done for you:");
@@ -1608,7 +1608,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             let addr = if lan {
                 "this network".to_string()
             } else {
-                remote::relay_addr().ok_or("no relay set; ctx join <addr> first")?
+                remote::relay_addr().ok_or("no relay set; countersign join <addr> first")?
             };
             // The human gate on the way OUT, and it belongs HERE rather than
             // on `send`: `send` either delivers to a local route or writes a
@@ -1732,7 +1732,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             let contacts = trust::Contacts::load();
             let ts = state::threads(all_manifests(), &st, &me);
             // A message id is what every other command hands you, so accept
-            // one here rather than rejecting it: `ctx threads` prints the
+            // one here rather than rejecting it: `countersign threads` prints the
             // thread id, but nothing else does, and "no thread <id>" for an
             // id the tool can plainly resolve is a dead end. Dogfood, 15 Oct.
             let found = ts
@@ -1741,7 +1741,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 .or_else(|| ts.iter().find(|t| t.messages.iter().any(|m| m.id == id)));
             let Some(t) = found else {
                 return Err(format!(
-                    "no thread or message {id}. `ctx threads` lists what is here"
+                    "no thread or message {id}. `countersign threads` lists what is here"
                 )
                 .into());
             };
@@ -1789,7 +1789,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     println!("      {:?}  {}", it.kind, it.path.strip_prefix("items/").unwrap_or(&it.path));
                 }
             }
-            println!("\nctx open <path> to read one, ctx reply {} --text \"...\" to answer", t.id);
+            println!("\nctx open <path> to read one, countersign reply {} --text \"...\" to answer", t.id);
         }
         Cmd::Close { thread } => {
             let mut st = state::LocalState::load();
@@ -1812,17 +1812,17 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 // announced once, rather than announced and collected later.
                 if remote::relay_addr().is_some() {
                     if let Err(e) = pull_inner(false, true) {
-                        eprintln!("ctx watch: pull failed: {e}");
+                        eprintln!("countersign watch: pull failed: {e}");
                     }
                 }
                 // Date the arrivals before anything acts on them. Without
                 // this, a watcher that auto-accepts wrote an `accepted`
                 // entry with no `observed` entry before it -- the unattended
                 // path, which is the one the journal exists for, was the one
-                // leaving the thinnest record. `ctx inbox` has always done
+                // leaving the thinnest record. `countersign inbox` has always done
                 // this; `watch` never did, because until now it only looked.
                 if let Err(e) = routes::observe_inbox() {
-                    eprintln!("ctx watch: could not record arrivals: {e}");
+                    eprintln!("countersign watch: could not record arrivals: {e}");
                 }
                 let arrivals = notify::new_arrivals();
                 if !arrivals.is_empty() {
@@ -1879,7 +1879,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                                     // feature exists to bound.
                                     eprintln!("  {short}: could not auto-accept: {e}");
                                     eprintln!(
-                                        "ctx watch: auto-accept is off for the rest of this \
+                                        "countersign watch: auto-accept is off for the rest of this \
                                          run. Nothing can be accepted unattended while the \
                                          journal cannot be written, because the journal is \
                                          what counts the budget. Arrivals stay pending."
@@ -2025,7 +2025,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             let id = identity::Identity::load().ok();
             let secs = announce.unwrap_or(r#for).max(r#for);
             if let Some(n) = announce {
-                let id = id.as_ref().ok_or("ctx init first -- announcing needs a key to sign with")?;
+                let id = id.as_ref().ok_or("countersign init first -- announcing needs a key to sign with")?;
                 println!("announcing for {n}s, then stopping. What leaves this machine:");
                 println!("  handle \"{}\"  (a string you chose; nobody should trust it)", id.handle);
                 println!("  signing key {}", id.public_b64());
@@ -2043,7 +2043,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             let seen = lan::nearby(id.as_ref(), lan::LISTEN_PORT, secs, announce.is_some())?;
             if seen.is_empty() {
                 println!();
-                println!("nobody announcing. The other machine needs `ctx nearby --announce`.");
+                println!("nobody announcing. The other machine needs `countersign nearby --announce`.");
                 return Ok(ExitCode::SUCCESS);
             }
             let c = trust::Contacts::load();
@@ -2051,7 +2051,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             for s in &seen {
                 let known = match c.name_for(&s.sign) {
                     Some(n) => format!("on your list as {n}"),
-                    None => "NOT on your list -- ctx pair <name> to add it".to_string(),
+                    None => "NOT on your list -- countersign pair <name> to add it".to_string(),
                 };
                 println!("  \"{}\" at {}  ({known})", s.handle, s.addr.ip());
                 println!(
@@ -2065,7 +2065,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         }
         Cmd::Pair { name, r#as, confirm, r#for } => {
             let id = identity::Identity::load()?;
-            // If `ctx lan` is running it has already written down who is
+            // If `countersign lan` is running it has already written down who is
             // here, so pairing needs no second announce window and no timing
             // between two machines. Falling back to listening keeps `ctx
             // pair` working on its own.
@@ -2084,7 +2084,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 })
                 .collect();
             let seen = if live.is_empty() {
-                println!("listening for {}s. The other machine wants `ctx lan`.", r#for);
+                println!("listening for {}s. The other machine wants `countersign lan`.", r#for);
                 lan::nearby(Some(&id), lan::LISTEN_PORT, r#for, false)?
             } else {
                 live
@@ -2101,7 +2101,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 // exactly the step where a person stops reading, and the
                 // whole value of this command is that they read. Narrow it
                 // down by having one machine announce at a time.
-                // More than one, so the NAME has to say which. `ctx pair
+                // More than one, so the NAME has to say which. `countersign pair
                 // laptop simple-dahlia` -- still no numbered menu, because
                 // picking "2" from a list is exactly where a person stops
                 // reading, and reading is the whole value of this command.
@@ -2124,7 +2124,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                         }
                         return Err(format!(
                             "{n} unpaired machines are here. Say which, by the word-pair \
-                             above: ctx pair {name} <word-pair>"
+                             above: countersign pair {name} <word-pair>"
                         )
                         .into());
                     }
@@ -2174,7 +2174,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 println!("{l}");
             }
             println!();
-            println!("paired. With `ctx lan` running on both: ctx send --to {name} --file <path> --lan");
+            println!("paired. With `countersign lan` running on both: countersign send --to {name} --file <path> --lan");
         }
         Cmd::Listen { bind, port } => {
             lan::listen(&bind, port)?;

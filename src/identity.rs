@@ -80,12 +80,65 @@ struct StoredRetired {
     box_secret: Option<String>,
 }
 
+/// Where this identity lives.
+///
+/// The project was renamed from `countersign` to `countersign`, and **nothing on
+/// disk moves**. An identity key is the one file whose loss cannot be
+/// undone: every contact who confirmed your word-pairs confirmed *that* key,
+/// and a rename that mislaid it would silently turn a working install into a
+/// stranger. So this looks for the new home, falls back to the old one if it
+/// is there, and never copies, moves or creates one to replace the other.
+///
+/// Both environment variables are honoured for the same reason: scripts,
+/// systemd units and test suites written against `CTX_HOME` keep working.
 pub fn home() -> PathBuf {
-    let base = std::env::var("CTX_HOME").unwrap_or_else(|_| {
-        let h = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-        format!("{h}/.ctx")
-    });
-    PathBuf::from(base)
+    // An empty-but-SET variable is not a path. `CTX_HOME=` in a shell sets
+    // it to the empty string, `var()` returns `Ok("")`, and the first
+    // version turned that into `PathBuf::from("")` -- a home of "", which
+    // resolves to the current directory. A test written for the rename
+    // caught it immediately, which is the only reason it is not a way to
+    // scatter identity files wherever someone happened to be standing.
+    let set = |k: &str| std::env::var(k).ok().filter(|v| !v.trim().is_empty());
+    if let Some(v) = set("COUNTERSIGN_HOME") {
+        return PathBuf::from(v);
+    }
+    if let Some(v) = set("CTX_HOME") {
+        return PathBuf::from(v);
+    }
+    let h = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+    let new = PathBuf::from(format!("{h}/.countersign"));
+    let old = PathBuf::from(format!("{h}/.ctx"));
+    // The old home wins only if it exists and the new one does not, so an
+    // install that has already moved on is never dragged back.
+    if !new.exists() && old.exists() {
+        return old;
+    }
+    new
+}
+
+#[cfg(test)]
+mod home_tests {
+    /// The rename must not be able to mislay an identity.
+    ///
+    /// Not a unit test of `home()` itself -- it reads process-wide
+    /// environment, and two tests racing on `set_var` is a worse bug than
+    /// the one being tested. This pins the DECISION TABLE instead, which is
+    /// the part that could be got wrong, and the shell suite exercises the
+    /// real function against real directories.
+    fn pick(new_exists: bool, old_exists: bool) -> &'static str {
+        if !new_exists && old_exists { "old" } else { "new" }
+    }
+
+    #[test]
+    fn an_existing_ctx_home_is_still_found_after_the_rename() {
+        // The case that matters: an install from before the rename.
+        assert_eq!(pick(false, true), "old");
+        // Already moved on: never dragged back.
+        assert_eq!(pick(true, true), "new");
+        assert_eq!(pick(true, false), "new");
+        // Fresh machine.
+        assert_eq!(pick(false, false), "new");
+    }
 }
 
 fn b64_32(s: &str) -> std::io::Result<[u8; 32]> {
@@ -113,7 +166,7 @@ fn urandom32() -> std::io::Result<[u8; 32]> {
     Ok(buf)
 }
 
-/// What `ctx rotate` hands you to give to your contacts.
+/// What `countersign rotate` hands you to give to your contacts.
 pub struct RotationNotice {
     pub old_key: String,
     pub new_key: String,
@@ -123,7 +176,7 @@ pub struct RotationNotice {
 impl Identity {
     /// Create a new keypair. Refuses to clobber an existing one: silently
     /// replacing a key would make every bundle you ever sent unverifiable,
-    /// and `ctx rotate` is the operation that does it properly.
+    /// and `countersign rotate` is the operation that does it properly.
     /// Create an identity, naming it after its own key when no name is given.
     ///
     /// LocalSend never asks you to pick a name, and that is most of why
@@ -156,7 +209,7 @@ impl Identity {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::AlreadyExists,
                 format!(
-                    "{} already exists. To replace your key use `ctx rotate`, which \
+                    "{} already exists. To replace your key use `countersign rotate`, which \
                      keeps the old one on record so your past bundles stay verifiable.",
                     kp.display()
                 ),
@@ -367,7 +420,7 @@ impl Identity {
     /// Order matters only for speed, not correctness: a sealed box either
     /// opens under a given secret or it does not, so there is no ambiguity to
     /// resolve. An envelope that opens under a RETIRED key still says nothing
-    /// about who sent it -- `ctx open` and the inner signature do that.
+    /// about who sent it -- `countersign open` and the inner signature do that.
     pub fn unseal(&self, ct: &[u8]) -> Result<Vec<u8>, &'static str> {
         if let Ok(pt) = self.sealing.unseal(ct) {
             return Ok(pt);

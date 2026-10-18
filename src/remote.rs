@@ -23,7 +23,7 @@
 //! the relay address decides: `https://relay.example.com` verifies a
 //! certificate against Mozilla's root list, compiled in, `host:port` does not and is for a
 //! tailnet or a loopback test. The address is written by the person, so the
-//! choice is theirs and it is visible in `ctx whoami`-shaped output rather
+//! choice is theirs and it is visible in `countersign whoami`-shaped output rather
 //! than buried in a default.
 
 use std::io::{Read, Write};

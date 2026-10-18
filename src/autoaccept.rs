@@ -3,7 +3,7 @@
 //! `accept` has always meant one thing: a human looked at a frame and moved a
 //! bundle out of `pending`. This module is the one path where that happens
 //! without the human, and it exists because the alternative people actually
-//! build is worse -- a hook that runs `ctx accept` itself, which turns every
+//! build is worse -- a hook that runs `countersign accept` itself, which turns every
 //! grant into an unbounded one and leaves ctx unable to tell an unattended
 //! acceptance from a deliberate one afterwards.
 //!
@@ -12,7 +12,7 @@
 //!
 //! 1. **The watcher was started with `--auto-accept`.** A grant alone is not
 //!    enough. The file says what the human permits; the flag says this process
-//!    is the unattended one. An interactive `ctx watch` must not silently move
+//!    is the unattended one. An interactive `countersign watch` must not silently move
 //!    things a reader is about to go looking for.
 //! 2. **A grant covers the message and says `auto-accept`.** Which, per
 //!    `authority::parse`, cannot be written without a bound and cannot be
@@ -27,7 +27,7 @@
 //! readable; it does not open it, hand it to a model, or run anything. The
 //! separation is the point: an auto-accepted bundle still sits there until
 //! something reads it, and what that something may do with it is still the
-//! `authorised :` block in `ctx open`.
+//! `authorised :` block in `countersign open`.
 //!
 //! It also does not make the budget a security boundary against a determined
 //! sender with a verified key. That sender can still reply to each message
@@ -167,7 +167,7 @@ pub fn decide(
     // the parent's thread whatever the reply says -- but it is precisely the
     // shape of an attempt to mint a bucket, and `state::thread_claim` already
     // treats such a claim as not joining the thread. There is no legitimate
-    // sender that does this: `ctx reply` and `--reply-to` both inherit.
+    // sender that does this: `countersign reply` and `--reply-to` both inherit.
     if let Some(claimed) = m.thread.as_deref() {
         if claimed != parent.thread {
             return Decision::ThreadClaimDisagreesWithParent;

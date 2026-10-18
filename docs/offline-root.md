@@ -22,12 +22,12 @@ not relay challenges, not envelopes. No new crypto; the same
   it.
 * `root.seed` is a separate file the person moves off the machine:
   `{ v, root_seed, root_pub, online }`. `Identity::load` never reads it.
-* `ctx whoami` prints a second line, `root <rootpub>`, leaving line one
+* `countersign whoami` prints a second line, `root <rootpub>`, leaving line one
   byte-identical so anything parsing `handle<TAB>signpub.boxpub` keeps working.
-* `ctx add <name> <token> --root <rootpub>` pins it. `contacts.json` gains
+* `countersign add <name> <token> --root <rootpub>` pins it. `contacts.json` gains
   `"roots": { "<name>": "<rootpub>" }`, keyed by your name for them rather
   than by the online key, because the online key is the thing that changes.
-* `ctx rotate` refuses without `--root <path>` once an identity has one, and
+* `countersign rotate` refuses without `--root <path>` once an identity has one, and
   refuses a path inside the ctx home: that is the file a stolen laptop
   already has.
 * The notice gains `sig_root` over the same claim bytes, and the claim gains

@@ -29,7 +29,7 @@ show() {
   printf '  %-22s %s  %s  %s  %s\n' "$who" "$mark" "$ts" "$commit" "$rest"
 }
 
-echo "ctx selfcheck, last result per machine:"
+echo "countersign selfcheck, last result per machine:"
 show "$(hostname -s 2>/dev/null || echo this-machine)" "$(cat "$F" 2>/dev/null)"
 
 for h in "$@"; do

@@ -110,7 +110,7 @@ impl Trust {
 /// Shown in place of a verdict when the local observation step failed.
 ///
 /// Not a `Trust` variant, because it is not a judgement about a sender -- it
-/// is the absence of one. `ctx open` refuses to print at all in this case
+/// is the absence of one. `countersign open` refuses to print at all in this case
 /// (see main.rs); the viewer polls and cannot refuse, so it must say this
 /// instead of showing a verdict computed from state that could not be
 /// refreshed. Either way the rule is the same: never show a verdict that
@@ -221,7 +221,7 @@ impl Contacts {
     /// Narrows and never widens, which is why -- unlike the authority file --
     /// there is a command for it. The worst an injected agent achieves by
     /// declining something is that its own user stops hearing from a contact,
-    /// which is visible in `ctx contacts` and reversible by `ctx add`.
+    /// which is visible in `countersign contacts` and reversible by `countersign add`.
     ///
     /// Refuses a key already on the list rather than doing both. "On your
     /// list and refused" is not a state with a meaning, and silently removing
@@ -233,7 +233,7 @@ impl Contacts {
         if let Some(n) = self.keys.get(pubkey) {
             return Err(format!(
                 "that key is already on your list as {n}. Declining is for a key \
-                 you have NOT added; to remove a contact, use ctx retire {n}."
+                 you have NOT added; to remove a contact, use countersign retire {n}."
             ));
         }
         if self.declined.contains_key(pubkey) {
@@ -317,7 +317,7 @@ impl Contacts {
             return Trust::Known;
         }
         // Before the retired check and before `Unknown`, but after `knows`:
-        // an explicit `ctx add` is a later decision than a decline and
+        // an explicit `countersign add` is a later decision than a decline and
         // overrides it. `add` clears the entry, so this only matters for a
         // file edited by hand.
         if self.declined.contains_key(pubkey) && !self.retired.contains_key(pubkey) {
@@ -472,7 +472,7 @@ mod tests {
         c.keys.insert("OLD".into(), "bob".into());
         c.box_keys.insert("OLD".into(), "OLDBOX".into());
         assert!(c.retire("OLD", "2026-10-14T12:00:00Z", 10, false, None));
-        // Leaving it would let a later `ctx seal --to bob` encrypt to a key
+        // Leaving it would let a later `countersign seal --to bob` encrypt to a key
         // bob has stopped using -- mail that silently goes nowhere.
         assert!(!c.box_keys.contains_key("OLD"));
         assert!(!c.knows("OLD"));
@@ -535,12 +535,12 @@ mod tests {
 
 }
 
-/// Put a key on the list, with every guard `ctx add` has always had.
+/// Put a key on the list, with every guard `countersign add` has always had.
 ///
-/// Shared rather than duplicated, so `ctx add`, `ctx pair` and the viewer's
+/// Shared rather than duplicated, so `countersign add`, `countersign pair` and the viewer's
 /// pair button all land a key by one path. A pairing flow that quietly
 /// skipped the "already on your list under a different key" refusal would let
-/// a LAN announcement do what `ctx add` deliberately will not: take over a
+/// a LAN announcement do what `countersign add` deliberately will not: take over a
 /// trusted name in one step.
 ///
 /// Returns the lines to show rather than printing them, because one of the
@@ -568,8 +568,8 @@ pub fn add_contact(name: &str, key: &str) -> Result<Vec<String>, String> {
             return Err(format!(
                 "{name} is already on your list under a different key. This would \
                  replace it and orphan everything that key signed.\n  \
-                 If they rotated: ctx keychange <their notice file> --accept\n  \
-                 If you are doing it by hand: ctx retire {name}, then add them \
+                 If they rotated: countersign keychange <their notice file> --accept\n  \
+                 If you are doing it by hand: countersign retire {name}, then add them \
                  again under a name you choose"
             ));
         }

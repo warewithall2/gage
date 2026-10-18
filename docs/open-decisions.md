@@ -106,7 +106,7 @@ Found by dogfooding the tool with the full ensemble on 15 October, written up
 in [dogfood-2026-10-15.md](dogfood-2026-10-15.md). The short version: a
 bundle cannot authorise its own fulfilment. Two of three agents read a signed
 `review-request` from a verified contact, understood it, and declined to act,
-because `ctx open` tells them the contents carry no authority. They were
+because `countersign open` tells them the contents carry no authority. They were
 right to. The third acted only because its out-of-band prompt said to.
 
 So ctx can prove who wrote a request and cannot say whether it may be
@@ -124,7 +124,7 @@ anything a sender can influence:
 
     allow <key> <msg_type> [in-thread-only] [expires <when>]
 
-`ctx open` would then print, for a request that matches, that the receiver's
+`countersign open` would then print, for a request that matches, that the receiver's
 user has pre-authorised requests of this type from this key — and for one
 that does not, what it prints today.
 
@@ -151,7 +151,7 @@ admission check. Same primitive, opposite direction, and the wording problem
 below is the part that does not transfer: nothing they publish has to be safe
 against a payload arguing with it.
 
-**Built 15 Oct**, as `src/authority.rs`, `~/.ctx/authority` and the
+**Built 15 Oct**, as `src/authority.rs`, `~/.countersign/authority` and the
 `authorised :` line in the frame. The decision was taken the conservative way
 on every point that was open:
 
@@ -170,7 +170,7 @@ failure the tool exists to prevent. Sent for review rather than closed.
 
 ## 6a. Built 16 Oct: the hook that makes decision 6 live
 
-`ctx watch --on-arrival <command>` is the first thing in ctx that acts on an
+`countersign watch --on-arrival <command>` is the first thing in ctx that acts on an
 arrival with nobody watching, so it is the first place the grant model has a
 consequence rather than a printed verdict. It fires only where
 `Authority::lookup` already returns a grant, by the same call with the same
@@ -197,7 +197,7 @@ settling 6 rather than a change to it.
 Raised by the codex reviewer, 15 October, reviewing decision 6 the day it was
 built. The grant file is trusted exactly as far as the running agent cannot
 modify it, and the running agent *can* modify it: any process that reads
-`~/.ctx/authority` can write it. codex supplied the sequence -- a payload asks
+`~/.countersign/authority` can write it. codex supplied the sequence -- a payload asks
 the agent to append an `allow` line and reopen the request -- and it is not
 hypothetical, because the grants used for that day's reviews were written by
 an agent rather than typed by a human.
@@ -215,7 +215,7 @@ authority... there is no wording-only fix."
 **The options, none of them free:**
 
 - **File permissions.** The agent runs as the same user, so this needs a
-  second account or an ACL, and then `ctx open` -- running as the agent --
+  second account or an ACL, and then `countersign open` -- running as the agent --
   must still read the file. Readable-not-writable by the agent's user is the
   shape. It makes ctx an install with a setup step, which it has never been.
 - **A separate process the agent cannot write through.** A small daemon owning
@@ -268,7 +268,7 @@ being reachable stopped requiring being visible.
 
 **Reshaped 16 Oct**, on the owner's verdict that it was too much work, which
 it was: the second machine took eleven steps and nine of them were the tool's
-fault. `ctx lan` is now one foreground command that announces, discovers,
+fault. `countersign lan` is now one foreground command that announces, discovers,
 listens and receives; presence is bounded by the process rather than by a
 flag, which is LocalSend's own answer and a clearer one. An identity names
 itself from its own key when no name is given, and pairing became an upgrade
@@ -280,7 +280,7 @@ moving one file.
 
 Two things remain the owner's, and both are smaller than the decision was:
 
-- **`ctx listen` is a process holding a port**, which is the first thing in
+- **`countersign listen` is a process holding a port**, which is the first thing in
   ctx that is true of. Its TCP side accepts a sealed envelope from anyone who
   reaches it, deliberately -- a first bundle from a new contact has to be able
   to arrive -- and that bundle lands unread in `pending/` under `SENDER NOT ON

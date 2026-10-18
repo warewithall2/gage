@@ -79,7 +79,7 @@ the axis each one signs along:
 
 Their verdict is read by a program at the execution boundary. Ours is read by
 a language model in the seconds before it decides what to do. That is why
-`ctx open` spends its effort on nonced fences, labels that are not prefixes of
+`countersign open` spends its effort on nonced fences, labels that are not prefixes of
 one another, and withholding contents rather than annotating them: the reader
 can be talked out of its conclusion, which is not a hazard a `verifyRequest`
 call has.
@@ -87,7 +87,7 @@ call has.
 The honest positioning is therefore **the receiving agent's half of the trust
 boundary**, and the headline evidence for it is already in the repo: in
 [the dogfood log](dogfood-2026-10-15.md), two of three agents read a verified
-request from a verified contact and declined to act on it, because `ctx open`
+request from a verified contact and declined to act on it, because `countersign open`
 told them the contents carried no authority. A receipt layer does not produce
 that behaviour, because it is not in the conversation.
 
@@ -95,14 +95,14 @@ that behaviour, because it is not in the conversation.
 
 An MCP server for ctx was item 1 of the build order. It is **not** the same
 thing as Prismer's proxy — theirs signs calls passing through, ours would
-expose `ctx inbox`, `ctx open` and `ctx reply` as tools so an agent need not
+expose `countersign inbox`, `countersign open` and `countersign reply` as tools so an agent need not
 have a shell. No overlap. It is still deferred, for two reasons that came out
 of the dogfood rather than out of the competitive picture:
 
 1. **Access was never the blocker.** Grok found the skill, ran the binary and
    read its inbox unaided. It then declined to act, correctly, for want of
    authority. An MCP server removes friction that was not stopping anyone.
-2. **It puts the frame on a transport that weakens it.** `ctx open`'s defence
+2. **It puts the frame on a transport that weakens it.** `countersign open`'s defence
    is a nonced text fence in stdout that the model reads as data. Over MCP the
    same text arrives as a *tool result*, which harnesses present as the
    tool's own trustworthy output, and some summarise or truncate it. The
@@ -113,7 +113,7 @@ of the dogfood rather than out of the competitive picture:
 
 One genuine argument for it: the server process would own `CTX_HOME`, which
 would close the identity footgun that fired during the dogfood when grok ran
-`ctx` with no `CTX_HOME` and reported owen's inbox as its own. Worth having,
+`countersign` with no `CTX_HOME` and reported owen's inbox as its own. Worth having,
 not worth leading with.
 
 **So: receiver-side authority first, MCP after it, and designed with the

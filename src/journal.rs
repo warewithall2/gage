@@ -17,7 +17,7 @@
 //! was edited, reordered or fabricated before the chain existed -- it would
 //! chain a forged history just as faithfully. Capture-first is still the right
 //! order, but it buys evidence about verdicts, not retroactive tamper
-//! evidence. A key rotation, a `ctx add`, a retirement --
+//! evidence. A key rotation, a `countersign add`, a retirement --
 //! any of them changes what `Contacts::verdict` returns for a bundle that
 //! arrived before it. So the verdict is written down when it is computed and
 //! never derived again.
@@ -48,7 +48,7 @@
 //! ## What a log cannot tell you, said here so nobody reads it as more
 //!
 //! ctx's knowledge stops at the bundle boundary. This file cannot say what
-//! the agent did after `ctx open` -- which tools it called, which files it
+//! the agent did after `countersign open` -- which tools it called, which files it
 //! touched, what it sent onward -- nor whether a human was actually looking,
 //! because `accept` records an act and not an intention. It cannot prove the
 //! record is complete, since a bundle that never arrived leaves no trace and
@@ -317,7 +317,7 @@ pub fn append(e: &Entry) -> std::io::Result<()> {
 ///
 /// Returns false when the budget went in the meantime, which is the only
 /// honest answer: counting and then appending as two steps is a race, and it
-/// is the same race the index was given a lock for. Two `ctx watch
+/// is the same race the index was given a lock for. Two `countersign watch
 /// --auto-accept` processes -- or one restarted while another still runs --
 /// each read `used = 0` against `max = 1` and each accepted, so a budget of
 /// one spent two. The decision `autoaccept::consider` reached is therefore

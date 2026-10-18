@@ -1,6 +1,6 @@
 //! Building and sending bundles, and working out who a reply is for.
 //!
-//! Separate from main.rs because `ctx ui` sends too, and a second send path
+//! Separate from main.rs because `countersign ui` sends too, and a second send path
 //! that grew its own copy of the outbound scan would eventually be missing
 //! one of its checks. There is one way out of this program.
 
@@ -145,7 +145,7 @@ pub fn resolve_reply(id: &str) -> Result<ReplyTarget, Box<dyn std::error::Error>
             .ok_or_else(|| {
                 format!(
                     "every message in thread {} is your own, so there is nobody to reply \
-                     to. Name a message id, or use ctx send --reply-to.",
+                     to. Name a message id, or use countersign send --reply-to.",
                     t.id
                 )
             })?
@@ -161,7 +161,7 @@ pub fn resolve_reply(id: &str) -> Result<ReplyTarget, Box<dyn std::error::Error>
     if parent.from.key == me {
         return Err(format!(
             "{} is your own message, so there is nobody to reply to. Name the \
-             message you are answering, or use ctx send --reply-to.",
+             message you are answering, or use countersign send --reply-to.",
             parent.id
         )
         .into());
@@ -377,7 +377,7 @@ pub fn send_bundle(a: SendArgs) -> Result<manifest::Manifest, Box<dyn std::error
             if !unrouted.is_empty() && !lan {
                 println!("  no local route for: {}", unrouted.join(", "));
                 println!("  bundle is at {} -- move it yourself, or", stage.display());
-                println!("  ctx route <handle> <their-ctx-home> to deliver automatically");
+                println!("  countersign route <handle> <their-ctx-home> to deliver automatically");
             }
         
     Ok(m)

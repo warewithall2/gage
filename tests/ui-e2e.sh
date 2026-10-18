@@ -3,7 +3,7 @@
 # tools are not here: this is an addition to the shell suite and must not turn
 # a missing optional dependency into a red build.
 set -u
-CTX="${CTX:-$PWD/target/release/ctx}"
+CTX="${CTX:-$PWD/target/release/countersign}"
 PORT="${UI_E2E_PORT:-7931}"
 CHROME="${CHROME:-/usr/bin/chromium}"
 HERE=$(cd "$(dirname "$0")" && pwd)

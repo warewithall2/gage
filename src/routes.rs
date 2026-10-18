@@ -1,6 +1,6 @@
 //! Local delivery, so agents stop passing paths to each other by hand.
 //!
-//! A route maps a handle to a directory on this machine. `ctx send --to codex`
+//! A route maps a handle to a directory on this machine. `countersign send --to codex`
 //! then lands in Codex's pending inbox with no --out, which is the difference
 //! between a tool you use and a tool you demo once.
 //!
