@@ -30,6 +30,7 @@
   h1{font-size:2.6rem; line-height:1.1; margin:0 0 .4rem; letter-spacing:-.02em}
   .tag{font-size:1.15rem; color:var(--dim); margin:0 0 2.5rem}
   h2{font-size:1.1rem; margin:2.75rem 0 .6rem; letter-spacing:.02em; text-transform:uppercase; color:var(--faint)}
+  h3{font-size:1rem; margin:1.6rem 0 .4rem; color:var(--fg)}
   p{margin:0 0 1rem}
   a{color:var(--accent); text-decoration-thickness:1px; text-underline-offset:2px}
   code,pre{font-family:var(--mono)}
@@ -80,6 +81,48 @@
   so it moves over a shared folder, git, email, your own network, or a relay — anything you
   already have.</p>
 
+  <h2>Get going</h2>
+  <pre>curl -fsSL https://gage.sh/install.sh | sh</pre>
+  <p class="note">Piping a script into a shell is a thing worth being asked to
+  trust. <a href="https://gage.sh/install.sh">Read it first</a> if you would
+  rather — it is about a hundred lines of POSIX <code>sh</code>: it works out
+  your OS and architecture, downloads the matching binary and its
+  <code>SHA256SUMS</code> from the latest release, <strong>checks the
+  checksum before installing anything</strong>, and puts one file in
+  <code>~/.local/bin</code>. No sudo, ever. <code>cargo install gage</code>
+  works too, anywhere Rust does.</p>
+
+  <p>Then three beats. The middle one is the only part that needs a human.</p>
+
+  <h3>1 · Who you are</h3>
+  <pre>gage init alice          # or just `gage quickstart` and answer four questions</pre>
+  <p class="note">Makes a keypair on this machine. <code>gage whoami</code>
+  prints the one public line you send a colleague, and the four word-pairs
+  that line's key derives.</p>
+
+  <h3>2 · Who you trust</h3>
+  <pre>gage add bob &lt;their-key&gt;</pre>
+  <p class="note">Then <strong>read the four word-pairs to each other out
+  loud</strong> — on a call, in person, not in the channel you sent the key
+  through. If one word differs, it is not their key. This is the step nothing
+  can do for you, and skipping it is what makes <code>SENDER VERIFIED</code>
+  mean only "this is the key I was handed".</p>
+
+  <h3>3 · One handoff</h3>
+  <pre>gage send --to bob --subject "spec review" \
+     --prompt ask.md --file spec.md --out ./pkg</pre>
+  <p class="note">A bundle is a signed directory, so get it to them however
+  you already can — a shared folder, git, email, <code>gage push</code>
+  through a relay, or <code>gage send --lan</code> on the same network. On
+  their side, <code>gage open ./pkg</code>, and what they see is the screen
+  below.</p>
+
+  <p>The full tour is in the
+  <a href="https://github.com/warewithall2/gage#readme">README</a>. Driving it
+  with no human at the keyboard — the command table, the exit codes, how to
+  read a verdict, and a complete worked script — is in
+  <a href="https://github.com/warewithall2/gage/blob/master/docs/agents.md">docs/agents.md</a>.</p>
+
   <h2>Keys, said out loud</h2>
   <p>A gage is a pledge, and historically the glove thrown down to open a challenge.
   Two people compare four word-pairs over a channel neither machine controls — a phone
@@ -91,15 +134,13 @@
   shown as a label is 16 bits — enough to tell two machines apart in a list, never enough
   to confirm anything against.</p>
 
-  <h2>Install</h2>
+  <h2>Other ways to install</h2>
   <pre>cargo install gage</pre>
-  <p>That works anywhere Rust does. A prebuilt <strong>Linux x86_64</strong> binary and its
-  checksum are attached to the
-  <a href="https://github.com/warewithall2/gage/releases/tag/v0.1.0">v0.1.0 release</a>;
-  a macOS ARM build is not in this release yet. Then:</p>
-  <pre>gage init your-name          # make your keypair
-gage whoami                  # the line you give a colleague
-gage lan                     # be reachable on this network</pre>
+  <p class="note">Works anywhere Rust does, and is the route for any platform
+  without a prebuilt binary. The binaries and their checksums are attached to
+  the <a href="https://github.com/warewithall2/gage/releases/tag/v0.1.0">v0.1.0
+  release</a> if you would rather fetch one by hand; that release has
+  <strong>Linux x86_64</strong> only, and a macOS ARM build is not in it yet.</p>
 
   <h2>What it looks like</h2>
   <figure>
