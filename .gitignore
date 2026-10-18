@@ -1,2 +1,6 @@
 dist/
 target/
+identity.key
+handle
+*.key
+.env
