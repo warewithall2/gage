@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build release binaries for every machine we can reach, and check them.
 #
-# The gap this closes: until now, giving ctx to another person meant telling
+# The gap this closes: until now, giving gage to another person meant telling
 # them to install Rust and compile it. That is a development workflow, not a
 # product, and it is the step that decides whether a colleague ever starts.
 #
@@ -9,9 +9,9 @@
 #
 # Builds here, then on each host given, and collects the binaries into dist/
 # with their checksums. Every binary reports the commit it was built from
-# (`ctx --version`), and this refuses to build from a dirty tree: a binary
+# (`gage --version`), and this refuses to build from a dirty tree: a binary
 # that names a commit it does not match is worse than one with no version at
-# all, and the journal freezes verdicts, so "which ctx decided this" has to
+# all, and the journal freezes verdicts, so "which gage decided this" has to
 # have an exact answer.
 set -u
 cd "$(dirname "$0")/.." || exit 2
@@ -31,7 +31,7 @@ fail() { echo "release: $*" >&2; exit 1; }
 REV=$(git rev-parse --short HEAD)
 FULLREV=$(git rev-parse HEAD)
 VER=$(sed -n 's/^version *= *"\(.*\)"/\1/p' Cargo.toml | head -1)
-echo "release: ctx $VER at $REV"
+echo "release: gage $VER at $REV"
 mkdir -p "$OUT"
 
 stamp() {   # <binary> <label>

@@ -26,7 +26,7 @@ already have.
 
 Signing what an agent *does* is well covered by other work — receipts over
 tool calls, verified at the server that executes them. See
-[docs/prior-art.md](docs/prior-art.md). ctx is the other end: what the agent
+[docs/prior-art.md](docs/prior-art.md). gage is the other end: what the agent
 *reading* a message is told about it, in the seconds before it decides what to
 do.
 
@@ -154,13 +154,13 @@ for want of authority.
 So authority is computed by the receiver from its own list, exactly as trust
 is. `~/.gage/authority` is a file **your human writes**:
 
-    # no ctx command writes this file; edit it yourself
+    # no gage command writes this file; edit it yourself
     allow codex review-request
     allow dana question in-reply-only
     allow <a-public-key> any          # any message KIND, not any action
 
 `gage authority` prints what is granted. There is deliberately **no command
-that writes a grant** — a `ctx allow` would be reachable by prompt injection,
+that writes a grant** — a `gage allow` would be reachable by prompt injection,
 letting an agent talked into running it grant itself permission to obey
 whatever talked it into it. Edit the file yourself.
 
@@ -207,7 +207,7 @@ write. A file you edit is already revocable by editing it.
 `accept` has always meant a person looked at a frame and moved a bundle. For
 an unattended loop that is the step nothing can do, so what people build
 instead is a hook that runs `gage accept` itself — which makes every grant
-unbounded and leaves ctx unable to tell, afterwards, which acceptances a
+unbounded and leaves gage unable to tell, afterwards, which acceptances a
 human performed. So it is in the tool, where it can be counted:
 
     allow sndr answer auto-accept max-exchanges 4
@@ -309,7 +309,7 @@ Three steps that have no decisions in them — make an identity, register a
 mailbox, work out what to share — and then a deliberate stop at the one that
 does. It prints the line the other person runs, and the four word-pairs you
 have to read to them out loud. That last part is not automated because
-automating it would be removing the only thing ctx does.
+automating it would be removing the only thing gage does.
 
 Run it again whenever: it keeps the identity you have. A command whose job is
 to get you started must not be the one that silently throws away the key
@@ -323,10 +323,10 @@ everything you have already exchanged was built on.
 Binaries land in `dist/`, one per platform, each built on the machine it runs
 on — cross-compiling needs a C toolchain per target because rustls brings C,
 and a binary built where it runs is one fewer thing to be wrong about. Every
-binary reports the commit it came from, `ctx --version` prints it, and the
+binary reports the commit it came from, `gage --version` prints it, and the
 release refuses to build from a dirty tree: a binary that names a commit it
 does not match is worse than one with no version at all, and the journal
-freezes verdicts, so "which ctx decided this" needs an exact answer. The stamp
+freezes verdicts, so "which gage decided this" needs an exact answer. The stamp
 is checked by asking the binary — on the host that built it, when it cannot
 run here.
 
@@ -733,7 +733,7 @@ that looks different from ordinary mail. So a request *is* ordinary mail from
 an unlisted key, already behind the same accept gate as everything else.
 
 The gate on approving one is the part worth describing, because the first
-version of it was theatre. ctx asks you to type one of the four word-pairs —
+version of it was theatre. gage asks you to type one of the four word-pairs —
 and **the card shows no fingerprint until you get it right**. The pair asked
 for is never pair 1, which is the key's word-label and is shown as the way to
 tell one request from another. Get it right and all four appear, so you can
@@ -757,7 +757,7 @@ decision is made:
 > you, it proves nothing — a key knows its own word-pairs and can quote them.
 > It only means something if it came from the other machine.
 
-That is the honest limit of any out-of-band check: ctx cannot see your other
+That is the honest limit of any out-of-band check: gage cannot see your other
 channel, so it cannot verify you used one. What it can do is withhold the
 answer, name the trap, and reveal the other three pairs so the comparison you
 do make is the full one. One matching pair is 16 bits, and grindable, which
@@ -801,7 +801,7 @@ Refuse button record it; `gage undecline` and Un-refuse take it back without
 adding anything.
 
 What a refusal is not is a block, and the page, the frame and the CLI all say
-so rather than letting you believe otherwise: **nothing in ctx can stop a
+so rather than letting you believe otherwise: **nothing in gage can stop a
 bundle being delivered.** A refused key's mail still arrives and still sits
 behind the accept gate. What the record buys is that the frame reads `SENDER
 REFUSED BEFORE` with the date instead of offering the decision again as though
@@ -878,7 +878,7 @@ presence feed.
 
 ### The on-arrival hook
 
-`--on-arrival` is the only thing in ctx that turns an arrival into an action
+`--on-arrival` is the only thing in gage that turns an arrival into an action
 with nobody watching, so it is deliberately narrower than the notification
 beside it.
 
@@ -904,14 +904,14 @@ and it travels here. One bounded line, already in the notification you see,
 so it leaks nothing the popup does not -- but a hook that treats it as
 trustworthy input is a hook with a problem.
 
-**ctx does not accept the bundle.** When the hook returns, ctx has moved
+**gage does not accept the bundle.** When the hook returns, gage has moved
 nothing: still unread, still in `pending`. The hook itself is handed
 `CTX_BUNDLE_ID` and can of course run `gage accept && gage open` -- and for an
-agent loop that is the point. What ctx guarantees is that *it* never crosses
+agent loop that is the point. What gage guarantees is that *it* never crosses
 the gate for you, so crossing it stays an act your own hook performs, with a
 journal entry to show it.
 
-**ctx does not interpolate sender text into your command.** The subject is
+**gage does not interpolate sender text into your command.** The subject is
 written by whoever sent it; in a shell line it would be command injection with
 extra steps. So the command you wrote goes to `sh -c` untouched and every
 sender-chosen value arrives as an environment variable, flattened to one
@@ -944,7 +944,7 @@ into noise that hides the one entry that mattered.
     gage journal --bundle <id>    # one bundle's history
     gage journal --json           # the raw JSONL
 
-Every other record in ctx is an artifact -- a bundle in `pending`, a copy in
+Every other record in gage is an artifact -- a bundle in `pending`, a copy in
 `sent`, a witness in `state.json`. Artifacts say *what was said*. None of them
 says *what this machine decided*, and the moment anything happens while nobody
 is watching, that is the only question worth asking.
@@ -953,7 +953,7 @@ One line per event: `observed`, `accepted`, `rejected`, `opened`.
 
 **`observed`, not `arrived`.** `at` is when a scan happened to run, not when
 anything was placed anywhere -- a bundle can even be placed and removed between
-scans and never be seen at all. First local observation is the only arrival ctx
+scans and never be seen at all. First local observation is the only arrival gage
 can honestly assert from its own knowledge, so that is what the event is
 called. A bundle already accepted when first seen is marked `backfilled`,
 because its verdict was computed after acceptance and calling that an arrival
@@ -969,7 +969,7 @@ have erased that.
 
 What a difference between two lines is *not* is proof of a key change. It
 could also be a backfilled first entry, a verdict computed after acceptance, a
-contact edited by hand, local tampering, or a ctx upgrade changing what a
+contact edited by hand, local tampering, or a gage upgrade changing what a
 verdict means. An entry freezes an **outcome**, not the evidence that produced
 it: it does not hold the contacts revision, the key's status inputs or the code
 version. A difference is a question, not an answer.
@@ -991,7 +991,7 @@ recorded as the fact that it was unparseable.
 bundle unread, so without a line written before the delete, deletion is
 indistinguishable from never having arrived.
 
-What it cannot tell you, said here so nobody reads it as more: ctx's knowledge
+What it cannot tell you, said here so nobody reads it as more: gage's knowledge
 stops at the bundle boundary. It cannot say what an agent did after `gage open`,
 nor whether a human was actually looking -- `accept` records an act, not an
 intention. It cannot prove the record is complete. And it is append-only by
@@ -1192,7 +1192,7 @@ directories by hand gets annoying, add a relay — the format does not change.
 Three commands do hold a port, and it is worth naming them rather than letting
 "no server" quietly stop being true: `gage ui` on loopback, and `gage lan` and
 `gage listen` on the local network. None is required for anything, all are in
-the foreground where you can see them, and `gage lan` is the only thing in ctx
+the foreground where you can see them, and `gage lan` is the only thing in gage
 that announces — for exactly as long as you are looking at it.
 
 It does not sandbox anything. A verified sender is an *accountable* sender, not
@@ -1261,7 +1261,7 @@ To stop it:
 It did not before, and nobody had checked. Run on the MacBook for the first
 time on 17 October, the suite reported six failures — including *"a killed
 writer wedged the lock"*, which would be alarming if it were true. None of
-them was a defect in ctx:
+them was a defect in gage:
 
 - `timeout` is GNU coreutils and is not on a stock macOS, so the two checks
   that used it to assert a lock had been **released** failed on its absence.

@@ -1,4 +1,4 @@
-# Giving ctx to someone else
+# Giving gage to someone else
 
 Everything here assumes the other person has never seen this project and does
 not want to install a compiler. Each step says what it is for, because every
@@ -24,12 +24,12 @@ They check it with:
 Then:
 
     chmod +x gage-0.1.0-*
-    mkdir -p ~/.local/bin && mv gage-0.1.0-* ~/.local/bin/ctx
-    ctx --version
+    mkdir -p ~/.local/bin && mv gage-0.1.0-* ~/.local/bin/gage
+    gage --version
 
 macOS will refuse to run it the first time, because it was not downloaded
 through a browser and is not notarised. Right-click it in Finder → **Open** →
-**Open**, once. (Or `xattr -d com.apple.quarantine ~/.local/bin/ctx`.) This is
+**Open**, once. (Or `xattr -d com.apple.quarantine ~/.local/bin/gage`.) This is
 worth saying up front: a colleague who hits a scary "cannot be opened" dialog
 with no explanation stops there.
 
@@ -61,7 +61,7 @@ same channel you sent the line through.** If one word differs, it is not
 their key and somebody is in between.
 
 This is the only moment where a human decides who their agent will listen to.
-Everything else in ctx is downstream of it: skip it, and `SENDER VERIFIED`
+Everything else in gage is downstream of it: skip it, and `SENDER VERIFIED`
 only ever means "this is the key I was handed", which could have come from
 anyone.
 

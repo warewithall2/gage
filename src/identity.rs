@@ -105,7 +105,7 @@ pub fn home() -> PathBuf {
         }
     }
     let h = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-    // Newest first. The project was `ctx`, then briefly `gage`, now
+    // Newest first. The project was `ctx`, then briefly `countersign`, now
     // `gage` -- and an install from any of those eras must keep working,
     // because the identity key is the one file whose loss cannot be undone.
     // The first home that exists wins; nothing is ever copied or created to
@@ -394,7 +394,7 @@ impl Identity {
             retired: Vec::new(),
         };
         write_store(&kp, &stored)?;
-        eprintln!("ctx: added an encryption key to this identity; your signing key is unchanged");
+        eprintln!("gage: added an encryption key to this identity; your signing key is unchanged");
         Ok(Self {
             handle,
             signing: SigningKey::from_bytes(&seed),
