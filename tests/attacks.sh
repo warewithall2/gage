@@ -3303,6 +3303,44 @@ else bad "the recipient could not collect from a full mailbox"; fi
 n=$(nfiles "$T/rlh2/inbox/pending")
 if [ "$n" = 3 ]; then ok; else bad "collected $n envelopes, wanted 3"; fi
 
+echo "--- the relay writes .gageb now, and still empties mailboxes holding .ctxb"
+
+# The stored envelope name was `.ctxb` before the rename. Renaming what the
+# relay WRITES is safe only because nothing reads the name back -- the
+# collecting client takes a bundle's id from its signed manifest. What would
+# not be safe is a reader that filtered on the extension, because Owen's own
+# herd has mailboxes holding `.ctxb` envelopes right now and they would be
+# stranded on the relay with no error anywhere.
+#
+# So both halves are pinned here: a new push lands as `.gageb`, and a `.ctxb`
+# sitting in a mailbox is still collected. e4 and e5 were refused by the
+# message cap above, so their bundle ids have never been seen by rlh2 and
+# arrival records cannot suppress them.
+RLDIR=$(printf '%s' "$RLBOX" | tr '/' '_' | tr '+' '-' | tr -d '=')
+RLMAIL="$T/rl/store/mail/$RLDIR"
+if python3 - "$RP" "$RLBOX" "$T/rl" <<'PY4'
+import json,sys,urllib.request
+port, box, d = sys.argv[1], sys.argv[2], sys.argv[3]
+body=json.dumps({"to_box":box,"envelope":open(f"{d}/e4.ctxb").read()}).encode()
+r=urllib.request.urlopen(urllib.request.Request(
+    f"http://127.0.0.1:{port}/send", data=body, method="POST"), timeout=8)
+sys.exit(0 if json.load(r).get("id","").endswith(".gageb") else 1)
+PY4
+then ok; else bad "a pushed envelope was not stored as .gageb"; fi
+
+# An envelope from before the rename, dropped into the mailbox exactly as the
+# old relay would have left it.
+cp "$T/rl/e5.ctxb" "$RLMAIL/1700000000000-legacyenvelope.ctxb" 2>/dev/null
+if [ -f "$RLMAIL/1700000000000-legacyenvelope.ctxb" ]; then ok
+else bad "could not plant a legacy .ctxb in the mailbox ($RLMAIL)"; fi
+
+CTX_HOME=$T/rlh2 $CTX pull >/dev/null 2>&1
+n=$(nfiles "$T/rlh2/inbox/pending")
+if [ "$n" = 5 ]; then ok
+else bad "collected to $n pending, wanted 5 -- a .ctxb envelope was left behind"; fi
+if [ -z "$(ls -A "$RLMAIL" 2>/dev/null)" ]; then ok
+else bad "the mailbox still holds files after a collect: $(ls "$RLMAIL")"; fi
+
 kill $rlpid 2>/dev/null; wait $rlpid 2>/dev/null
 
 # The rate limit, on its own relay so the counts are not polluted.

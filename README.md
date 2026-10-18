@@ -398,8 +398,8 @@ Signing proves who wrote a bundle. It does not hide what is in it. That is
 fine on your own filesystem and not fine on a server, so nothing goes to a
 relay unsealed.
 
-    gage seal ./handoff --to dana --out handoff.ctxb
-    gage unseal handoff.ctxb --out ./incoming
+    gage seal ./handoff --to dana --out handoff.gageb
+    gage unseal handoff.gageb --out ./incoming
     gage open ./incoming
 
 A sealed box (X25519 + XSalsa20-Poly1305) encrypts to the recipient's public

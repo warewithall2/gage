@@ -742,8 +742,17 @@ fn do_send(stream: TcpStream, body: &[u8]) -> std::io::Result<()> {
     if total + incoming > st.limits.store_bytes {
         return reply(stream, "507 Insufficient Storage", r#"{"error":"relay store is full"}"#);
     }
+    // `.gageb` -- a gage bundle, the direct analog of the `.ctxb` this wrote
+    // before the rename. Not `.gage`, which is the home directory's name and
+    // would read as one.
+    //
+    // This is a storage name and a receipt string, nothing more: the
+    // collecting client takes a bundle's real id from its signed manifest and
+    // never from here. Envelopes written as `.ctxb` before this change are
+    // still collected, because the fetch below lists the mailbox without
+    // looking at extensions -- see the note there before adding a filter.
     let name = format!(
-        "{}-{}.ctxb",
+        "{}-{}.gageb",
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis())
@@ -832,6 +841,9 @@ fn do_fetch(stream: TcpStream, body: &[u8]) -> std::io::Result<()> {
     };
     let box_dir = st.root.join("mail").join(&dir);
     let mut out = Vec::new();
+    // Every file in the mailbox, whatever it is called. Deliberate: mailboxes
+    // filled before the rename hold `.ctxb` envelopes and must still empty.
+    // Filtering on an extension here would strand them silently.
     if let Ok(rd) = std::fs::read_dir(&box_dir) {
         let mut names: Vec<_> = rd.flatten().map(|e| e.path()).collect();
         names.sort();
