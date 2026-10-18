@@ -73,10 +73,18 @@ for h in "$@"; do
   scp -q -o BatchMode=yes "$h:~/ctx/target/release/ctx" "$B" || { echo "  copy failed" >&2; continue; }
   chmod +x "$B"
   # Checked by asking the binary, not by trusting the path it came from.
+  # A binary for another platform cannot run here -- so the host that built
+  # it is asked instead, which is still the binary answering rather than the
+  # build script assuming.
   if [ "$ROS-$RARCH" = "$HOSTOS-$HOSTARCH" ]; then
     stamp "$B" "$ROS-$RARCH"
   else
-    echo "  $ROS-$RARCH: copied (cannot run it here to check its stamp)"
+    RSTAMP=$(ssh -o BatchMode=yes "$h" "~/ctx/target/release/ctx --version" 2>/dev/null)
+    case "$RSTAMP" in
+      *dirty*) fail "$ROS-$RARCH was built from a dirty tree on $h" ;;
+      *"$REV"*) echo "  $ROS-$RARCH: $RSTAMP (checked on $h)" ;;
+      *) fail "$ROS-$RARCH reports '${RSTAMP:-nothing}', which does not name $REV" ;;
+    esac
   fi
 done
 
