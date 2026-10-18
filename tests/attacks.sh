@@ -3766,6 +3766,24 @@ else bad "quickstart replaced an existing identity"; fi
 : | CTX_HOME=$T/qsd $CTX quickstart > "$T/qs.eof" 2>&1
 code quickstart-eof $? 0
 
+echo "--- an agent reaching gage through MCP gets the same answers"
+
+# tests/mcp-e2e.sh drives two fixture identities entirely through the stdio
+# JSON-RPC front door. It lives in its own file because a scripted MCP client
+# needs more scaffolding than this suite's helpers provide, and it runs from
+# here so selfcheck inherits it and nobody has to remember it exists.
+#
+# What it pins that matters here: a pairing cannot complete without the
+# word-pair echo, a bad verdict still withholds the payload, the fence nonce
+# survives the transport, and malformed JSON-RPC does not wedge the server.
+MCPOUT=$(bash "$(dirname "$0")/mcp-e2e.sh" 2>&1)
+MCPLINE=$(printf '%s\n' "$MCPOUT" | grep -E 'mcp-e2e: [0-9]+ checks' | tail -1)
+if printf '%s\n' "$MCPLINE" | grep -q ', 0 failed'; then ok
+else
+  bad "mcp-e2e: ${MCPLINE:-no result line}"
+  printf '%s\n' "$MCPOUT" | grep -E '^  FAIL' | sed 's/^/    /'
+fi
+
 echo "a good bundle exits 0"
 CTX_HOME=$T/b $CTX open "$T/b1" >/dev/null 2>&1; code good $? 0
 
