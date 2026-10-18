@@ -1,0 +1,120 @@
+name: Release
+
+# Version tags cut a release. workflow_dispatch builds the same artifacts
+# without one, so the workflow can be exercised -- and a build host proved --
+# without spending a version number.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.runs-on }}
+    strategy:
+      # One platform failing should not hide whether the other one works.
+      fail-fast: false
+      matrix:
+        include:
+          - runs-on: ubuntu-latest
+            target: linux-x86_64
+          # macos-14 and later are arm64. Pinned rather than macos-latest so
+          # the artifact name cannot quietly stop matching the machine.
+          - runs-on: macos-14
+            target: darwin-arm64
+    steps:
+      # The commit is the provenance: build.rs stamps `git rev-parse --short
+      # HEAD` into --version, so this needs real git history, not a tarball.
+      - uses: actions/checkout@v4
+
+      - name: Install stable Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustc --version && cargo --version
+
+      - name: Build
+        run: cargo build --release --locked
+
+      - name: Name it, and make it say which commit it is
+        id: stamp
+        shell: bash
+        run: |
+          set -eu
+          VER=$(sed -n 's/^version *= *"\(.*\)"/\1/p' Cargo.toml | head -1)
+          REV=$(git rev-parse --short HEAD)
+          OUT="gage-$VER-${{ matrix.target }}"
+          cp target/release/gage "$OUT"
+          chmod +x "$OUT"
+          # The same check scripts/release.sh makes, for the same reason: a
+          # binary that names a commit it does not match is worse than one
+          # with no version at all. Both runners are native, so the binary
+          # can simply be asked.
+          GOT=$("./$OUT" --version)
+          echo "$OUT: $GOT"
+          case "$GOT" in
+            *dirty*) echo "::error::built from a dirty tree: $GOT"; exit 1 ;;
+            *"$REV"*) ;;
+            *) echo "::error::$OUT reports '$GOT', which does not name $REV"; exit 1 ;;
+          esac
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          echo "artifact=$OUT" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.stamp.outputs.artifact }}
+          path: ${{ steps.stamp.outputs.artifact }}
+          if-no-files-found: error
+
+  collect:
+    name: checksums${{ startsWith(github.ref, 'refs/tags/v') && ' and release' || '' }}
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      # One SHA256SUMS over whatever actually built, so a partial run produces
+      # a checksum file that is honest about being partial rather than naming
+      # a binary nobody can download.
+      - name: SHA256SUMS
+        id: sums
+        run: |
+          set -eu
+          cd dist
+          ls -l
+          sha256sum gage-* > SHA256SUMS
+          cat SHA256SUMS
+          echo "count=$(grep -c . SHA256SUMS)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SHA256SUMS
+          path: dist/SHA256SUMS
+          if-no-files-found: error
+
+      # Only on a tag. A dispatch run proves the build and stops there; it
+      # must not be able to alter a published release.
+      - name: Attach to the release for this tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          TAG="${GITHUB_REF#refs/tags/}"
+          if [ "${{ steps.sums.outputs.count }}" != 2 ]; then
+            echo "::error::only ${{ steps.sums.outputs.count }} binary/binaries built; refusing to attach a partial release for $TAG"
+            exit 1
+          fi
+          gh release view "$TAG" >/dev/null 2>&1 \
+            || gh release create "$TAG" --title "gage ${TAG#v}" --generate-notes
+          gh release upload "$TAG" dist/gage-* dist/SHA256SUMS --clobber
+          gh release view "$TAG"
