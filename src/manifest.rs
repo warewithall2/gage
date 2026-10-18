@@ -161,8 +161,17 @@ impl MsgType {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Manifest {
     pub v: u32,
-    /// Content id: sha256 over the item digests, so the same payload gets the
-    /// same id regardless of who sends it or when.
+    /// Content id: sha256 over the item digests PLUS the author key, subject
+    /// and `created`, truncated to 16 hex characters. See `expected_id`, which
+    /// a receiver recomputes rather than trusting this field.
+    ///
+    /// Not the digests alone, which is what this comment used to say: two
+    /// bundles carrying the same files would then share an id whoever sent
+    /// them, and delivery writes to a directory named by it, so one could
+    /// overwrite a legitimate pending bundle under an id the recipient had
+    /// already seen listed. The author key, subject and timestamp all survive
+    /// a forward unchanged, so the id still follows the same content across
+    /// hops.
     pub id: String,
     pub created: String,
     pub subject: String,
