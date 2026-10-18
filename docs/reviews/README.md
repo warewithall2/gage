@@ -16,6 +16,42 @@ reason**. Nothing is closed by being forgotten.
 | [2026-10-17 muse, on the journal](2026-10-17-muse-journal.md) | 7 | 7 | 0 | 0 |
 | [2026-10-17 muse, on auto-accept](2026-10-17-muse-autoaccept.md) | 5 claims, 2 broken | 2 | 1 | 0 |
 | [2026-10-17 muse, on the buddy list](2026-10-17-muse-buddylist.md) | 7 claims, 5 broken | 5 | 2 | 0 |
+| [2026-10-18 muse, pre-public](2026-10-18-muse-ensemble.md) | 5 claims, 4 broken | 11 | 0 | 0 |
+| [2026-10-18 codex, pre-public](2026-10-18-codex-ensemble.md) | 1 confirmed + 3 graded | 2 | 0 | 0 |
+| 2026-10-18 grok, relay threat model | 4 ranked gaps | 3 | 0 | 1 |
+
+### 2026-10-18, the first three-reviewer run
+
+All three were given the same surface before it went public. They did not
+overlap the way I expected.
+
+**muse** found the one that mattered most and that neither other reviewer
+raised: the fingerprint people confirm covered only the signing key, while
+the token they exchange carries a signing key *and* an encryption key. An
+attacker substituting only the second half passes the word-pair comparison
+perfectly and then receives every sealed message. That defeated the ceremony
+the whole product rests on.
+
+**grok** found the relay's unbounded request-head read -- one connection,
+no credentials, grows a buffer until the cgroup kills the process, and
+`Restart=on-failure` makes it a crash loop. It also noticed the viewer had
+been given exactly that cap months earlier and the relay never was.
+
+**codex** found the absence of any mailbox cap, and traced why it bites:
+every registration rewrote a growing owners map under the global lock.
+
+Three reviewers, three different top findings, no duplicates among them. The
+overlap was in the second tier -- muse and grok independently caught the
+uncounted refusal threads and the per-read timeout being useless against a
+slow drip.
+
+**Declined:** grok's inode-exhaustion estimate. The mechanism is real --
+`dir_bytes` measures apparent size, so a million one-byte envelopes consume
+inodes while barely touching the byte caps -- but the mailbox cap plus the
+per-mailbox message cap now bound the file count to roughly a million at the
+defaults, and the figures given were explicitly estimates rather than
+measurements. Worth revisiting with a measured filesystem rather than acted
+on from arithmetic.
 
 ## 2026-10-16, codex, on the day's five changes
 
