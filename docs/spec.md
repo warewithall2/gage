@@ -335,6 +335,58 @@ CA fails loudly rather than silently working.
 
 ---
 
+## 7a. Identity backup (unreleased)
+
+Opt-in, and on master rather than in v0.1.0. Nothing creates one unless a
+person runs the command.
+
+    gage export-identity --out <file>     # prompts for a passphrase, twice
+    gage restore-identity <file>          # prompts once, prints the fingerprint
+
+The file is JSON with a readable header and one encrypted field:
+
+    {
+      "fmt": "gage-identity-backup",
+      "v": 1,
+      "kdf":    { "name": "argon2id", "m": 65536, "t": 3, "p": 1,
+                  "salt": "<b64, 16 bytes, fresh per export>" },
+      "cipher": { "name": "xchacha20poly1305",
+                  "nonce": "<b64, 24 bytes, fresh per export>" },
+      "ct": "<b64 ciphertext>"
+    }
+
+- **KDF:** Argon2id, 64 MiB / 3 passes / 1 lane, with the parameters in the
+  file so they can be raised later without orphaning old backups.
+- **AEAD:** XChaCha20-Poly1305, with the serialised header as associated data.
+  Every header field today also feeds key derivation or is refused by name, so
+  the AAD is not what makes an edit fail; it authenticates the header as a
+  whole, so a field added later cannot end up unauthenticated.
+- **Plaintext:** `{ "v": 1, "handle": …, "identity_key": … }`, where
+  `identity_key` is the **exact bytes of `identity.key`** — which already holds
+  both keypairs and the retired-key records. Retired records are in scope
+  because `KEY RETIRED` versus `KEY REJECTED` depends on knowing what was
+  retired and when.
+- **Not in the file:** contacts, journal, inbox, sent, state, relay address —
+  and nothing identifying. No handle, fingerprint or label outside the
+  ciphertext, because a backup should not announce whose it is.
+- The file is written `0600` via a temp file and rename, and export refuses to
+  overwrite an existing file.
+
+**Restore semantics.** Into a home with no identity by default; an occupied
+home is refused with both fingerprints printed and nothing written. `--replace`
+additionally requires typing the word `replace`, and moves the existing key
+aside rather than deleting it. The fingerprint of the backup's contents is
+computed and shown **before** anything is written. A wrong passphrase and an
+altered file are one event to Poly1305 and produce one message and no
+side effects. An unknown `fmt` or `v` is refused by name rather than parsed
+hopefully.
+
+A restore brings back the key, not the witness record: see
+`docs/threat-model.md`. Design rationale and the options not taken are in
+`docs/adr-identity-recovery.md`.
+
+---
+
 ## 8. Format versioning
 
 `v` is `1` everywhere — one integer on the manifest and one on the envelope.

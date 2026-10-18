@@ -112,6 +112,39 @@ This is stated in the frame itself rather than relied upon silently.
   boundary needs file permissions or a separate process the agent cannot write
   through. The frame says this rather than implying otherwise.
 
+### Someone who has your backup file
+
+Only relevant if you ran `gage export-identity`, which nothing does for you.
+
+A backup is your identity in a file. It is encrypted with a key derived from
+your passphrase by Argon2id (64 MiB, 3 passes) and sealed with
+XChaCha20-Poly1305 over an authenticated header, so an attacker holding the
+file needs the passphrase and pays that cost per guess — offline, as fast as
+their hardware allows, with no rate limit anyone can impose.
+
+**So opting in converts "lose the key, lose everything" into "your security is
+your passphrase's strength."** That is the whole trade, and it is a trade, not
+a free improvement:
+
+- A **strong** passphrase plus a backup stored away from the machine is
+  strictly better than no backup — you survive a dead disk.
+- A **weak** passphrase, or a backup synced to the same cloud account as
+  everything else, is **worse** than no backup: it is a copy of your identity
+  that an attacker can take at their leisure, and a stolen identity is not
+  something a rotation undoes for the people who already confirmed the old key.
+
+What the file deliberately does not contain: your contacts, your journal, your
+inbox, your relay address — or anything that says whose identity it is. A
+leaked backup should cost the key and nothing more. The word-pair fingerprint
+is shown only after a successful decrypt, which is also how you check that a
+file really is the identity you think it is before trusting it.
+
+What a restore does **not** bring back is this machine's witness record. The
+key returns; the memory of what it has seen does not, so bundles signed under
+a key you had retired read as unplaceable rather than attributable afterwards.
+That is honest rather than convenient: a witness record that could be
+reconstructed on demand would be one a thief could reconstruct too.
+
 ---
 
 ## Non-goals — what gage does *not* protect against
@@ -127,9 +160,10 @@ Each of these is a decision, not an oversight.
    feed. If who-talks-to-whom must be hidden from the relay operator, gage is
    the wrong tool.
 3. **Making a model obey the frame.** See above. This is the central limit.
-4. **Key loss.** There is no recovery, no escrow and no backup today: losing
-   `identity.key` is identity death and every confirmed contact must re-confirm
-   a new key. Under active design — see `docs/adr-identity-recovery.md`.
+4. **Key loss, unless you opted in.** By default there is still no recovery
+   and no escrow: losing `identity.key` is identity death, and every confirmed
+   contact must re-confirm a new key. `gage export-identity` changes that *if
+   you run it* — and changes the threat instead of removing it. See below.
 5. **Compromise of your own machine.** An attacker running as you has your key,
    your authority file and your inbox. Nothing here survives that.
 6. **Proving the word-pair ceremony happened.** gage cannot see your other

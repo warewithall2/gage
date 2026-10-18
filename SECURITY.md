@@ -34,9 +34,14 @@ boundary:
   "Keys, said out loud", "Authority: the one thing that says you may act",
   "Encryption", "Outbound safety", "Relay", "Key rotation", and
   "What this is not", which states plainly what is *not* defended.
+- `docs/spec.md` — what is actually on the wire, derived from the code, and
+  `docs/threat-model.md` — the adversaries, the mitigations, and the
+  **non-goals**. The non-goals are the fastest way to see where the boundary
+  is drawn.
 - `docs/` — design notes, including `offline-root.md`,
-  `lan-discovery-design.md`, `nested-forward-design.md`, and
-  `open-decisions.md` for questions that are knowingly still open.
+  `lan-discovery-design.md`, `nested-forward-design.md`,
+  `adr-identity-recovery.md`, and `open-decisions.md` for questions that are
+  knowingly still open.
 - `docs/reviews/` — prior adversarial review rounds and their dispositions.
 - `tests/attacks.sh` — attacks that worked, or nearly worked, during
   development, kept as regressions.
@@ -44,3 +49,24 @@ boundary:
 A behaviour that `README.md` already names as out of scope is not a
 vulnerability, but a convincing argument that it should be in scope is worth
 sending.
+
+### Identity backups
+
+`gage export-identity` (on master, not in v0.1.0) writes your identity to a
+passphrase-encrypted file. Nothing creates one unless you run it.
+
+Opting in trades **"lose the key, lose everything"** for **"your security is
+your passphrase's strength."** An attacker holding the file can attack the
+passphrase offline, as fast as their hardware allows, with no rate limit
+anyone can impose — Argon2id at 64 MiB and 3 passes makes each guess cost, and
+that is all it does. So:
+
+- store the file **away from the machine it came from**, and away from your
+  passphrase;
+- a backup plus a weak passphrase is **a stolen identity**, and worse than
+  having no backup, because a rotation does not undo it for the contacts who
+  already confirmed the old key.
+
+Reports about the backup format, the KDF parameters, or the restore path are
+in scope and welcome. The format is in `docs/spec.md` §7a and the reasoning in
+`docs/adr-identity-recovery.md`.

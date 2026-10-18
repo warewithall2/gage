@@ -130,6 +130,28 @@ to. Now swap roles, so each of you has sent one and received one.
 Opens a local page at `http://127.0.0.1:7777` showing your conversations and
 who is on your list. Nothing leaves your machine.
 
+## 6. Optional: keep a copy of your key
+
+> Needs a build newer than 0.1.0. If `gage export-identity --help` says it is
+> not a command, your binary predates this and you can skip this section.
+
+    gage export-identity --out ~/gage-backup
+
+Only if you intend to keep using gage after this test. The key in
+`~/.gage/identity.key` is the thing your partner confirmed when you read the
+word-pairs to each other — if you lose it, you would have to do that call
+again, with them and with anyone else.
+
+It asks for a passphrase twice and writes one encrypted file. The honest
+version of what that buys: **it turns "lose the key, lose everything" into
+"your security is that passphrase."** Use a long one, and keep the file
+somewhere other than this computer. A copy of your key with a guessable
+passphrase is worse than no copy at all.
+
+To bring it back on another machine, `gage restore-identity ~/gage-backup`. It
+shows you the four word-pairs before it does anything, so you can check it is
+really yours.
+
 ## What success looks like
 
 By the end you should have:

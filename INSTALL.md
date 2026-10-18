@@ -109,6 +109,33 @@ A buddy list: who is on their list, who has written to them and is not, and
 who they have refused. Approving someone there asks them to type one of the
 four word-pairs, read off *your* screen.
 
+## 6. Optional: back up the key before anything depends on it
+
+    gage export-identity --out ~/gage-identity.backup
+
+This is worth mentioning early, because the moment it matters is after four
+people have confirmed their key — and by then it is too late to have done it.
+
+`identity.key` is the one file whose loss cannot be undone. Everyone who
+confirmed their word-pairs confirmed *that* key, so a dead disk means a phone
+call to each of them, and mail already sealed to the old key is gone.
+
+Say the trade out loud when you suggest it, because it is a real one: **this
+turns "lose the key, lose everything" into "your security is your passphrase's
+strength."** The file is encrypted, and an attacker who takes it can attack
+the passphrase offline as fast as their hardware allows. So a long passphrase
+and a file kept somewhere other than that machine is strictly better than no
+backup; a short passphrase, or the file sitting in the same cloud folder as
+everything else, is **worse** than no backup.
+
+Restoring, on a new machine:
+
+    gage restore-identity ~/gage-identity.backup
+
+It prints the four word-pairs of the identity in the file before it writes
+anything. Compare them against your record. It refuses to write over an
+identity that is already there.
+
 ## What to expect to go wrong
 
 - **The quarantine dialog on macOS** (step 1). The most likely place to lose
