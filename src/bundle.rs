@@ -47,6 +47,9 @@ pub fn witness_of(from_key: &str, manifest_bytes: &[u8]) -> String {
 /// bundle then verified against a witness recorded before the retirement
 /// although nothing authentic had ever been seen. The codex reviewer found
 /// that sequence.
+// The no-override form of `witness_if_sound_unless`; kept as the API every
+// caller but the skip-optimising one should reach for.
+#[allow(dead_code)]
 pub fn witness_if_sound(dir: &Path) -> Option<String> {
     witness_if_sound_unless(dir, &|_| false)
 }
@@ -149,10 +152,16 @@ pub struct Loaded {
     /// True when this machine has no record of the bundle ever arriving. Only
     /// meaningful for a retired key, where it is the difference between "it
     /// got here after you retired that key" and "I cannot tell".
+    // Part of the serialised shape and meaningful to a reader of the struct,
+    // even where this binary never branches on it.
+    #[allow(dead_code)]
     pub unwitnessed: bool,
 }
 
 /// Build a bundle. `specs` are (kind, source path) pairs.
+// Nine bundle fields, each independent; collapsing them into a struct is a
+// signature change, not a lint fix.
+#[allow(clippy::too_many_arguments)]
 pub fn create(
     out: &Path,
     id: &Identity,

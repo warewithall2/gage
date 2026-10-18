@@ -97,7 +97,7 @@ pub fn new_arrivals() -> Vec<Pending> {
         if !l.tampered.is_empty() || matches!(l.trust, crate::trust::Trust::Unverified) {
             continue;
         }
-        if st.is_read(&m.id) || seen.iter().any(|x| *x == m.id) {
+        if st.is_read(&m.id) || seen.contains(&m.id) {
             continue;
         }
         // The same lookup `gage open` performs, on the same inputs. A

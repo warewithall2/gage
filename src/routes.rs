@@ -81,10 +81,10 @@ pub fn scan_inbox_knowing(known: &dyn Fn(&str) -> bool) -> Vec<String> {
             continue;
         };
         for e in rd.flatten() {
-            if e.path().is_dir() {
-                if let Some(x) = crate::bundle::witness_if_sound_unless(&e.path(), known) {
-                    w.push(x);
-                }
+            if e.path().is_dir()
+                && let Some(x) = crate::bundle::witness_if_sound_unless(&e.path(), known)
+            {
+                w.push(x);
             }
         }
     }

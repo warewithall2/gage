@@ -197,10 +197,11 @@ fn may_mutate(r: &Req, port: u16) -> bool {
     if !r.guard {
         return false;
     }
-    if let Some(site) = &r.fetch_site {
-        if site != "same-origin" && site != "none" {
-            return false;
-        }
+    if let Some(site) = &r.fetch_site
+        && site != "same-origin"
+        && site != "none"
+    {
+        return false;
     }
     // Require the Origin, rather than only checking it when present.
     //

@@ -14,10 +14,10 @@ pub fn find_manifest(id: &str) -> Option<manifest::Manifest> {
     let home = identity::home();
     for stage in [routes::accepted_dir(&home), routes::pending_dir(&home)] {
         let d = stage.join(id);
-        if d.is_dir() {
-            if let Ok(l) = bundle::load(&d) {
-                return Some(l.manifest);
-            }
+        if d.is_dir()
+            && let Ok(l) = bundle::load(&d)
+        {
+            return Some(l.manifest);
         }
     }
     None

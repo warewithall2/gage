@@ -74,7 +74,7 @@ pub fn seal_dir(dir: &Path, to_box_b64: &str) -> std::io::Result<Envelope> {
     let pk = crypto_box::PublicKey::from_bytes(raw);
     let ct = pk
         .seal(&mut crypto_box::aead::OsRng, &pkg)
-        .map_err(|_| std::io::Error::new(std::io::ErrorKind::Other, "sealing failed"))?;
+        .map_err(|_| std::io::Error::other("sealing failed"))?;
     Ok(Envelope {
         v: 1,
         to_box: to_box_b64.trim().to_string(),

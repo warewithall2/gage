@@ -126,40 +126,6 @@ pub fn home() -> PathBuf {
     homes.into_iter().next().expect("the list is not empty")
 }
 
-#[cfg(test)]
-mod home_tests {
-    /// The rename must not be able to mislay an identity.
-    ///
-    /// Not a unit test of `home()` itself -- it reads process-wide
-    /// environment, and two tests racing on `set_var` is a worse bug than
-    /// the one being tested. This pins the DECISION TABLE instead, which is
-    /// the part that could be got wrong, and the shell suite exercises the
-    /// real function against real directories.
-    /// Newest-first, first-existing-wins, over `[gage, countersign, ctx]`.
-    fn pick(exists: [bool; 3]) -> &'static str {
-        let names = ["gage", "countersign", "ctx"];
-        for (i, e) in exists.iter().enumerate() {
-            if *e {
-                return names[i];
-            }
-        }
-        names[0]
-    }
-
-    #[test]
-    fn a_home_from_any_era_is_still_found() {
-        // The cases that matter: installs predating each rename.
-        assert_eq!(pick([false, false, true]), "ctx");
-        assert_eq!(pick([false, true, false]), "countersign");
-        // Already moved on: never dragged back to an older one.
-        assert_eq!(pick([true, true, true]), "gage");
-        assert_eq!(pick([true, false, true]), "gage");
-        assert_eq!(pick([false, true, true]), "countersign");
-        // Fresh machine gets the current name.
-        assert_eq!(pick([false, false, false]), "gage");
-    }
-}
-
 fn b64_32(s: &str) -> std::io::Result<[u8; 32]> {
     let v = B64
         .decode(s.trim())
@@ -452,10 +418,10 @@ impl Identity {
             return Ok(pt);
         }
         for r in &self.retired {
-            if let Some(k) = &r.sealing {
-                if let Ok(pt) = k.unseal(ct) {
-                    return Ok(pt);
-                }
+            if let Some(k) = &r.sealing
+                && let Ok(pt) = k.unseal(ct)
+            {
+                return Ok(pt);
             }
         }
         Err("decryption failed: not sealed to your key")
@@ -509,4 +475,38 @@ pub fn verify(pubkey_b64: &str, msg: &[u8], sig_b64: &str) -> bool {
         return false;
     };
     vk.verify_strict(msg, &Signature::from_bytes(&sb)).is_ok()
+}
+
+#[cfg(test)]
+mod home_tests {
+    /// The rename must not be able to mislay an identity.
+    ///
+    /// Not a unit test of `home()` itself -- it reads process-wide
+    /// environment, and two tests racing on `set_var` is a worse bug than
+    /// the one being tested. This pins the DECISION TABLE instead, which is
+    /// the part that could be got wrong, and the shell suite exercises the
+    /// real function against real directories.
+    /// Newest-first, first-existing-wins, over `[gage, countersign, ctx]`.
+    fn pick(exists: [bool; 3]) -> &'static str {
+        let names = ["gage", "countersign", "ctx"];
+        for (i, e) in exists.iter().enumerate() {
+            if *e {
+                return names[i];
+            }
+        }
+        names[0]
+    }
+
+    #[test]
+    fn a_home_from_any_era_is_still_found() {
+        // The cases that matter: installs predating each rename.
+        assert_eq!(pick([false, false, true]), "ctx");
+        assert_eq!(pick([false, true, false]), "countersign");
+        // Already moved on: never dragged back to an older one.
+        assert_eq!(pick([true, true, true]), "gage");
+        assert_eq!(pick([true, false, true]), "gage");
+        assert_eq!(pick([false, true, true]), "countersign");
+        // Fresh machine gets the current name.
+        assert_eq!(pick([false, false, false]), "gage");
+    }
 }

@@ -198,21 +198,20 @@ pub fn post(addr: &str, path: &str, body: &str) -> std::io::Result<String> {
                 .map(|v| v.trim().parse::<usize>())
         })
         .and_then(|r| r.ok())
+        && rest.len() < want
     {
-        if rest.len() < want {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::UnexpectedEof,
-                format!(
-                    "the relay's answer was cut short: {} of {want} bytes{}",
-                    rest.len(),
-                    if TRUNCATED.swap(false, std::sync::atomic::Ordering::Relaxed) {
-                        " (the connection closed without a TLS close_notify)"
-                    } else {
-                        ""
-                    }
-                ),
-            ));
-        }
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            format!(
+                "the relay's answer was cut short: {} of {want} bytes{}",
+                rest.len(),
+                if TRUNCATED.swap(false, std::sync::atomic::Ordering::Relaxed) {
+                    " (the connection closed without a TLS close_notify)"
+                } else {
+                    ""
+                }
+            ),
+        ));
     }
     TRUNCATED.store(false, std::sync::atomic::Ordering::Relaxed);
     let status = head.lines().next().unwrap_or("");

@@ -16,7 +16,6 @@
 //! on its way to refusing.
 
 use serde::{Deserialize, Serialize};
-use std::path::Path;
 
 #[derive(Debug, Clone)]
 pub struct Finding {
@@ -114,22 +113,22 @@ fn scan_line(line: &str, policy: &Policy) -> Option<(String, String)> {
             }
         }
     }
-    if !disabled("bearer") {
-        if let Some(i) = lower.find("bearer ") {
-            let tok: String = line[i + 7..]
-                .chars()
-                .take_while(|c| !c.is_whitespace())
-                .collect();
-            if tok.len() >= 16 {
-                return Some(("bearer".into(), redact(&tok)));
-            }
+    if !disabled("bearer")
+        && let Some(i) = lower.find("bearer ")
+    {
+        let tok: String = line[i + 7..]
+            .chars()
+            .take_while(|c| !c.is_whitespace())
+            .collect();
+        if tok.len() >= 16 {
+            return Some(("bearer".into(), redact(&tok)));
         }
     }
     if !disabled("email") {
         for word in line.split(|c: char| {
             c.is_whitespace() || c == ',' || c == ';' || c == '<' || c == '>' || c == '"'
         }) {
-            let w = word.trim_end_matches(|c: char| c == '.' || c == ')' || c == ']');
+            let w = word.trim_end_matches(['.', ')', ']']);
             if let Some(at) = w.find('@') {
                 let (u, d) = (&w[..at], &w[at + 1..]);
                 if !u.is_empty()
@@ -227,10 +226,14 @@ fn display_path(rel: &str) -> String {
     rel.strip_prefix("items/").unwrap_or(rel).to_string()
 }
 
+// Where scrub.json lives; paired with `ensure_policy_file` below.
+#[allow(dead_code)]
 pub fn policy_path() -> std::path::PathBuf {
     crate::identity::home().join("scrub.json")
 }
 
+// Seeds scrub.json on demand; kept for the command that will offer it.
+#[allow(dead_code)]
 pub fn ensure_policy_file() -> std::io::Result<()> {
     let p = policy_path();
     if p.exists() {

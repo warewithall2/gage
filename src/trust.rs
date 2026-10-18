@@ -64,6 +64,9 @@ pub enum Trust {
 /// So it is tied to the compiler: `Trust::index` has an exhaustive match, so
 /// a new variant does not build until it is given an index, and
 /// `every_verdict_is_in_ALL` fails until it is listed here.
+// Kept deliberately: with `index` below it, adding a Trust variant becomes a
+// build error rather than a silently short list.
+#[allow(dead_code)]
 pub const ALL: &[Trust] = &[
     Trust::Known,
     Trust::Unknown,
@@ -77,6 +80,9 @@ pub const ALL: &[Trust] = &[
 impl Trust {
     /// A dense index per variant. Exists only so `ALL` cannot fall behind:
     /// the match is exhaustive, so adding a variant is a build error here.
+    // Unused by design -- its only job is to make the match below exhaustive,
+    // so a new variant cannot slip past `ALL`.
+    #[allow(dead_code)]
     pub fn index(self) -> usize {
         match self {
             Trust::Known => 0,
@@ -366,10 +372,10 @@ impl Contacts {
     /// separate, louder act, because it discards history.
     pub fn mark_history_compromised(&mut self, name: &str, keys: &[String]) {
         for k in keys {
-            if let Some(r) = self.retired.get_mut(k) {
-                if r.name == name {
-                    r.compromised = true;
-                }
+            if let Some(r) = self.retired.get_mut(k)
+                && r.name == name
+            {
+                r.compromised = true;
             }
         }
     }
@@ -416,6 +422,104 @@ impl Contacts {
             .find(|(_, n)| n.as_str() == name)
             .map(|(k, _)| k.clone())
     }
+}
+
+/// Put a key on the list, with every guard `gage add` has always had.
+///
+/// Shared rather than duplicated, so `gage add`, `gage pair` and the viewer's
+/// pair button all land a key by one path. A pairing flow that quietly
+/// skipped the "already on your list under a different key" refusal would let
+/// a LAN announcement do what `gage add` deliberately will not: take over a
+/// trusted name in one step.
+///
+/// Returns the lines to show rather than printing them, because one of the
+/// three callers is a web page.
+pub fn add_contact(name: &str, key: &str) -> Result<Vec<String>, String> {
+    let mut out: Vec<String> = Vec::new();
+    let (sign, boxpub) = crate::identity::split_key(key);
+    if !crate::bundle::b64_decode_ok(&sign) {
+        return Err("that signing key is not valid base64".to_string());
+    }
+    if let Some(b) = &boxpub
+        && !crate::bundle::b64_decode_ok(b)
+    {
+        return Err("that encryption key is not valid base64".to_string());
+    }
+    let mut c = Contacts::load();
+    // Adding an existing name under a DIFFERENT key used to just overwrite
+    // it, which is key rotation performed by accident and with no record:
+    // every bundle the old key signed turned into SENDER UNVERIFIABLE, and a
+    // stranger's key could take over a trusted name in one command.
+    // `keychange` is the operation that does this with evidence; `retire` is
+    // the one that does it deliberately without.
+    if let Some(existing) = c.key_for_name(name)
+        && existing != sign
+    {
+        return Err(format!(
+            "{name} is already on your list under a different key. This would \
+                 replace it and orphan everything that key signed.\n  \
+                 If they rotated: gage keychange <their notice file> --accept\n  \
+                 If you are doing it by hand: gage retire {name}, then add them \
+                 again under a name you choose"
+        ));
+    }
+    if let Some(r) = c.retired_record(&sign) {
+        if r.compromised {
+            return Err(format!(
+                "that key is recorded as COMPROMISED (retired {}). Re-adding it undoes \
+                 that decision; if it really is safe again, edit contacts.json \
+                 deliberately.",
+                r.retired_at
+            ));
+        }
+        out.push(format!(
+            "note: you retired this key on {} -- re-adding it puts it back in service",
+            r.retired_at
+        ));
+        let k = sign.clone();
+        c.retired.remove(&k);
+    }
+    // An explicit add is a later decision than a decline, so it overrides
+    // it -- but it says so. A human who declined this key last week and is
+    // now adding it should see that, because the ordinary cause of adding a
+    // key you refused is being asked twice by something that wants in.
+    if let Some(d) = c.declined.remove(&sign) {
+        out.push(format!(
+            "note: you declined this key on {} -- adding it now reverses that",
+            d.at
+        ));
+    }
+    c.keys.insert(sign.clone(), name.to_string());
+    match &boxpub {
+        Some(b) => {
+            c.box_keys.insert(sign, b.clone());
+            out.push(format!("added {name} (verify + encrypt)"));
+        }
+        None => out.push(format!(
+            "added {name} (verify only -- no encryption key, so you cannot seal to them)"
+        )),
+    }
+    c.save().map_err(|e| e.to_string())?;
+    // Shown AFTER the add, not before, because this is the step where a
+    // person checks they added the key they meant to. An out-of-band
+    // confirmation is the only thing that makes a key belong to a person, and
+    // it is a great deal easier to do when the thing being compared can be
+    // read aloud.
+    // Both halves. The value a person is asked to confirm has to cover the
+    // encryption key too, or an attacker substitutes the half nobody checks
+    // and the comparison passes while they read everything.
+    let words = c
+        .key_for_name(name)
+        .map(|k| crate::words::fingerprint_of(&k, c.box_keys.get(&k).map(|s| s.as_str())));
+    if let Some(w) = words {
+        out.push(String::new());
+        out.push(format!("  this key says : {w}"));
+        out.push(format!(
+            "  Check that with {name} over a channel that is not this one."
+        ));
+        out.push("  If their machine says anything else, you have the wrong key.".to_string());
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -566,102 +670,4 @@ mod tests {
             );
         }
     }
-}
-
-/// Put a key on the list, with every guard `gage add` has always had.
-///
-/// Shared rather than duplicated, so `gage add`, `gage pair` and the viewer's
-/// pair button all land a key by one path. A pairing flow that quietly
-/// skipped the "already on your list under a different key" refusal would let
-/// a LAN announcement do what `gage add` deliberately will not: take over a
-/// trusted name in one step.
-///
-/// Returns the lines to show rather than printing them, because one of the
-/// three callers is a web page.
-pub fn add_contact(name: &str, key: &str) -> Result<Vec<String>, String> {
-    let mut out: Vec<String> = Vec::new();
-    let (sign, boxpub) = crate::identity::split_key(key);
-    if !crate::bundle::b64_decode_ok(&sign) {
-        return Err("that signing key is not valid base64".to_string());
-    }
-    if let Some(b) = &boxpub {
-        if !crate::bundle::b64_decode_ok(b) {
-            return Err("that encryption key is not valid base64".to_string());
-        }
-    }
-    let mut c = Contacts::load();
-    // Adding an existing name under a DIFFERENT key used to just overwrite
-    // it, which is key rotation performed by accident and with no record:
-    // every bundle the old key signed turned into SENDER UNVERIFIABLE, and a
-    // stranger's key could take over a trusted name in one command.
-    // `keychange` is the operation that does this with evidence; `retire` is
-    // the one that does it deliberately without.
-    if let Some(existing) = c.key_for_name(name) {
-        if existing != sign {
-            return Err(format!(
-                "{name} is already on your list under a different key. This would \
-                 replace it and orphan everything that key signed.\n  \
-                 If they rotated: gage keychange <their notice file> --accept\n  \
-                 If you are doing it by hand: gage retire {name}, then add them \
-                 again under a name you choose"
-            ));
-        }
-    }
-    if let Some(r) = c.retired_record(&sign) {
-        if r.compromised {
-            return Err(format!(
-                "that key is recorded as COMPROMISED (retired {}). Re-adding it undoes \
-                 that decision; if it really is safe again, edit contacts.json \
-                 deliberately.",
-                r.retired_at
-            ));
-        }
-        out.push(format!(
-            "note: you retired this key on {} -- re-adding it puts it back in service",
-            r.retired_at
-        ));
-        let k = sign.clone();
-        c.retired.remove(&k);
-    }
-    // An explicit add is a later decision than a decline, so it overrides
-    // it -- but it says so. A human who declined this key last week and is
-    // now adding it should see that, because the ordinary cause of adding a
-    // key you refused is being asked twice by something that wants in.
-    if let Some(d) = c.declined.remove(&sign) {
-        out.push(format!(
-            "note: you declined this key on {} -- adding it now reverses that",
-            d.at
-        ));
-    }
-    c.keys.insert(sign.clone(), name.to_string());
-    match &boxpub {
-        Some(b) => {
-            c.box_keys.insert(sign, b.clone());
-            out.push(format!("added {name} (verify + encrypt)"));
-        }
-        None => out.push(format!(
-            "added {name} (verify only -- no encryption key, so you cannot seal to them)"
-        )),
-    }
-    c.save().map_err(|e| e.to_string())?;
-    // Shown AFTER the add, not before, because this is the step where a
-    // person checks they added the key they meant to. An out-of-band
-    // confirmation is the only thing that makes a key belong to a person, and
-    // it is a great deal easier to do when the thing being compared can be
-    // read aloud.
-    // Both halves. The value a person is asked to confirm has to cover the
-    // encryption key too, or an attacker substitutes the half nobody checks
-    // and the comparison passes while they read everything.
-    let words = c
-        .key_for_name(name)
-        .map(|k| crate::words::fingerprint_of(&k, c.box_keys.get(&k).map(|s| s.as_str())));
-    if let Some(w) = words {
-        out.push(String::new());
-        out.push(format!("  this key says : {w}"));
-        out.push(format!(
-            "  Check that with {name} over a channel that is not this one."
-        ));
-        out.push("  If their machine says anything else, you have the wrong key.".to_string());
-    }
-    Ok(out)
 }

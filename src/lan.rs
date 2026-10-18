@@ -298,36 +298,35 @@ pub fn nearby(
     let mut last_shout = std::time::Instant::now() - Duration::from_secs(10);
 
     while std::time::Instant::now() < deadline {
-        if announce {
-            if let Some(id) = id {
-                if last_shout.elapsed() >= Duration::from_secs(2) {
-                    let p = sign_packet(
-                        id,
-                        Packet {
-                            t: "announce".into(),
-                            handle: id.handle.clone(),
-                            sign: id.public_b64(),
-                            boxpub: id.box_public_b64(),
-                            port: listen_port,
-                            at: now(),
-                            want: String::new(),
-                            nonce: String::new(),
-                            sig: String::new(),
-                        },
-                    );
-                    let body = serde_json::to_vec(&p).unwrap_or_default();
-                    // A failed broadcast is not fatal: a machine with no
-                    // route for 255.255.255.255 can still be the one that
-                    // LISTENS while the other announces.
-                    // A failure on one destination is not a failure: the
-                    // whole point of having two is that a platform refuses
-                    // one of them.
-                    for d in bcast_targets() {
-                        let _ = sock.send_to(&body, (d.as_str(), announce_dest()));
-                    }
-                    last_shout = std::time::Instant::now();
-                }
+        if announce
+            && let Some(id) = id
+            && last_shout.elapsed() >= Duration::from_secs(2)
+        {
+            let p = sign_packet(
+                id,
+                Packet {
+                    t: "announce".into(),
+                    handle: id.handle.clone(),
+                    sign: id.public_b64(),
+                    boxpub: id.box_public_b64(),
+                    port: listen_port,
+                    at: now(),
+                    want: String::new(),
+                    nonce: String::new(),
+                    sig: String::new(),
+                },
+            );
+            let body = serde_json::to_vec(&p).unwrap_or_default();
+            // A failed broadcast is not fatal: a machine with no
+            // route for 255.255.255.255 can still be the one that
+            // LISTENS while the other announces.
+            // A failure on one destination is not a failure: the
+            // whole point of having two is that a platform refuses
+            // one of them.
+            for d in bcast_targets() {
+                let _ = sock.send_to(&body, (d.as_str(), announce_dest()));
             }
+            last_shout = std::time::Instant::now();
         }
         let mut buf = [0u8; MAX_PACKET];
         let Ok((n, from)) = sock.recv_from(&mut buf) else {
@@ -337,10 +336,10 @@ pub fn nearby(
         if p.t != "announce" {
             continue;
         }
-        if let Some(id) = id {
-            if p.sign == id.public_b64() {
-                continue; // our own broadcast, come back around
-            }
+        if let Some(id) = id
+            && p.sign == id.public_b64()
+        {
+            continue; // our own broadcast, come back around
         }
         let seen = Seen {
             handle: p.handle,
@@ -918,22 +917,22 @@ pub fn run(port: u16) -> std::io::Result<()> {
         }
 
         let mut buf = [0u8; MAX_PACKET];
-        if let Ok((n, from)) = sock.recv_from(&mut buf) {
-            if let Some(p) = parse(&buf[..n]) {
-                if p.t == "announce" && p.sign != me {
-                    let e = NearbyEntry {
-                        label: crate::words::label(&p.sign),
-                        handle: p.handle.clone(),
-                        sign: p.sign.clone(),
-                        boxpub: p.boxpub.clone(),
-                        addr: format!("{}:{}", from.ip(), p.port),
-                        at: now(),
-                    };
-                    match seen.iter().position(|x| x.sign == e.sign) {
-                        Some(i) => seen[i] = e,
-                        None => seen.push(e),
-                    }
-                }
+        if let Ok((n, from)) = sock.recv_from(&mut buf)
+            && let Some(p) = parse(&buf[..n])
+            && p.t == "announce"
+            && p.sign != me
+        {
+            let e = NearbyEntry {
+                label: crate::words::label(&p.sign),
+                handle: p.handle.clone(),
+                sign: p.sign.clone(),
+                boxpub: p.boxpub.clone(),
+                addr: format!("{}:{}", from.ip(), p.port),
+                at: now(),
+            };
+            match seen.iter().position(|x| x.sign == e.sign) {
+                Some(i) => seen[i] = e,
+                None => seen.push(e),
             }
         }
 

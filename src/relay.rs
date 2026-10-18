@@ -230,6 +230,9 @@ fn key_to_dirname(k: &str) -> Option<String> {
     Some(k.replace('/', "_").replace('+', "-").replace('=', ""))
 }
 
+// The default-limits entry point, kept beside `serve_with` so a caller that
+// wants no opinion on limits has one.
+#[allow(dead_code)]
 pub fn serve(bind: &str, root: PathBuf) -> std::io::Result<()> {
     serve_with(bind, root, Limits::default())
 }
@@ -682,7 +685,7 @@ fn do_register(stream: TcpStream, body: &[u8]) -> std::io::Result<()> {
                 .get(&key)
                 .filter(|(_, at)| at.elapsed() < std::time::Duration::from_secs(600))
                 .map(|(n, _)| n.clone());
-            let Some(nonce) = fresh.or_else(|| Some(new_nonce()?)) else {
+            let Some(nonce) = fresh.or_else(new_nonce) else {
                 return reply(
                     stream,
                     "500 Internal Server Error",

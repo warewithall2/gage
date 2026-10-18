@@ -172,10 +172,10 @@ pub fn decide(
     // shape of an attempt to mint a bucket, and `state::thread_claim` already
     // treats such a claim as not joining the thread. There is no legitimate
     // sender that does this: `gage reply` and `--reply-to` both inherit.
-    if let Some(claimed) = m.thread.as_deref() {
-        if claimed != parent.thread {
-            return Decision::ThreadClaimDisagreesWithParent;
-        }
+    if let Some(claimed) = m.thread.as_deref()
+        && claimed != parent.thread
+    {
+        return Decision::ThreadClaimDisagreesWithParent;
     }
     // The budget's key is read out of the receiver's own `sent/`, never off
     // the wire. This is the fix for the hole a reviewer found: keying on

@@ -464,6 +464,9 @@ pub struct Problem {
 /// Returns how many were removed. The checkpoint is written as part of the
 /// same rewrite, under the journal lock, so there is no moment where the
 /// file is short its history and short the record of that too.
+// Journal maintenance, not yet wired to a command; removing it would discard
+// the locking rationale documented above.
+#[allow(dead_code)]
 pub fn prune(keep: usize) -> std::io::Result<usize> {
     let p = path();
     let _guard = crate::state::take_lock(&p)?;
@@ -631,13 +634,13 @@ pub fn verify() -> Report {
                          removed or reordered",
                     ))
                 };
-                if let Some((expect, why)) = want {
-                    if *link != expect {
-                        out.push(Problem {
-                            line: no,
-                            what: why.to_string(),
-                        });
-                    }
+                if let Some((expect, why)) = want
+                    && *link != expect
+                {
+                    out.push(Problem {
+                        line: no,
+                        what: why.to_string(),
+                    });
                 }
                 started = true;
                 r.chained += 1;
@@ -645,16 +648,16 @@ pub fn verify() -> Report {
         }
         // The index is independent evidence and costs nothing to check: a
         // deletion that someone bothered to re-link still leaves a gap here.
-        if let Some(prev_n) = last_n {
-            if e.n != prev_n + 1 {
-                out.push(Problem {
-                    line: no,
-                    what: format!(
-                        "index jumps from {prev_n} to {} -- an entry is missing",
-                        e.n
-                    ),
-                });
-            }
+        if let Some(prev_n) = last_n
+            && e.n != prev_n + 1
+        {
+            out.push(Problem {
+                line: no,
+                what: format!(
+                    "index jumps from {prev_n} to {} -- an entry is missing",
+                    e.n
+                ),
+            });
         }
         last_n = Some(e.n);
     }

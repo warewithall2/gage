@@ -481,6 +481,11 @@ fn register_with_proof(
 #[cfg(unix)]
 unsafe fn libc_signal_default() {
     unsafe extern "C" {
+        // `handler` is a usize here because this call passes SIG_DFL (0), while
+        // src/lan.rs declares the same symbol taking a function pointer. Both are
+        // pointer-sized and both work; unifying them means touching signal setup,
+        // which is a behaviour change rather than a lint fix. See the report.
+        #[allow(clashing_extern_declarations)]
         fn signal(sig: i32, handler: usize) -> usize;
     }
     const SIGPIPE: i32 = 13;
@@ -1062,19 +1067,19 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 )
                 .into());
             }
-            if let Some(other) = c.name_for(&v.new_sign) {
-                if other != name {
-                    // `keys.insert` overwrites by key, so the other contact
-                    // simply vanished -- no message, and their bundles then
-                    // opened under this contact's name with a NAME MISMATCH.
-                    return Err(format!(
-                        "NOT APPLIED: that new key is already on your list as {other}. \
+            if let Some(other) = c.name_for(&v.new_sign)
+                && other != name
+            {
+                // `keys.insert` overwrites by key, so the other contact
+                // simply vanished -- no message, and their bundles then
+                // opened under this contact's name with a NAME MISMATCH.
+                return Err(format!(
+                    "NOT APPLIED: that new key is already on your list as {other}. \
                          Applying this would replace {other} with {name} on the same \
                          key and lose {other} entirely. Two contacts cannot share a \
                          signing key: confirm with both which of them holds it."
-                    )
-                    .into());
-                }
+                )
+                .into());
             }
             let compromised = v.claim.reason == "compromised";
             // The cutoff is MY clock, at the moment I accept. Whoever wrote
@@ -2032,10 +2037,10 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             loop {
                 // Pull before counting, so arrivals are collected and then
                 // announced once, rather than announced and collected later.
-                if remote::relay_addr().is_some() {
-                    if let Err(e) = pull_inner(false, true) {
-                        eprintln!("gage watch: pull failed: {e}");
-                    }
+                if remote::relay_addr().is_some()
+                    && let Err(e) = pull_inner(false, true)
+                {
+                    eprintln!("gage watch: pull failed: {e}");
                 }
                 // Date the arrivals before anything acts on them. Without
                 // this, a watcher that auto-accepts wrote an `accepted`

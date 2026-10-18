@@ -169,7 +169,7 @@ impl Authority {
         if trust != crate::trust::Trust::Known {
             return Err(Denied::NotVerified);
         }
-        if let Some(_) = &self.error {
+        if self.error.is_some() {
             return Err(Denied::Unreadable);
         }
         if !self.present {

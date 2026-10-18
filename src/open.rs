@@ -112,7 +112,7 @@ pub fn render(l: &Loaded, reveal: bool) -> Result<String, String> {
             s.push_str(&format!(
                 "  sender     : {} (key {}…)\n",
                 nm,
-                &m.from.key.chars().take(12).collect::<String>()
+                m.from.key.chars().take(12).collect::<String>()
             ));
             s.push_str(&format!(
                 "  note       : the bundle calls itself \"{}\", which is this key's\n\
@@ -125,7 +125,7 @@ pub fn render(l: &Loaded, reveal: bool) -> Result<String, String> {
             s.push_str(&format!(
                 "  sender     : {} (key {}…)\n",
                 nm,
-                &m.from.key.chars().take(12).collect::<String>()
+                m.from.key.chars().take(12).collect::<String>()
             ));
             s.push_str(&format!(
                 "  !! NAME MISMATCH: this key is {nm} on your list, but the bundle\n\
@@ -141,7 +141,7 @@ pub fn render(l: &Loaded, reveal: bool) -> Result<String, String> {
             s.push_str(&format!(
                 "  sender     : {} (key {}…), name confirmed against your list\n",
                 nm,
-                &m.from.key.chars().take(12).collect::<String>()
+                m.from.key.chars().take(12).collect::<String>()
             ));
         }
         None => {
@@ -149,7 +149,7 @@ pub fn render(l: &Loaded, reveal: bool) -> Result<String, String> {
                 "  sender     : key {}… , not on your list. It CLAIMS the name\n\
                  \x20              \"{}\", which is unverified text the sender chose\n\
                  \x20              and must not be used to identify them.\n",
-                &m.from.key.chars().take(12).collect::<String>(),
+                m.from.key.chars().take(12).collect::<String>(),
                 m.from.handle
             ));
         }
@@ -180,7 +180,7 @@ pub fn render(l: &Loaded, reveal: bool) -> Result<String, String> {
                  \x20              of all. Judge this on the SENDER, who signed it. If\n\
                  \x20              the authorship matters, ask the named author.\n",
                 shown,
-                &a.key.chars().take(12).collect::<String>(),
+                a.key.chars().take(12).collect::<String>(),
                 m.chain.len().saturating_sub(1)
             ));
         }
