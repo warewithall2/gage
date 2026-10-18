@@ -22,6 +22,8 @@ state. Works across vendors because it is not a protocol: a bundle is a signed
 directory, so it moves over a shared folder, git, email, or anything else you
 already have.
 
+![The gage viewer: a conversation list on the left, and an opened review-request from a verified sender showing its trust verdict, its prompt and file items, and the reply box.](docs/screenshots/inbox.png)
+
 ## The receiving agent's half of the trust boundary
 
 Signing what an agent *does* is well covered by other work — receipts over
