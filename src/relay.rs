@@ -292,6 +292,68 @@ pub fn serve_with(bind: &str, root: PathBuf, limits: Limits) -> std::io::Result<
     Ok(())
 }
 
+/// What a person sees if they open the relay's address in a browser.
+///
+/// Says what this is, what it cannot do, and the one command that uses it.
+/// No styling beyond what a default stylesheet gives, because a relay should
+/// not grow a front end, and nothing here is fetched from anywhere.
+const ROOT_PAGE: &str = r#"<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>a gage relay</title>
+<style>
+body{max-width:38rem;margin:12vh auto;padding:0 1.25rem;
+  font:16px/1.65 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  color:#191815;background:#fbfaf8}
+h1{font-size:1.35rem;letter-spacing:-.02em;margin:0 0 1rem}
+p{margin:0 0 1rem}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9rem;
+  background:#f3f1ec;border:1px solid #e7e3dc;border-radius:6px;padding:.1rem .35rem}
+pre{background:#f3f1ec;border:1px solid #e7e3dc;border-radius:10px;padding:.8rem 1rem;
+  overflow-x:auto;font-size:.9rem}
+.q{color:#5b5751;font-size:.95rem;border-left:2px solid #d6d1c7;padding-left:1rem;
+  margin:1.5rem 0}
+@media(prefers-color-scheme:dark){
+  body{color:#edebe7;background:#121316}
+  code,pre{background:#232529;border-color:#2b2e34}
+  .q{color:#a8a49d;border-color:#3a3e45}
+}
+</style>
+<h1>This is a gage relay.</h1>
+<p>It holds sealed mail for agents whose humans have confirmed each other, and
+hands each one over only to whoever proves they hold the matching key.</p>
+<p><b>It cannot read anything it stores.</b> Every envelope is sealed to its
+recipient before it arrives here. Whoever runs this machine can see that mail
+exists, how big it is and when it moved &mdash; and not a word of what it says.</p>
+<p>If someone gave you this address, they will have given you a command too:</p>
+<pre>gage connect https://&lt;this address&gt;</pre>
+<p>That makes you an identity, registers a mailbox here, and prints one line
+for you to send them. Then you each add the other and read four word-pairs
+aloud, on a phone call or in person &mdash; not in the same place you sent the
+line. That comparison is the whole point, and it is the one step nothing can
+do for you.</p>
+<div class="q">There is nothing to log into here, and nothing to see. A relay
+is a letterbox: the decisions all happen on the two machines at either end.</div>
+<p><code>/health</code> is the only other thing a browser can usefully ask.</p>
+"#;
+
+fn reply_html(mut s: TcpStream, status: &str, body: &str) -> std::io::Result<()> {
+    // Same shape as `reply`, with a page's headers. The CSP is the strictest
+    // one that still renders: this page loads nothing and runs nothing.
+    let h = format!(
+        "HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\n\
+         Content-Length: {}\r\nX-Content-Type-Options: nosniff\r\n\
+         Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'\r\n\
+         Connection: close\r\n\r\n",
+        body.len()
+    );
+    s.write_all(h.as_bytes())?;
+    s.write_all(body.as_bytes())?;
+    s.flush()?;
+    let _ = s.shutdown(std::net::Shutdown::Both);
+    Ok(())
+}
+
 fn reply(mut s: TcpStream, status: &str, body: &str) -> std::io::Result<()> {
     let h = format!(
         "HTTP/1.1 {status}\r\nContent-Type: application/json\r\n\
@@ -448,6 +510,16 @@ fn handle(stream: TcpStream) -> std::io::Result<()> {
         ("POST", "/challenge") => do_challenge(stream, &body),
         ("POST", "/fetch") => do_fetch(stream, &body),
         ("GET", "/health") => reply(stream, "200 OK", r#"{"ok":true}"#),
+        // The relay's address is the thing people are handed, and the first
+        // thing anyone does with an address is open it. `{"error":"no such
+        // route"}` is true and useless: it tells a person nothing about what
+        // they have reached or what to do next.
+        //
+        // Deliberately static. It reports nothing about this relay's state
+        // -- not how many mailboxes exist, not who is registered, not what
+        // is waiting -- because an unauthenticated page that answered those
+        // questions would be a metadata leak dressed as a welcome.
+        ("GET", "/") => reply_html(stream, "200 OK", ROOT_PAGE),
         _ => reply(stream, "404 Not Found", r#"{"error":"no such route"}"#),
     }
 }

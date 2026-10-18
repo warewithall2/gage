@@ -3166,6 +3166,25 @@ if [ -f "$T/rl3/store/owners.json.tmp" ]; then
 else ok; fi
 kill $rl3pid 2>/dev/null; wait $rl3pid 2>/dev/null
 
+# The relay's address is what people are handed, and the first thing anyone
+# does with an address is open it. `{"error":"no such route"}` is true and
+# useless. The page must also report NOTHING about this relay's state -- an
+# unauthenticated page answering "how many mailboxes" would be a metadata
+# leak dressed as a welcome.
+curl -s -m 8 "http://127.0.0.1:$RP/" > "$T/rl/root" 2>/dev/null
+want "$T/rl/root" "This is a gage relay"
+want "$T/rl/root" "cannot read anything it stores"
+want "$T/rl/root" "gage connect https://"
+# The one step nothing can do for you is named on the page a stranger reads.
+want "$T/rl/root" "read four word-pairs"
+# No counts, no keys, no names, and no script.
+if grep -qiE "[0-9]+ (mailbox|envelope|message)e?s|<script" "$T/rl/root"; then
+  bad "the relay's front page reports its own state"
+else ok; fi
+# And it is a page, not JSON pretending to be one.
+if curl -s -m 8 -D- -o /dev/null "http://127.0.0.1:$RP/" 2>/dev/null | grep -qi "content-type: text/html"; then ok
+else bad "the relay root is not served as html"; fi
+
 # A header line that never ends. `read_line` appends until a newline with no
 # limit of its own, and the socket timeout is per-READ, so a client that keeps
 # streaming bytes keeps every read succeeding while the buffer grows until the
