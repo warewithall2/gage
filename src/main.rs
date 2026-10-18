@@ -15,6 +15,7 @@ mod identity;
 mod journal;
 mod lan;
 mod manifest;
+mod mcp;
 mod notify;
 mod open;
 mod outbound;
@@ -67,6 +68,13 @@ enum Cmd {
         #[arg(long)]
         compromised: bool,
     },
+    /// Serve the Model Context Protocol on stdin/stdout, so an agent can call
+    /// gage as tools
+    ///
+    /// stdio only: no port, no listener, no network surface. Point an MCP host
+    /// at it -- `claude mcp add gage -- gage mcp`. See docs/mcp.md. Nothing is
+    /// printed except protocol messages, because stdout IS the protocol.
+    Mcp,
     /// Nothing to a first verified handoff, one step at a time
     ///
     /// Makes an identity if you have none, shows your word-pairs and the line
@@ -522,13 +530,78 @@ unsafe fn libc_signal_default() {
 /// collected differently from a manual pull would announce bundles the user
 /// could then not find.
 fn pull_once(keep: bool) -> Result<(), Box<dyn std::error::Error>> {
-    pull_inner(keep, false)
+    pull_inner(keep, false, None)
+}
+
+/// `gage_pull`, for the MCP server: the same pull, with its two stdout lines
+/// collected instead of printed. On a stdio transport stdout is the JSON-RPC
+/// channel, so printing there would corrupt the session. `fetch_mailbox`
+/// writes only to stderr, which is free.
+pub fn pull_for_mcp(say: &mut Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
+    pull_inner(false, true, Some(say))
+}
+
+/// `gage_push`, for the MCP server. Shares `push_core` with `gage push`, so
+/// the sealing and the relay call cannot drift between the two front doors.
+pub fn push_for_mcp(
+    dir: &std::path::Path,
+    to: &str,
+    say: &mut Vec<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let addr = remote::relay_addr().ok_or(
+        "no relay is set for this identity, so there is nowhere to push to.          Set one with `gage join <address>`, or hand the bundle directory over          yourself -- it is signed, and the transport is not trusted with anything.",
+    )?;
+    push_core(dir, to, &addr, say)
+}
+
+/// Seal a built bundle to a contact and hand it to the relay.
+fn push_core(
+    dir: &std::path::Path,
+    to: &str,
+    addr: &str,
+    say: &mut Vec<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let c = trust::Contacts::load();
+    let sign = match c.key_for_name(to) {
+        Some(k) => k,
+        None => {
+            return Err(match c.retired_by_name(to) {
+                Some((_, r)) => format!(
+                    "{to}'s key was retired on {}; add their current key before \
+                     pushing to them",
+                    r.retired_at
+                ),
+                None => format!("no contact named {to}"),
+            }
+            .into());
+        }
+    };
+    let boxpub = c
+        .box_keys
+        .get(&sign)
+        .ok_or(format!("{to} has no encryption key on file; re-add them"))?;
+    let env = seal::seal_dir(dir, boxpub)?;
+    let body = serde_json::json!({
+        "to_box": boxpub, "envelope": serde_json::to_string(&env)? })
+    .to_string();
+    let resp = remote::post(addr, "/send", &body)?;
+    say.push(format!("pushed to {to} via {addr}"));
+    say.push(format!("  {}", resp.trim()));
+    Ok(())
 }
 
 /// `quiet` suppresses the nothing-to-do line. A watcher polls on an interval,
 /// and a line per poll turns its journal into noise that hides the one entry
 /// that mattered.
-fn pull_inner(keep: bool, quiet: bool) -> Result<(), Box<dyn std::error::Error>> {
+fn pull_inner(
+    keep: bool,
+    quiet: bool,
+    mut say: Option<&mut Vec<String>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut emit = |s: String| match say.as_deref_mut() {
+        Some(v) => v.push(s),
+        None => println!("{s}"),
+    };
     let addr = remote::relay_addr().ok_or(
         "no relay is set for this identity, so there is nowhere to collect from.\n  \
          If you have one:        gage join <address>\n  \
@@ -575,10 +648,12 @@ fn pull_inner(keep: bool, quiet: bool) -> Result<(), Box<dyn std::error::Error>>
         }
     }
     if !saw_any && !quiet {
-        println!("nothing waiting on {addr}");
+        emit(format!("nothing waiting on {addr}"));
     }
     if total > 0 {
-        println!("\n{total} bundle(s) in inbox/pending -- gage inbox, then accept or reject");
+        emit(format!(
+            "\n{total} bundle(s) in inbox/pending -- gage inbox, then accept or reject"
+        ));
     }
     Ok(())
 }
@@ -804,6 +879,9 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             eprintln!("  When you pair with another machine, both screens must show");
             eprintln!("  the same four pairs. The short label is only for telling");
             eprintln!("  devices apart in a list -- never confirm against it alone.");
+        }
+        Cmd::Mcp => {
+            mcp::run()?;
         }
         Cmd::Quickstart => {
             quickstart::run().map_err(|e| std::io::Error::other(e.to_string()))?;
@@ -1381,23 +1459,31 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             model,
         } => {
             let targets = to.clone();
-            let m = send_bundle(SendArgs {
-                to,
-                subject,
-                out,
-                file,
-                prompt,
-                decision,
-                memory,
-                dir,
-                allow_secrets,
-                reply_to,
-                msg_type: r#type,
-                allow_findings,
-                lan,
-                agent,
-                model,
-            })?;
+            let mut say = Vec::new();
+            let m = send_bundle(
+                SendArgs {
+                    to,
+                    subject,
+                    out,
+                    file,
+                    prompt,
+                    decision,
+                    memory,
+                    dir,
+                    allow_secrets,
+                    reply_to,
+                    msg_type: r#type,
+                    allow_findings,
+                    lan,
+                    agent,
+                    model,
+                },
+                &mut say,
+            );
+            for l in &say {
+                println!("{l}");
+            }
+            let m = m?;
             if lan {
                 // Pushed from our own kept copy rather than the staging dir,
                 // which is the same bytes and is still there after the build.
@@ -1452,24 +1538,31 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 return Err("nothing to reply with: pass --text \"...\" or a file".into());
             }
             println!("replying to {} ({})", t.parent, t.to);
-            let r = send_bundle(SendArgs {
-                to: vec![t.to.clone()],
-                subject: subject.unwrap_or(t.subject),
-                out,
-                file,
-                prompt,
-                decision,
-                memory,
-                dir,
-                allow_secrets,
-                reply_to: Some(t.parent),
-                msg_type: r#type.unwrap_or(t.msg_type),
-                allow_findings,
-                lan: false,
-                agent,
-                model,
-            });
+            let mut say = Vec::new();
+            let r = send_bundle(
+                SendArgs {
+                    to: vec![t.to.clone()],
+                    subject: subject.unwrap_or(t.subject),
+                    out,
+                    file,
+                    prompt,
+                    decision,
+                    memory,
+                    dir,
+                    allow_secrets,
+                    reply_to: Some(t.parent),
+                    msg_type: r#type.unwrap_or(t.msg_type),
+                    allow_findings,
+                    lan: false,
+                    agent,
+                    model,
+                },
+                &mut say,
+            );
             let _ = std::fs::remove_dir_all(&tmp);
+            for l in &say {
+                println!("{l}");
+            }
             r?;
         }
         Cmd::Inspect { dir } => {
@@ -1591,32 +1684,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 vec![]
             };
             if json {
-                let rows: Vec<serde_json::Value> = pending
-                    .iter()
-                    .map(|(_, l)| {
-                        serde_json::json!({
-                            "stage": "pending",
-                            "id": l.manifest.id,
-                            "subject": l.manifest.subject,
-                            "from_handle_claimed": l.manifest.from.handle,
-                            "from_key": l.manifest.from.key,
-                            "trust": l.trust.label(),
-                            "forwarded": l.manifest.is_forwarded(),
-                            "prompts": l.manifest.prompt_count(),
-                            "items": l.manifest.items.len(),
-                            "tampered": l.tampered,
-                        })
-                    })
-                    .chain(accepted.iter().map(|(_, l)| {
-                        serde_json::json!({
-                            "stage": "accepted",
-                            "id": l.manifest.id,
-                            "subject": l.manifest.subject,
-                            "from_key": l.manifest.from.key,
-                            "trust": l.trust.label(),
-                        })
-                    }))
-                    .collect();
+                let rows = routes::inbox_rows(all);
                 println!("{}", serde_json::to_string_pretty(&rows)?);
             } else {
                 let contacts = trust::Contacts::load();
@@ -1889,32 +1957,12 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 }
                 return Ok(ExitCode::SUCCESS);
             }
-            let c = trust::Contacts::load();
-            let sign = match c.key_for_name(&to) {
-                Some(k) => k,
-                None => {
-                    return Err(match c.retired_by_name(&to) {
-                        Some((_, r)) => format!(
-                            "{to}'s key was retired on {}; add their current key before \
-                             pushing to them",
-                            r.retired_at
-                        ),
-                        None => format!("no contact named {to}"),
-                    }
-                    .into());
-                }
-            };
-            let boxpub = c
-                .box_keys
-                .get(&sign)
-                .ok_or(format!("{to} has no encryption key on file; re-add them"))?;
-            let env = seal::seal_dir(&dir, boxpub)?;
-            let body = serde_json::json!({
-                "to_box": boxpub, "envelope": serde_json::to_string(&env)? })
-            .to_string();
-            let resp = remote::post(&addr, "/send", &body)?;
-            println!("pushed to {to} via {addr}");
-            println!("  {}", resp.trim());
+            let mut say = Vec::new();
+            let r = push_core(&dir, &to, &addr, &mut say);
+            for l in &say {
+                println!("{l}");
+            }
+            r?;
         }
         Cmd::Pull { keep } => {
             pull_once(keep)?;
@@ -2093,7 +2141,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 // Pull before counting, so arrivals are collected and then
                 // announced once, rather than announced and collected later.
                 if remote::relay_addr().is_some()
-                    && let Err(e) = pull_inner(false, true)
+                    && let Err(e) = pull_inner(false, true, None)
                 {
                     eprintln!("gage watch: pull failed: {e}");
                 }

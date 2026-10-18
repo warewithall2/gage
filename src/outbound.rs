@@ -246,7 +246,23 @@ pub struct SendArgs {
     pub model: Option<String>,
 }
 
-pub fn send_bundle(a: SendArgs) -> Result<manifest::Manifest, Box<dyn std::error::Error>> {
+/// Build and deliver a bundle.
+///
+/// Human-facing lines are pushed into `say` rather than printed. Every caller
+/// prints them and still does, in the same place, so stdout is unchanged --
+/// the point is that `gage mcp` can hand the same lines to an agent as data,
+/// because on a stdio transport the server's own stdout IS the JSON-RPC
+/// channel and printing to it would corrupt the protocol.
+///
+/// The sink belongs to the caller, not the return value, because the skip
+/// report has to survive a later failure: "all 2 item(s) were skipped (listed
+/// above)" is only true if the caller printed the list before the error. A
+/// `Result` carrying the lines drops them on exactly the path that needs
+/// them most.
+pub fn send_bundle(
+    a: SendArgs,
+    say: &mut Vec<String>,
+) -> Result<manifest::Manifest, Box<dyn std::error::Error>> {
     let SendArgs {
         to,
         subject,
@@ -271,28 +287,28 @@ pub fn send_bundle(a: SendArgs) -> Result<manifest::Manifest, Box<dyn std::error
     // Skips are printed BEFORE the bundle is built, so a sender sees
     // what is not going out while they can still change their mind.
     if !c.skipped_secret.is_empty() {
-        println!("skipped (look like secrets, --allow-secrets to include):");
+        say.push("skipped (look like secrets, --allow-secrets to include):".to_string());
         for f in &c.skipped_secret {
-            println!("  {f}");
+            say.push(format!("  {f}"));
         }
     }
     if !c.skipped_link.is_empty() {
-        println!("skipped (symlinks -- a link's name says nothing about its target):");
+        say.push("skipped (symlinks -- a link's name says nothing about its target):".to_string());
         for f in &c.skipped_link {
-            println!("  {f}");
+            say.push(format!("  {f}"));
         }
     }
     if !c.skipped_big.is_empty() {
-        println!("skipped (over the per-item size limit):");
+        say.push("skipped (over the per-item size limit):".to_string());
         for f in &c.skipped_big {
-            println!("  {f}");
+            say.push(format!("  {f}"));
         }
     }
     if !c.skipped_dir.is_empty() {
         let mut d = c.skipped_dir.clone();
         d.sort();
         d.dedup();
-        println!("skipped build/cache dirs: {}", d.join(", "));
+        say.push(format!("skipped build/cache dirs: {}", d.join(", ")));
     }
     let routes = routes::Routes::load();
     let skipped = c.skipped_secret.len() + c.skipped_big.len() + c.skipped_link.len();
@@ -347,9 +363,9 @@ pub fn send_bundle(a: SendArgs) -> Result<manifest::Manifest, Box<dyn std::error
             return Err(lines.join("\n").into());
         }
         for l in &lines {
-            println!("{l}");
+            say.push(l.to_string());
         }
-        println!("  --allow-findings given: sending anyway");
+        say.push("  --allow-findings given: sending anyway".to_string());
     }
 
     let msg_type = manifest::MsgType::parse(&r#type).ok_or_else(|| {
@@ -396,22 +412,22 @@ pub fn send_bundle(a: SendArgs) -> Result<manifest::Manifest, Box<dyn std::error
             delivered.push(format!("{who} -> {}", dest.display()));
         }
     }
-    println!(
+    say.push(format!(
         "bundle {} [{}] -- {} item(s), {} bytes, signed by {}",
         m.id,
         m.msg_type.label(),
         m.items.len(),
         m.total_bytes(),
         id.handle
-    );
+    ));
     if m.memory_count() > 0 {
-        println!(
+        say.push(format!(
             "  {} MEMORY item(s): these persist in whoever accepts them",
             m.memory_count()
-        );
+        ));
     }
     for d in &delivered {
-        println!("  delivered {d}");
+        say.push(format!("  delivered {d}"));
     }
     let unrouted: Vec<String> = to
         .iter()
@@ -419,9 +435,12 @@ pub fn send_bundle(a: SendArgs) -> Result<manifest::Manifest, Box<dyn std::error
         .cloned()
         .collect();
     if !unrouted.is_empty() && !lan {
-        println!("  no local route for: {}", unrouted.join(", "));
-        println!("  bundle is at {} -- move it yourself, or", stage.display());
-        println!("  gage route <handle> <their-gage-home> to deliver automatically");
+        say.push(format!("  no local route for: {}", unrouted.join(", ")));
+        say.push(format!(
+            "  bundle is at {} -- move it yourself, or",
+            stage.display()
+        ));
+        say.push("  gage route <handle> <their-gage-home> to deliver automatically".to_string());
     }
 
     Ok(m)

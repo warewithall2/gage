@@ -569,7 +569,7 @@ fn first_observed(key: &str) -> Option<String> {
 /// * `relay` -- this machine is joined to a relay, so mail *can* be left for
 ///   them. It says nothing about whether they ever collect it, and the page
 ///   must not render it as presence.
-fn buddies_json() -> String {
+pub fn buddies_json() -> String {
     let observed = observed();
     let home = crate::identity::home();
     let contacts = crate::trust::Contacts::load();
@@ -872,26 +872,33 @@ fn send_from_ui(raw: &[u8]) -> Result<Vec<String>, (&'static str, String)> {
             std::fs::write(&p, &bytes).map_err(|e| ("500 Internal Server Error", e.to_string()))?;
             paths.push(p);
         }
-        let m = crate::outbound::send_bundle(crate::outbound::SendArgs {
-            to: vec![to.clone()],
-            subject: subject.clone(),
-            out: None,
-            file: paths,
-            prompt: vec![],
-            decision: vec![],
-            memory: vec![],
-            dir: vec![],
-            allow_secrets: false,
-            reply_to: None,
-            msg_type: msg_type.clone(),
-            // Not settable from here, on purpose. A finding is a reason to go
-            // back to the terminal and look, not a checkbox.
-            allow_findings: false,
-            lan: true,
-            agent: None,
-            model: None,
-        })
-        .map_err(|e| ("400 Bad Request", e.to_string()))?;
+        let mut say = Vec::new();
+        let m = crate::outbound::send_bundle(
+            crate::outbound::SendArgs {
+                to: vec![to.clone()],
+                subject: subject.clone(),
+                out: None,
+                file: paths,
+                prompt: vec![],
+                decision: vec![],
+                memory: vec![],
+                dir: vec![],
+                allow_secrets: false,
+                reply_to: None,
+                msg_type: msg_type.clone(),
+                // Not settable from here, on purpose. A finding is a reason to go
+                // back to the terminal and look, not a checkbox.
+                allow_findings: false,
+                lan: true,
+                agent: None,
+                model: None,
+            },
+            &mut say,
+        );
+        for l in &say {
+            println!("{l}");
+        }
+        let m = m.map_err(|e| ("400 Bad Request", e.to_string()))?;
         let from = crate::routes::sent_dir(&crate::identity::home()).join(&m.id);
         let mut out = vec![format!("bundle {} -- {} item(s)", m.id, m.items.len())];
         out.extend(crate::lan::hand_over(&from, &to).map_err(|e| ("502 Bad Gateway", e))?);
@@ -1210,24 +1217,31 @@ fn reply_from_ui(body: &str) -> Result<String, (&'static str, String)> {
 
     // Same path as the CLI, outbound scan included. A reply typed into a
     // browser gets exactly the checks a reply typed into a shell gets.
-    let r = crate::outbound::send_bundle(crate::outbound::SendArgs {
-        to: vec![t.to.clone()],
-        subject: t.subject,
-        out: None,
-        file: vec![],
-        prompt: vec![],
-        decision: vec![f],
-        memory: vec![],
-        dir: vec![],
-        allow_secrets: false,
-        reply_to: Some(t.parent),
-        msg_type: msg_type.unwrap_or(t.msg_type),
-        allow_findings: false,
-        lan: false,
-        agent: None,
-        model: None,
-    });
+    let mut say = Vec::new();
+    let r = crate::outbound::send_bundle(
+        crate::outbound::SendArgs {
+            to: vec![t.to.clone()],
+            subject: t.subject,
+            out: None,
+            file: vec![],
+            prompt: vec![],
+            decision: vec![f],
+            memory: vec![],
+            dir: vec![],
+            allow_secrets: false,
+            reply_to: Some(t.parent),
+            msg_type: msg_type.unwrap_or(t.msg_type),
+            allow_findings: false,
+            lan: false,
+            agent: None,
+            model: None,
+        },
+        &mut say,
+    );
     let _ = std::fs::remove_dir_all(&tmp);
+    for l in &say {
+        println!("{l}");
+    }
     match r {
         Ok(m) => Ok(m.id),
         // The scan refusing is the most likely failure and it is not a bug,

@@ -297,6 +297,44 @@ pub fn find_by_id(ctx_home: &std::path::Path, id: &str) -> Option<PathBuf> {
 }
 
 /// Bundles waiting in a stage, newest first.
+/// The rows `gage inbox --json` prints, so `gage mcp`'s inbox tool cannot
+/// drift from the CLI's. Verdicts included, payloads never.
+pub fn inbox_rows(all: bool) -> Vec<serde_json::Value> {
+    let me = crate::identity::home();
+    let pending = list(&pending_dir(&me));
+    let accepted = if all {
+        list(&accepted_dir(&me))
+    } else {
+        vec![]
+    };
+    pending
+        .iter()
+        .map(|(_, l)| {
+            serde_json::json!({
+                "stage": "pending",
+                "id": l.manifest.id,
+                "subject": l.manifest.subject,
+                "from_handle_claimed": l.manifest.from.handle,
+                "from_key": l.manifest.from.key,
+                "trust": l.trust.label(),
+                "forwarded": l.manifest.is_forwarded(),
+                "prompts": l.manifest.prompt_count(),
+                "items": l.manifest.items.len(),
+                "tampered": l.tampered,
+            })
+        })
+        .chain(accepted.iter().map(|(_, l)| {
+            serde_json::json!({
+                "stage": "accepted",
+                "id": l.manifest.id,
+                "subject": l.manifest.subject,
+                "from_key": l.manifest.from.key,
+                "trust": l.trust.label(),
+            })
+        }))
+        .collect()
+}
+
 pub fn list(stage: &std::path::Path) -> Vec<(String, crate::bundle::Loaded)> {
     let mut out = Vec::new();
     if let Ok(rd) = fs::read_dir(stage) {

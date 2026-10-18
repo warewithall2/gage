@@ -199,9 +199,14 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         agent: None,
         model: None,
     };
-    match crate::outbound::send_bundle(args) {
-        // `send_bundle` prints its own summary, including where the bundle
-        // landed, so repeating it here just said the same thing twice.
+    let mut say = Vec::new();
+    let sent = crate::outbound::send_bundle(args, &mut say);
+    for l in &say {
+        println!("{l}");
+    }
+    match sent {
+        // The summary `send_bundle` collected is printed above, so this does
+        // not restate where the bundle landed.
         Ok(_) => {
             println!();
             println!("  To get it to them, pick whichever you have:");
