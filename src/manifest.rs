@@ -316,6 +316,25 @@ fn is_frame_breaking(c: char) -> bool {
         || matches!(c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
 }
 
+/// A name, quoted so it survives being pasted into a shell.
+///
+/// `gage init` with no argument derives a handle from the key, and those are
+/// two words with a space in them -- so `connect` printed
+/// `gage add final canyon <key>`, which the first thing a new user is told to
+/// send to a colleague, and which fails with "unexpected argument" when they
+/// run it. Found by walking the documented path as a stranger.
+///
+/// Only quoted when it needs to be, so an ordinary name still reads as
+/// itself. Single quotes, with an embedded quote closed and reopened the
+/// POSIX way, because nothing inside single quotes needs further escaping.
+pub fn shell_word(s: &str) -> String {
+    let safe = |c: char| c.is_ascii_alphanumeric() || "-_./@+:=".contains(c);
+    if !s.is_empty() && s.chars().all(safe) {
+        return s.to_string();
+    }
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
 /// Render a sender-controlled string as exactly one line, visibly escaped.
 ///
 /// Used for every manifest string that `gage open` and `gage inspect` print.

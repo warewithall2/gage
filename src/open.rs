@@ -152,6 +152,26 @@ pub fn render(l: &Loaded, reveal: bool) -> Result<String, String> {
                 one_line(&m.from.key.chars().take(12).collect::<String>()),
                 one_line(&m.from.handle)
             ));
+            // The verdict said what IS; a reader new to this is left without
+            // what to DO. Both answers are a command, and the order matters:
+            // confirming comes before adding, because `gage add` on an
+            // unconfirmed key is the step that makes SENDER VERIFIED mean
+            // nothing later.
+            for line in [
+                "  what next  : nothing here is authorised, and you do not have to",
+                "               decide now -- the bundle has already arrived and",
+                "               reading it changes nothing. If you know who this is:",
+                "               ask them, over a channel that is not this one, to read",
+                "               you the four word-pairs their `gage whoami` shows. If",
+                "               they match the ones `gage add` prints, that key is",
+                "               theirs. If you do not know who it is, you can leave it",
+                "               or refuse it; refusing is a record, not a block.",
+                "                   gage add <a-name-for-them> <their-key>   -- after confirming",
+                "                   gage decline <their-key>                 -- stop being asked",
+            ] {
+                s.push_str(line);
+                s.push('\n');
+            }
         }
     }
     match m.author() {

@@ -329,6 +329,24 @@ impl Identity {
     pub fn load() -> std::io::Result<Self> {
         let dir = home();
         let kp = dir.join("identity.key");
+        // Said here rather than at each caller, because every command that
+        // needs an identity reaches this line and the bare io error -- "No
+        // such file or directory (os error 2)" -- was what a brand-new user
+        // got from their first `gage send`. It names no file and no next
+        // step, and reads as a broken tool rather than as a missing setup
+        // step. Found by walking the documented path from an empty home.
+        if !kp.exists() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!(
+                    "you have no gage identity yet ({} does not exist).\n  \
+                     Make one with:  gage init <a-name-for-yourself>\n  \
+                     Or `gage connect` to make one and print the line you send \
+                     a colleague.",
+                    kp.display()
+                ),
+            ));
+        }
         let raw = fs::read_to_string(&kp)?;
         let handle = fs::read_to_string(dir.join("handle"))
             .unwrap_or_else(|_| "unknown".into())

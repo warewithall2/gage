@@ -31,7 +31,7 @@ mod ui;
 mod words;
 
 use clap::{Parser, Subcommand};
-use manifest::one_line;
+use manifest::{one_line, shell_word};
 use outbound::{SendArgs, all_manifests, resolve_reply, send_bundle};
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -521,7 +521,13 @@ fn pull_once(keep: bool) -> Result<(), Box<dyn std::error::Error>> {
 /// and a line per poll turns its journal into noise that hides the one entry
 /// that mattered.
 fn pull_inner(keep: bool, quiet: bool) -> Result<(), Box<dyn std::error::Error>> {
-    let addr = remote::relay_addr().ok_or("no relay set; gage join <addr> first")?;
+    let addr = remote::relay_addr().ok_or(
+        "no relay is set for this identity, so there is nowhere to collect from.\n  \
+         If you have one:        gage join <address>\n  \
+         No relay? You do not need one -- hand the bundle directory over yourself \
+         and the other side runs `gage open <dir>`, or use `gage lan` if you are \
+         both on this network.",
+    )?;
     let id = identity::Identity::load()?;
     let mut total = 0;
     let mut saw_any = false;
@@ -1030,6 +1036,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                             with them directly and run: gage add <name> <newkey>"
                     .into());
             };
+            let q = shell_word(&name);
             if !v.old_signed {
                 // The whole point of the countersignature. Without it the
                 // notice is a stranger's assertion about your contact, and
@@ -1040,7 +1047,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     "NOT APPLIED: this notice is not countersigned by {name}'s current \
                      key, so nothing here shows that {name} authorised it. Confirm the \
                      new key with them over a channel that is not this one, then:\n  \
-                     gage retire {name} {}\n  gage add {name} {}",
+                     gage retire {q} {}\n  gage add {q} {}",
                     if v.claim.reason == "compromised" {
                         "--compromised"
                     } else {
@@ -1081,7 +1088,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                      retirement still stands, and bundles you had rejected would \
                      read as verified again. If you really mean to trust that key \
                      again, that is a decision to make by hand and in the open:\n  \
-                     gage add {name} {}",
+                     gage add {q} {}",
                     r.retired_at,
                     if r.compromised { " as COMPROMISED" } else { "" },
                     v.claim.new_key
@@ -1308,7 +1315,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                         r.retired_at,
                         if r.compromised { " as compromised" } else { "" }
                     ),
-                    None => format!("no contact named {to}; gage add {to} <key>"),
+                    None => format!("no contact named {to}; gage add {} <key>", shell_word(&to)),
                 }
                 .into());
             };
@@ -1793,7 +1800,11 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             let token = format!("{}.{}", id.public_b64(), id.box_public_b64());
             println!("Send this line to the person you want to exchange with:");
             println!();
-            println!("    gage add {} {}", id.handle, token);
+            println!(
+                "    gage add {} {}",
+                one_line(&shell_word(&id.handle)),
+                token
+            );
             println!();
             println!("Ask them for theirs, and run it. Then one thing is left, and it is");
             println!("the only part of this that cannot be done for you:");
@@ -1828,7 +1839,14 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             let addr = if lan {
                 "this network".to_string()
             } else {
-                remote::relay_addr().ok_or("no relay set; gage join <addr> first")?
+                remote::relay_addr().ok_or(
+                    "no relay is set for this identity, so there is nowhere to push to.\n  \
+                     If you have one:        gage join <address>\n  \
+                     No relay? You do not need one -- the bundle is already built; \
+                     hand that directory over yourself and they run \
+                     `gage open <dir>`, or send it with `gage send --lan` if you are \
+                     both on this network.",
+                )?
             };
             // The human gate on the way OUT, and it belongs HERE rather than
             // on `send`: `send` either delivers to a local route or writes a
@@ -2458,7 +2476,8 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             }
             println!();
             println!(
-                "paired. With `gage lan` running on both: gage send --to {name} --file <path> --lan"
+                "paired. With `gage lan` running on both: gage send --to {} --file <path> --lan",
+                shell_word(&name)
             );
         }
         Cmd::Listen { bind, port } => {
