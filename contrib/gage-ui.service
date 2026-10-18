@@ -1,0 +1,15 @@
+[Unit]
+Description=gage: serve the local viewer on 127.0.0.1
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/gage ui --port 7777
+Restart=on-failure
+RestartSec=5
+# It reads your gage home and serves it to loopback only; nothing leaves this machine.
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=default.target

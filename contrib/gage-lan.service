@@ -1,0 +1,15 @@
+[Unit]
+Description=gage: be visible, discoverable and reachable on this network
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/gage lan --port 7791
+Restart=on-failure
+RestartSec=5
+# It announces on this network and accepts bundles from it; nothing else.
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,15 @@
+[Unit]
+Description=gage: pull from the relay and notify on new bundles
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/gage watch --every 120
+Restart=on-failure
+RestartSec=5
+# It reads your gage home and talks to the relay; nothing else.
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=default.target

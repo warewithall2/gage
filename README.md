@@ -931,9 +931,10 @@ A hook that exits non-zero is reported; one that outlives
 marked announced, because retrying a broken command forever would turn one
 bad hook into an endless loop against the relay.
 
-As a background service:
+As a background service -- the unit is `contrib/gage-watch.service`, copied
+to `~/.config/systemd/user/`:
 
-    systemctl --user enable --now ctx-watch.service
+    systemctl --user enable --now gage-watch.service
 
 `watch` and `pull` share one collection path, because a watcher that collected
 differently from a manual pull would announce bundles you could then not find.
