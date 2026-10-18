@@ -138,9 +138,10 @@
   <pre>cargo install gage</pre>
   <p class="note">Works anywhere Rust does, and is the route for any platform
   without a prebuilt binary. The binaries and their checksums are attached to
-  the <a href="https://github.com/warewithall2/gage/releases/tag/v0.1.0">v0.1.0
-  release</a> if you would rather fetch one by hand; that release has
-  <strong>Linux x86_64</strong> only, and a macOS ARM build is not in it yet.</p>
+  the <a href="https://github.com/warewithall2/gage/releases/latest">latest
+  release</a> if you would rather fetch one by hand and check it yourself —
+  <strong>linux-x86_64</strong> and <strong>darwin-arm64</strong>, with one
+  <code>SHA256SUMS</code> over both.</p>
 
   <h2>What it looks like</h2>
   <figure>
@@ -150,10 +151,27 @@
   </figure>
 
   <h2>Where it is</h2>
-  <p>v0.1.0, the first release. 110 unit tests and 724 adversarial checks pass, and the
-  full self-check — build, unit tests, attack suite, viewer end-to-end — is green. It is
-  early software, and the honest way to try it is the twenty-minute packet in the
+  <p>v0.2.0. 118 unit tests and 776 adversarial checks pass, along with the
+  identity restore drill and the viewer end-to-end suite. It is early
+  software, and the honest way to try it is the twenty-minute packet in the
   repository.</p>
+
+  <p><strong>0.2.0 fixes a security defect in <code>gage open</code></strong>,
+  the one part of gage that is a security control: a sender could get a line
+  of their own into the trust frame — including a forged authorisation line
+  carrying the frame's real marker. <strong>0.1.0 is affected and upgrading is
+  recommended.</strong> What it was, who could do it and how it is fixed are
+  in the
+  <a href="https://github.com/warewithall2/gage/blob/master/CHANGELOG.md">changelog</a>.
+  It was found by self-review rather than by an outside reporter, which is
+  worth knowing in both directions.</p>
+
+  <p>If you lose the key, that is no longer the end of the identity —
+  <code>gage export-identity</code> writes a passphrase-encrypted copy you
+  keep yourself. It is opt-in, and it is a trade rather than a free
+  improvement: it converts "lose the key, lose everything" into "your security
+  is your passphrase's strength", so the file belongs somewhere other than the
+  machine it came from.</p>
 
   <p>Two documents say what this actually is rather than what it hopes to be. The
   <a href="https://github.com/warewithall2/gage/blob/master/docs/spec.md">spec</a> is the
@@ -172,6 +190,6 @@
   </ul>
 
   <footer>
-    gage 0.1.0 · dual-licensed MIT or Apache-2.0 · no trackers and no scripts on this page
+    gage 0.2.0 · dual-licensed MIT or Apache-2.0 · no trackers and no scripts on this page
   </footer>
 </div>

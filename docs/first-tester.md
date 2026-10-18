@@ -26,13 +26,13 @@ one, they would have to tamper with the other too.
 
 Check the file matches:
 
-    sha256sum gage-0.1.0-linux-x86_64          # Linux
-    shasum -a 256 gage-0.1.0-darwin-arm64      # Mac
+    sha256sum gage-0.2.0-linux-x86_64          # Linux
+    shasum -a 256 gage-0.2.0-darwin-arm64      # Mac
 
 Compare that output to the line they sent. It must match exactly. Then:
 
-    chmod +x gage-0.1.0-*
-    mkdir -p ~/.local/bin && mv gage-0.1.0-* ~/.local/bin/gage
+    chmod +x gage-0.2.0-*
+    mkdir -p ~/.local/bin && mv gage-0.2.0-* ~/.local/bin/gage
     gage --version
 
 **On a Mac, the first run will be refused** with a dialog saying it cannot be
@@ -131,9 +131,6 @@ Opens a local page at `http://127.0.0.1:7777` showing your conversations and
 who is on your list. Nothing leaves your machine.
 
 ## 6. Optional: keep a copy of your key
-
-> Needs a build newer than 0.1.0. If `gage export-identity --help` says it is
-> not a command, your binary predates this and you can skip this section.
 
     gage export-identity --out ~/gage-backup
 
