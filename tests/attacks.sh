@@ -3601,6 +3601,122 @@ if [ "$PM" = 700 ]; then ok; else bad "a fresh home is mode ${PM:-unknown}, want
 KM=$(stat -c '%a' "$T/perm/identity.key" 2>/dev/null || stat -f '%Lp' "$T/perm/identity.key" 2>/dev/null)
 if [ "$KM" = 600 ]; then ok; else bad "identity.key is mode ${KM:-unknown}, wanted 600"; fi
 
+echo "--- an identity survives a lost disk, and the backup gives nothing away"
+
+# Encrypted identity backup. The point of the feature is that losing
+# identity.key stops being identity death; the point of these checks is that
+# it does not become a second, easier way to steal one.
+PASS='correct horse battery staple'
+CTX_HOME=$T/bk1 $CTX init bkalice >/dev/null 2>&1
+BKFP=$(CTX_HOME=$T/bk1 $CTX fingerprint 2>&1 | head -1)
+SEED=$(python3 -c "import json;print(json.load(open('$T/bk1/identity.key'))['sign_seed'])")
+BSEC=$(python3 -c "import json;print(json.load(open('$T/bk1/identity.key'))['box_secret'])")
+BKKEY=$(CTX_HOME=$T/bk1 $CTX whoami 2>/dev/null | cut -f2)
+
+printf '%s\n%s\n' "$PASS" "$PASS" | CTX_HOME=$T/bk1 $CTX export-identity --out "$T/bk.bak" >/dev/null 2>&1
+if [ -f "$T/bk.bak" ]; then ok; else bad "export wrote no file"; fi
+# 0600, like every other sensitive write in the tree.
+BM=$(stat -c '%a' "$T/bk.bak" 2>/dev/null || stat -f '%Lp' "$T/bk.bak" 2>/dev/null)
+if [ "$BM" = 600 ]; then ok; else bad "the backup is mode ${BM:-unknown}, wanted 600"; fi
+
+# Nothing in the file may be the secret, or say whose identity it is. A
+# leaked backup should cost the key and nothing more -- and it cannot cost
+# even that without the passphrase.
+for v in "$SEED" "$BSEC" "${BKKEY%%.*}" "${BKKEY##*.}" "bkalice"; do
+  wantno "$T/bk.bak" "$v"
+done
+# The header is readable on purpose: a reader has to know how to derive the
+# key before they can try, and hiding the parameters hides nothing.
+want "$T/bk.bak" "argon2id"
+want "$T/bk.bak" "xchacha20poly1305"
+
+# The disk dies.
+rm -rf "$T/bk1"
+printf '%s\n' "$PASS" | CTX_HOME=$T/bk1 $CTX restore-identity "$T/bk.bak" >/dev/null 2>&1
+code restore $? 0
+BKFP2=$(CTX_HOME=$T/bk1 $CTX fingerprint 2>&1 | head -1)
+if [ "$BKFP2" = "$BKFP" ]; then ok
+else bad "fingerprint changed across a restore: '$BKFP' -> '$BKFP2'"; fi
+KM=$(stat -c '%a' "$T/bk1/identity.key" 2>/dev/null || stat -f '%Lp' "$T/bk1/identity.key" 2>/dev/null)
+if [ "$KM" = 600 ]; then ok; else bad "restored identity.key is mode ${KM:-unknown}, wanted 600"; fi
+
+# And the restored identity is the same identity to somebody else -- which is
+# the only test that matters, because a fingerprint is just a hash of what we
+# wrote. A real signature, verified against a list bkbob built BEFORE the
+# restore, is the thing that proves nothing moved.
+CTX_HOME=$T/bk2 $CTX init bkbob >/dev/null 2>&1
+CTX_HOME=$T/bk2 $CTX add bkalice "$BKKEY" >/dev/null 2>&1
+BK2KEY=$(CTX_HOME=$T/bk2 $CTX whoami 2>/dev/null | cut -f2)
+CTX_HOME=$T/bk1 $CTX add bkbob "$BK2KEY" >/dev/null 2>&1
+printf 'signed after a restore\n' > "$T/bk.md"
+CTX_HOME=$T/bk1 $CTX send --to bkbob --subject "post-restore" --file "$T/bk.md" \
+  --out "$T/bk.bundle" >/dev/null 2>&1
+code restored-send $? 0
+CTX_HOME=$T/bk2 $CTX open "$T/bk.bundle" > "$T/bk.open" 2>&1
+code restored-open $? 0
+want "$T/bk.open" "SENDER VERIFIED"
+want "$T/bk.open" "signed after a restore"
+
+# A wrong passphrase, and a file altered since it was written, are one event
+# to Poly1305 and must both fail clean with nothing written.
+printf 'not the passphrase at all\n' | CTX_HOME=$T/bk3 $CTX restore-identity "$T/bk.bak" > "$T/bk.wrong" 2>&1
+code wrong-pass $? 1
+want "$T/bk.wrong" "Nothing has been changed"
+if [ -e "$T/bk3/identity.key" ]; then bad "a failed restore left an identity behind"; else ok; fi
+
+python3 - "$T" <<'PYBK'
+import base64, json, sys
+T = sys.argv[1]
+d = json.load(open(f"{T}/bk.bak"))
+raw = bytearray(base64.b64decode(d["ct"])); raw[9] ^= 0x01
+d["ct"] = base64.b64encode(bytes(raw)).decode()
+json.dump(d, open(f"{T}/bk.ct.bak", "w"))
+# The stated Argon2 cost, lowered. If the header were not authenticated this
+# would be a free downgrade: hand the file back cheap to crack.
+d2 = json.load(open(f"{T}/bk.bak")); d2["kdf"]["m"] = 8
+json.dump(d2, open(f"{T}/bk.hdr.bak", "w"))
+PYBK
+for f in bk.ct.bak bk.hdr.bak; do
+  printf '%s\n' "$PASS" | CTX_HOME=$T/bk4 $CTX restore-identity "$T/$f" >/dev/null 2>&1
+  code "tampered-$f" $? 1
+  if [ -e "$T/bk4/identity.key" ]; then bad "$f produced a partial restore"; else ok; fi
+done
+
+# Restoring over a live identity is refused by default, and the refusal must
+# not touch the key that is already there.
+LIVE=$(sha256sum "$T/bk1/identity.key" | cut -d' ' -f1)
+printf '%s\n' "$PASS" | CTX_HOME=$T/bk1 $CTX restore-identity "$T/bk.bak" > "$T/bk.occ" 2>&1
+code occupied $? 1
+want "$T/bk.occ" "already holds an identity"
+NOW=$(sha256sum "$T/bk1/identity.key" | cut -d' ' -f1)
+if [ "$NOW" = "$LIVE" ]; then ok; else bad "a refused restore altered the existing key"; fi
+
+# --replace still needs the word typed, and still keeps the old key.
+printf '%s\nnope\n' "$PASS" | CTX_HOME=$T/bk1 $CTX restore-identity "$T/bk.bak" --replace >/dev/null 2>&1
+code replace-unconfirmed $? 1
+NOW=$(sha256sum "$T/bk1/identity.key" | cut -d' ' -f1)
+if [ "$NOW" = "$LIVE" ]; then ok; else bad "an unconfirmed --replace altered the existing key"; fi
+printf '%s\nreplace\n' "$PASS" | CTX_HOME=$T/bk1 $CTX restore-identity "$T/bk.bak" --replace >/dev/null 2>&1
+code replace-confirmed $? 0
+if ls "$T/bk1"/identity.key.replaced.* >/dev/null 2>&1; then ok
+else bad "--replace deleted the previous key instead of moving it aside"; fi
+
+# Export refuses to write over a file that is already there: a backup you
+# still need is exactly the thing a second export would destroy.
+printf '%s\n%s\n' "$PASS" "$PASS" | CTX_HOME=$T/bk1 $CTX export-identity --out "$T/bk.bak" >/dev/null 2>&1
+code export-no-clobber $? 1
+# And there is nothing to export from an empty home.
+printf '%s\n%s\n' "$PASS" "$PASS" | CTX_HOME=$T/bk5 $CTX export-identity --out "$T/bk5.bak" >/dev/null 2>&1
+code export-no-identity $? 1
+# A short passphrase is refused, because this file's whole security is it.
+printf 'short\nshort\n' | CTX_HOME=$T/bk2 $CTX export-identity --out "$T/bk2.bak" >/dev/null 2>&1
+code export-short-pass $? 1
+if [ -e "$T/bk2.bak" ]; then bad "wrote a backup despite refusing the passphrase"; else ok; fi
+# Mistyped confirmation, too.
+printf '%s\nsomething else entirely\n' "$PASS" | CTX_HOME=$T/bk2 $CTX export-identity --out "$T/bk2.bak" >/dev/null 2>&1
+code export-mismatch $? 1
+if [ -e "$T/bk2.bak" ]; then bad "wrote a backup despite the passphrases not matching"; else ok; fi
+
 echo "a good bundle exits 0"
 CTX_HOME=$T/b $CTX open "$T/b1" >/dev/null 2>&1; code good $? 0
 

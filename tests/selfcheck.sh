@@ -83,6 +83,16 @@ ATT=$(bash tests/attacks.sh 2>&1 | tee -a "$LOG" | grep -E '[0-9]+ checks,' | ta
 printf '%s\n' "$ATT" | grep -q ', 0 failed' || fail "attack suite: ${ATT:-no result line}"
 NC=$(printf '%s' "$ATT" | sed -n 's/\([0-9]*\) checks.*/\1/p')
 
+# The decision record that chose encrypted backup asked for this by name:
+# "restore is tested, not just export." An export path that runs and a restore
+# path that does not is a backup that does not exist, and the day you find out
+# is the day you needed it. Its own stage rather than a line inside the attack
+# suite, so a failure here says which thing broke.
+say "identity restore drill..."
+DRILL=$(bash tests/restore-drill.sh 2>&1 | tee -a "$LOG" | grep -E 'restore drill:' | tail -1)
+printf '%s\n' "$DRILL" | grep -q ', 0 failed' || fail "identity restore drill: ${DRILL:-no result line}"
+ND=$(printf '%s' "$DRILL" | sed -n 's/restore drill: \([0-9]*\) checks.*/\1/p')
+
 # Optional, and skipping is not failing: it needs a browser.
 say "viewer end-to-end..."
 E2E=$(bash tests/ui-e2e.sh 2>&1 | tee -a "$LOG" | tail -1)
@@ -92,6 +102,6 @@ case "$E2E" in
   *)                   fail "viewer end-to-end: $E2E" ;;
 esac
 
-say "OK: $NC checks, $NU unit tests, viewer $E2ESTATE, at $HEAD"
-printf 'ok\t%s\t%s\t%s checks, %s unit tests, viewer %s\n' \
-  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$HEAD" "$NC" "$NU" "$E2ESTATE" > "$STATUS"
+say "OK: $NC checks, $NU unit tests, $ND restore-drill checks, viewer $E2ESTATE, at $HEAD"
+printf 'ok\t%s\t%s\t%s checks, %s unit tests, %s restore-drill checks, viewer %s\n' \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$HEAD" "$NC" "$NU" "$ND" "$E2ESTATE" > "$STATUS"
