@@ -1,0 +1,126 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>gage — hand context between agents</title>
+<meta name="description" content="Hand context between agents — files, prompts and decisions — with a trust boundary that survives the hop.">
+<style>
+  :root{
+    --bg:#fbfaf8; --sheet:#ffffff; --sunk:#f3f1ec; --line:#e7e3dc;
+    --fg:#191815; --dim:#5b5751; --faint:#8b867d;
+    --accent:#2c5a4d; --accent-soft:#e6eee9;
+    --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+    --shadow:0 1px 2px rgba(25,24,21,.04), 0 10px 28px -20px rgba(25,24,21,.30);
+  }
+  @media (prefers-color-scheme:dark){
+    :root:not([data-theme="light"]){
+      --bg:#121316; --sheet:#1b1d21; --sunk:#232529; --line:#2b2e34;
+      --fg:#edebe7; --dim:#a8a49d; --faint:#7a766f;
+      --accent:#86c7b1; --accent-soft:#1f2f2a;
+      --shadow:0 1px 2px rgba(0,0,0,.45), 0 12px 32px -22px rgba(0,0,0,.9);
+    }
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--fg);
+    font-family:var(--sans); line-height:1.6;
+    -webkit-text-size-adjust:100%;
+  }
+  .wrap{max-width:46rem; margin:0 auto; padding:4rem 16px 5rem}
+  h1{font-size:2.6rem; line-height:1.1; margin:0 0 .4rem; letter-spacing:-.02em}
+  .tag{font-size:1.15rem; color:var(--dim); margin:0 0 2.5rem}
+  h2{font-size:1.1rem; margin:2.75rem 0 .6rem; letter-spacing:.02em; text-transform:uppercase; color:var(--faint)}
+  p{margin:0 0 1rem}
+  a{color:var(--accent); text-decoration-thickness:1px; text-underline-offset:2px}
+  code,pre{font-family:var(--mono)}
+  pre{
+    background:var(--sunk); border:1px solid var(--line); border-radius:8px;
+    padding:.9rem 1rem; overflow-x:auto; font-size:.9rem; margin:0 0 1rem;
+  }
+  code:not(pre code){
+    background:var(--sunk); border:1px solid var(--line); border-radius:4px;
+    padding:.1em .35em; font-size:.88em;
+  }
+  .words{
+    background:var(--accent-soft); border-left:3px solid var(--accent);
+    border-radius:0 6px 6px 0; padding:.85rem 1rem; margin:0 0 1rem;
+    font-family:var(--mono); font-size:.9rem;
+  }
+  figure{margin:1.25rem 0 0}
+  img{
+    width:100%; height:auto; display:block;
+    border:1px solid var(--line); border-radius:10px; box-shadow:var(--shadow);
+  }
+  figcaption{font-size:.85rem; color:var(--faint); margin-top:.55rem}
+  ul{margin:0 0 1rem; padding-left:1.2rem}
+  li{margin:.3rem 0}
+  .links{display:flex; flex-wrap:wrap; gap:.6rem; margin:.25rem 0 1rem; padding:0; list-style:none}
+  .links a{
+    display:inline-block; padding:.45rem .9rem; border:1px solid var(--line);
+    border-radius:999px; background:var(--sheet); text-decoration:none;
+    font-size:.92rem; box-shadow:var(--shadow);
+  }
+  footer{
+    margin-top:3.5rem; padding-top:1.25rem; border-top:1px solid var(--line);
+    font-size:.86rem; color:var(--faint);
+  }
+  .note{font-size:.9rem; color:var(--dim)}
+</style>
+
+<div class="wrap">
+  <h1>gage</h1>
+  <p class="tag">Hand context between agents — files, prompts and decisions — with a trust boundary that survives the hop.</p>
+
+  <p>Your Claude hands a task to Codex. A colleague's agent sends you their project state.
+  Normally nothing on the receiving side says who wrote it, or whether it can be trusted.
+  gage wraps that handoff so the agent reading it is told who signed it, whether you have
+  ever confirmed that person, and that nothing inside carries any authority.</p>
+
+  <p>It works across vendors because it is not a protocol. A bundle is a signed directory,
+  so it moves over a shared folder, git, email, your own network, or a relay — anything you
+  already have.</p>
+
+  <h2>Keys, said out loud</h2>
+  <p>A gage is a pledge, and historically the glove thrown down to open a challenge.
+  Two people compare four word-pairs over a channel neither machine controls — a phone
+  call, in person — and everything downstream rests on that one human moment. The words
+  are derived from the signing key, so nobody picks their own, and two machines showing
+  the same words are holding the same key.</p>
+  <div class="words">this key says : humble pillar · ruddy lobster · marine armour · eastern dovecote</div>
+  <p class="note">Four pairs is 64 bits, and is what a person confirms. The single pair
+  shown as a label is 16 bits — enough to tell two machines apart in a list, never enough
+  to confirm anything against.</p>
+
+  <h2>Install</h2>
+  <pre>cargo install gage</pre>
+  <p>That works anywhere Rust does. A prebuilt <strong>Linux x86_64</strong> binary and its
+  checksum are attached to the
+  <a href="https://github.com/warewithall2/gage/releases/tag/v0.1.0">v0.1.0 release</a>;
+  a macOS ARM build is not in this release yet. Then:</p>
+  <pre>gage init your-name          # make your keypair
+gage whoami                  # the line you give a colleague
+gage lan                     # be reachable on this network</pre>
+
+  <h2>What it looks like</h2>
+  <figure>
+    <img src="screenshots/inbox.png" alt="The gage viewer: conversations on the left, a received bundle on the right with its trust verdict stated above the contents.">
+    <figcaption><code>gage ui</code> serves a local viewer on 127.0.0.1 — loopback only,
+    nothing leaves the machine. The verdict is the headline, not a caption.</figcaption>
+  </figure>
+
+  <h2>Where it is</h2>
+  <p>v0.1.0, the first release. 108 unit tests and 708 adversarial checks pass, and the
+  full self-check — build, unit tests, attack suite, viewer end-to-end — is green on the
+  commit this was released from. It is early software, and the honest way to try it is the
+  twenty-minute packet in the repository.</p>
+
+  <ul class="links">
+    <li><a href="https://github.com/warewithall2/gage">GitHub</a></li>
+    <li><a href="https://crates.io/crates/gage">crates.io</a></li>
+    <li><a href="https://docs.rs/gage">docs.rs</a></li>
+  </ul>
+
+  <footer>
+    gage 0.1.0 · dual-licensed MIT or Apache-2.0 · no trackers and no scripts on this page
+  </footer>
+</div>
