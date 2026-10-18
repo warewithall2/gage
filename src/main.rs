@@ -8,6 +8,7 @@
 
 mod authority;
 mod autoaccept;
+mod backup;
 mod bundle;
 mod collect;
 mod identity;
@@ -66,6 +67,28 @@ enum Cmd {
     },
     /// Your key history: what is current, what is retired
     Keys,
+    /// Write your identity to a passphrase-encrypted file you keep yourself
+    ///
+    /// Opt-in, and a real trade: it turns "lose the key, lose everything" into
+    /// "your security is your passphrase's strength". Keep the file somewhere
+    /// other than the machine it came from.
+    ExportIdentity {
+        /// Where to write it. Refuses to overwrite an existing file
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Restore an identity from a passphrase-encrypted backup
+    ///
+    /// Into a home with no identity. Shows the word-pair fingerprint of what
+    /// the backup holds before writing anything, so you can check it is the
+    /// identity you meant.
+    RestoreIdentity {
+        file: PathBuf,
+        /// Replace an identity that is already here. Asks you to type `replace`
+        /// as well, and moves the existing key aside rather than deleting it
+        #[arg(long)]
+        replace: bool,
+    },
     /// Check a contact's rotation notice, and apply it only if told to
     Keychange {
         file: PathBuf,
@@ -776,6 +799,12 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             eprintln!("  When you pair with another machine, both screens must show");
             eprintln!("  the same four pairs. The short label is only for telling");
             eprintln!("  devices apart in a list -- never confirm against it alone.");
+        }
+        Cmd::ExportIdentity { out } => {
+            backup::export(&out).map_err(std::io::Error::other)?;
+        }
+        Cmd::RestoreIdentity { file, replace } => {
+            backup::restore(&file, replace).map_err(std::io::Error::other)?;
         }
         Cmd::Rotate { compromised } => {
             let at = bundle::now_rfc3339();

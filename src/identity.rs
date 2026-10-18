@@ -445,6 +445,28 @@ impl Identity {
 /// of the old secrets. A half-written file there is not an inconvenience, it
 /// is a destroyed identity, so the new contents are complete on disk before
 /// anything replaces the old ones.
+/// The public halves an `identity.key` file describes, without installing it.
+///
+/// Exists for `gage restore-identity`, which has to show the word-pair
+/// fingerprint of what a backup holds BEFORE it writes anything -- so it
+/// cannot go through `Identity::load`, which reads the home it would be
+/// about to overwrite.
+pub fn public_halves_of(key_json: &str) -> Result<(String, String), String> {
+    let st: StoredKeys = serde_json::from_str(key_json).map_err(|_| {
+        "the key material in this backup is not in a form this gage knows".to_string()
+    })?;
+    let seed = b64_32(&st.sign_seed).map_err(|_| "the signing seed is not 32 bytes".to_string())?;
+    let bs =
+        b64_32(&st.box_secret).map_err(|_| "the encryption secret is not 32 bytes".to_string())?;
+    let sign = B64.encode(SigningKey::from_bytes(&seed).verifying_key().to_bytes());
+    let boxpub = B64.encode(
+        crypto_box::SecretKey::from_bytes(bs)
+            .public_key()
+            .as_bytes(),
+    );
+    Ok((sign, boxpub))
+}
+
 fn write_store(kp: &Path, st: &StoredKeys) -> std::io::Result<()> {
     let tmp = kp.with_extension("key.tmp");
     fs::write(&tmp, serde_json::to_vec_pretty(st)?)?;

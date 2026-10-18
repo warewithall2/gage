@@ -8,6 +8,14 @@ repository = "https://github.com/warewithall2/gage"
 homepage = "https://github.com/warewithall2/gage"
 
 [dependencies]
+# Identity backup, and nothing else. Both are pinned to the RustCrypto
+# generation `crypto_box` already pulls in (aead 0.5, poly1305 0.8, cipher
+# 0.4, blake2 0.10) rather than to the newest tag: the newer majors would put
+# a second version of each of those primitives in the binary, and for a
+# security feature one audited copy of each matters more than being current.
+# Five new crates in total, no primitive at two versions.
+argon2 = "0.5"
+chacha20poly1305 = "0.10"
 base64 = "0.23.1"
 clap = { version = "4.6.7", features = ["derive"] }
 crypto_box = { version = "0.9.1", features = ["seal", "rand_core"] }
