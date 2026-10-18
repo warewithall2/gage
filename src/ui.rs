@@ -1,4 +1,4 @@
-//! `countersign ui` -- a local viewer, bound to 127.0.0.1 only.
+//! `gage ui` -- a local viewer, bound to 127.0.0.1 only.
 //!
 //! This is the buddy-list window: who you trust, what is waiting, and what
 //! each bundle claims, with the trust verdict shown as prominently as the
@@ -6,14 +6,14 @@
 //! nobody looks at is not a control.
 //!
 //! It never renders payload contents. A page that pastes a stranger's prompt
-//! into a browser is a different risk surface, and `countersign open` is where
+//! into a browser is a different risk surface, and `gage open` is where
 //! content is meant to be read, inside its frame. What the browser may do is
 //! accept, reject, mark read, settle a thread, and write a reply -- the human
 //! gates this design is built around, plus the one thing a viewer could not
 //! do and still be an app.
 //!
 //! A reply from here is delivered to a LOCAL ROUTE only, and a push to a
-//! RELAY is still terminal-only behind `countersign push --yes`, because that
+//! RELAY is still terminal-only behind `gage push --yes`, because that
 //! confirmation is the last point at which a person sees what is leaving to a
 //! machine they cannot see.
 //!
@@ -242,15 +242,15 @@ pub fn serve(port: u16) -> std::io::Result<()> {
     // Loopback only, never 0.0.0.0. An inbox viewer on a laptop has no
     // business being reachable from the network it happens to be on.
     let listener = TcpListener::bind(("127.0.0.1", port))?;
-    println!("countersign ui on http://127.0.0.1:{port}  (ctrl-c to stop)");
+    println!("gage ui on http://127.0.0.1:{port}  (ctrl-c to stop)");
     for stream in listener.incoming() {
         match stream {
             Ok(s) => {
                 if let Err(e) = handle(s, port) {
-                    eprintln!("countersign ui: {e}");
+                    eprintln!("gage ui: {e}");
                 }
             }
-            Err(e) => eprintln!("countersign ui: accept failed: {e}"),
+            Err(e) => eprintln!("gage ui: accept failed: {e}"),
         }
     }
     Ok(())
@@ -434,7 +434,7 @@ fn handle(stream: TcpStream, port: u16) -> std::io::Result<()> {
 
 /// Who is on this network, as the page shows it.
 ///
-/// Read from the list `countersign lan` keeps rather than by sending anything: the
+/// Read from the list `gage lan` keeps rather than by sending anything: the
 /// viewer does not announce, and a page that could make a machine broadcast
 /// would be a way to make it visible without the person choosing to be.
 fn nearby_json() -> String {
@@ -842,7 +842,7 @@ fn pair_from_ui(body: &str) -> Result<Vec<String>, (&'static str, String)> {
     let e = crate::lan::lookup_nearby(&label)
         .ok_or(("404 Not Found", format!("{label} is not on this network now")))?;
     if crate::lan::now().saturating_sub(e.at) > 60 {
-        return Err(("409 Conflict", "that entry is stale -- is countersign lan still running?".into()));
+        return Err(("409 Conflict", "that entry is stale -- is gage lan still running?".into()));
     }
     // The page echoes back the fingerprint it displayed, and it has to be the
     // one this key actually renders. Not a security boundary on its own --
@@ -917,7 +917,7 @@ pub fn asked_pair(sign: &str) -> usize {
 /// Add a key the page is showing as a connection request.
 ///
 /// Three things are checked, and the first two are not security boundaries --
-/// the caller is local and could call `countersign add` directly. They catch the real
+/// the caller is local and could call `gage add` directly. They catch the real
 /// bug, which is a list that changed under the person between reading the
 /// words and clicking: a key that stopped being an open request, or a
 /// fingerprint that is no longer the one displayed.
@@ -991,7 +991,7 @@ fn connect_from_ui(body: &str) -> Result<Vec<String>, (&'static str, String)> {
         // `add_contact` already says "verify only". This adds the remedy,
         // which is the part a person cannot work out from the statement.
         out.push(
-            "to seal mail to them as well, get their `countersign whoami` token \
+            "to seal mail to them as well, get their `gage whoami` token \
              (signpub.boxpub) and add it over this entry, or pair on the network."
                 .to_string(),
         );
@@ -1032,7 +1032,7 @@ fn decline_from_ui(body: &str) -> Result<String, (&'static str, String)> {
 ///
 /// Routed recipients only. A bundle for someone with no local route would sit
 /// in the outbox looking sent, and the page cannot run the confirmation that
-/// `countersign push` exists to show -- so it says so instead of pretending.
+/// `gage push` exists to show -- so it says so instead of pretending.
 fn reply_from_ui(body: &str) -> Result<String, (&'static str, String)> {
     let v: serde_json::Value = serde_json::from_str(body)
         .map_err(|e| ("400 Bad Request", format!("unreadable request: {e}")))?;
@@ -1053,7 +1053,7 @@ fn reply_from_ui(body: &str) -> Result<String, (&'static str, String)> {
             "409 Conflict",
             format!(
                 "{} has no local route, so this reply cannot be delivered from here. \
-                 In a terminal: countersign reply {} --text \"...\" then countersign push <dir> --to {} --yes",
+                 In a terminal: gage reply {} --text \"...\" then gage push <dir> --to {} --yes",
                 t.to, thread, t.to
             ),
         ));
@@ -1100,7 +1100,7 @@ fn reply_from_ui(body: &str) -> Result<String, (&'static str, String)> {
 ///
 /// The viewer polls, so it cannot fail a request over this. For a while it
 /// only warned on stderr and served the verdicts anyway -- which was the same
-/// bug `countersign open` refuses to have, hidden better: the person reading verdicts
+/// bug `gage open` refuses to have, hidden better: the person reading verdicts
 /// is looking at the browser, not at the terminal the warning went to. A
 /// verdict computed from state that could not be refreshed can read milder
 /// than the truth (a retired key's bundle showing as "no record either way"
@@ -1111,7 +1111,7 @@ fn observed() -> bool {
     match crate::routes::observe_inbox() {
         Ok(_) => true,
         Err(e) => {
-            eprintln!("countersign ui: WARNING -- inbox not recorded ({e}); verdicts withheld");
+            eprintln!("gage ui: WARNING -- inbox not recorded ({e}); verdicts withheld");
             false
         }
     }
@@ -1272,7 +1272,7 @@ fn threads_json() -> String {
                     })
                 })
                 .collect();
-            // Who a reply would go to, worked out the same way `countersign reply`
+            // Who a reply would go to, worked out the same way `gage reply`
             // works it out: the newest message that is not yours, and the KEY
             // that signed it. The page shows the name but never decides from
             // it, and when the answer is "nobody" it says why rather than
@@ -1285,7 +1285,7 @@ fn threads_json() -> String {
                 serde_json::json!({ "can": false,
                     "why": format!("this thread has {} correspondents, so replying to \
                                     the thread does not say who to. Reply to one \
-                                    message from a terminal: countersign reply <message id>",
+                                    message from a terminal: gage reply <message id>",
                                    t.others.len()) })
             } else { match parent {
                 None => serde_json::json!({ "can": false,
@@ -1296,7 +1296,7 @@ fn threads_json() -> String {
                     Some(name) if routes.home_of(name).is_none() => serde_json::json!({
                         "can": false, "to": name,
                         "why": format!("{name} has no local route, so a reply has to go out \
-                                        through countersign push in a terminal") }),
+                                        through gage push in a terminal") }),
                     Some(_) if t.unverified.contains(&p.id) => serde_json::json!({
                         "can": false,
                         "why": "the newest message claims this thread while answering \
@@ -1537,7 +1537,7 @@ mod tests {
     #[test]
     fn a_failed_observation_withholds_the_verdict_instead_of_softening_it() {
         // The label is what the viewer shows in place of a verdict, and the
-        // one thing it must never be is a verdict. `countersign open` refuses to
+        // one thing it must never be is a verdict. `gage open` refuses to
         // print at all in this case; the viewer polls, so it says this.
         assert_eq!(
             verdict_label_for(false, crate::trust::Trust::Revoked),

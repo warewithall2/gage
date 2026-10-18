@@ -20,7 +20,7 @@ use std::time::{Duration, Instant};
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct LocalState {
-    /// Bundle ids that have been rendered by `countersign open`.
+    /// Bundle ids that have been rendered by `gage open`.
     #[serde(default)]
     pub read: BTreeSet<String>,
     /// thread id -> an explicit override, when someone closes a thread by
@@ -276,7 +276,7 @@ pub struct Thread {
 ///
 /// `thread` is a field the SENDER writes, and the grouper used to honour it
 /// outright. That let anyone who had seen one message of a conversation graft
-/// a bundle onto it: group by the claim, and `countersign reply` -- which picks the
+/// a bundle onto it: group by the claim, and `gage reply` -- which picks the
 /// newest message that is not yours -- would then resolve the recipient to
 /// the grafter instead of the person you were talking to. A sender-controlled
 /// field decided who your reply went to, in a codebase whose rule is that

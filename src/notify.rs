@@ -2,7 +2,7 @@
 //!
 //! Polling is the only option: a relay that pushes would have to hold an open
 //! connection per mailbox, and the agents are not processes that stay running
-//! anyway -- they are invoked. So `countersign watch` pulls on an interval and fires a
+//! anyway -- they are invoked. So `gage watch` pulls on an interval and fires a
 //! desktop notification when something genuinely new lands.
 //!
 //! "Genuinely new" means unread AND not previously announced. Without the
@@ -67,7 +67,7 @@ pub struct Pending {
     pub msg_type: String,
     pub subject: String,
     pub expects_reply: bool,
-    /// The sender's signing key, as `countersign whoami` prints it. Carried so the
+    /// The sender's signing key, as `gage whoami` prints it. Carried so the
     /// hook can be given it without re-deriving it from `from`, which is a
     /// contact name or a quoted claim and is not an identity.
     pub key: String,
@@ -100,7 +100,7 @@ pub fn new_arrivals() -> Vec<Pending> {
         if st.is_read(&m.id) || seen.iter().any(|x| *x == m.id) {
             continue;
         }
-        // The same lookup `countersign open` performs, on the same inputs. A
+        // The same lookup `gage open` performs, on the same inputs. A
         // reviewer was right that the old comment here -- "a hook can never
         // fire on an authority the reader was not shown" -- claimed more
         // than the code does: this is a fresh snapshot taken at poll time,
@@ -171,7 +171,7 @@ fn one_line(s: &str, max: usize) -> String {
 }
 
 /// Fire a desktop notification. Absence of a notifier is not an error: on a
-/// server there is no desktop, and `countersign watch` still has to work there.
+/// server there is no desktop, and `gage watch` still has to work there.
 pub fn desktop(title: &str, body: &str, urgent: bool) -> bool {
     let mut c = Command::new("notify-send");
     c.arg("--app-name=ctx")
@@ -312,7 +312,7 @@ mod tests {
 ///
 ///    Stated about this code rather than about the world, because a reviewer
 ///    was right that the stronger phrasing was false. The hook is handed
-///    `CTX_BUNDLE_ID` and can perfectly well run `countersign accept && countersign open`
+///    `CTX_BUNDLE_ID` and can perfectly well run `gage accept && gage open`
 ///    itself -- and for an agent loop, that is the point. What ctx guarantees
 ///    is that *nothing here* crosses the gate, so crossing it remains an act
 ///    the receiver's own hook performs, under its own name, with a journal

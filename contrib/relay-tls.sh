@@ -61,7 +61,7 @@ systemctl daemon-reload
 systemctl restart ctx-relay
 
 ufw allow 80/tcp  comment 'caddy http-01 challenge' >/dev/null 2>&1 || true
-ufw allow 443/tcp comment 'countersign relay over TLS' >/dev/null 2>&1 || true
+ufw allow 443/tcp comment 'gage relay over TLS' >/dev/null 2>&1 || true
 # The plaintext port is closed, not merely bypassed.
 ufw delete allow 7788/tcp >/dev/null 2>&1 || true
 
@@ -73,6 +73,6 @@ echo
 echo "checking from the outside:"
 curl -sS -m 20 "https://$NAME/health" && echo
 echo
-echo "Now tell people:  countersign connect https://$NAME"
+echo "Now tell people:  gage connect https://$NAME"
 echo "And on each machine that already uses the plaintext address:"
-echo "  countersign connect https://$NAME     # re-registers against the verified one"
+echo "  gage connect https://$NAME     # re-registers against the verified one"

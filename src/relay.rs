@@ -7,7 +7,7 @@
 //!
 //! The authentication detail that matters: a fetcher must PROVE key
 //! possession, not merely name a key. Naming is not proof, and anyone who can
-//! read a `countersign whoami` line knows your public key, so a name-only scheme
+//! read a `gage whoami` line knows your public key, so a name-only scheme
 //! would let a stranger drain your inbox. The relay issues a random challenge
 //! and requires an ed25519 signature over it.
 //!
@@ -17,7 +17,7 @@
 //!
 //! Registration used to be the one moment the relay took somebody's word --
 //! and the word it took was a PUBLIC value. A box key is what you hand out in
-//! a `countersign whoami` line, so anyone could register someone else's mailbox
+//! a `gage whoami` line, so anyone could register someone else's mailbox
 //! against their own signing key, before the owner got there. First
 //! registration wins, so the owner was then locked out permanently: they
 //! could never fetch, and mail pushed to them landed in a mailbox the squatter
@@ -243,7 +243,7 @@ pub fn serve_with(bind: &str, root: PathBuf, limits: Limits) -> std::io::Result<
         rate: HashMap::new(),
     });
     let l = TcpListener::bind(bind)?;
-    println!("countersign relay on {bind}, store at {}", root.display());
+    println!("gage relay on {bind}, store at {}", root.display());
     println!("  it cannot read what it stores; envelopes are sealed to recipients");
     println!(
         "  limits: {} MB and {} envelopes per mailbox, {} MB total, {} requests/min per address",

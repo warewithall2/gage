@@ -20,7 +20,7 @@
 //! There is deliberately **no standing announcement**. The README says "no
 //! server, no presence, no accounts", and a laptop broadcasting its handle
 //! and public key onto every café network it joins would have quietly made
-//! that false. So announcing is a time-boxed mode you ask for -- `countersign nearby
+//! that false. So announcing is a time-boxed mode you ask for -- `gage nearby
 //! --announce 60` shouts for a minute and stops -- and afterwards finding a
 //! paired machine is a *query* rather than a broadcast of your existence.
 //!
@@ -38,9 +38,9 @@
 //!
 //! | port     | who binds it            | what it is for               |
 //! |----------|-------------------------|------------------------------|
-//! | 7789/udp | `countersign nearby`            | pairing announcements        |
-//! | 7790/udp | `countersign listen`            | address queries, known keys only |
-//! | 7791/tcp | `countersign listen`            | a sealed envelope arriving   |
+//! | 7789/udp | `gage nearby`            | pairing announcements        |
+//! | 7790/udp | `gage listen`            | address queries, known keys only |
+//! | 7791/tcp | `gage listen`            | a sealed envelope arriving   |
 
 use crate::identity::Identity;
 use serde::{Deserialize, Serialize};
@@ -48,7 +48,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-/// Pairing announcements. Bound only while `countersign nearby` runs.
+/// Pairing announcements. Bound only while `gage nearby` runs.
 pub const ANNOUNCE_PORT: u16 = 7789;
 /// Address queries. Answered only for keys already on the list.
 pub const QUERY_PORT: u16 = 7790;
@@ -279,7 +279,7 @@ pub fn nearby(
         std::io::Error::new(
             e.kind(),
             format!(
-                "could not bind udp {ap} ({e}). Another countersign nearby is probably \
+                "could not bind udp {ap} ({e}). Another gage nearby is probably \
                  already running -- discovery wants one process per machine."
             ),
         )
@@ -477,22 +477,22 @@ fn answer_queries(listen_port: u16) -> std::io::Result<()> {
 pub fn listen(bind: &str, port: u16) -> std::io::Result<()> {
     let id = Identity::load()?;
     let l = TcpListener::bind((bind, port))?;
-    println!("countersign listen on {bind}:{port} (tcp) and 0.0.0.0:{} (udp queries)", query_bind());
+    println!("gage listen on {bind}:{port} (tcp) and 0.0.0.0:{} (udp queries)", query_bind());
     println!("  it answers a query only when the query is signed by a key on your list");
     println!("  an envelope that arrives lands in inbox/pending -- arrival is not consent");
     std::thread::spawn(move || {
         if let Err(e) = answer_queries(port) {
-            eprintln!("countersign listen: query responder stopped: {e}");
+            eprintln!("gage listen: query responder stopped: {e}");
         }
     });
     for s in l.incoming() {
         match s {
             Ok(s) => {
                 if let Err(e) = handle_inbound(s, &id) {
-                    eprintln!("countersign listen: {e}");
+                    eprintln!("gage listen: {e}");
                 }
             }
-            Err(e) => eprintln!("countersign listen: accept: {e}"),
+            Err(e) => eprintln!("gage listen: accept: {e}"),
         }
     }
     Ok(())
@@ -585,7 +585,7 @@ fn accept_envelope(body: &[u8], id: &Identity) -> Result<String, String> {
             .map(|l| l.trust.label().to_string())
             .unwrap_or_else(|e| format!("could not be read back: {e}"));
         Ok(format!(
-            "{}  {}  ({verdict}) -- countersign inbox, then accept or reject",
+            "{}  {}  ({verdict}) -- gage inbox, then accept or reject",
             loaded.manifest.id, loaded.manifest.subject
         ))
     };
@@ -724,7 +724,7 @@ mod tests {
 // One command, which is what was actually asked for
 // ---------------------------------------------------------------------------
 
-/// What `countersign lan` writes while it runs, so another terminal can send to a
+/// What `gage lan` writes while it runs, so another terminal can send to a
 /// name it saw on the list. Deleted on the way out, because a stale address
 /// is worse than no address: it would send a bundle to whoever holds that IP
 /// now.
@@ -771,7 +771,7 @@ pub fn lookup_nearby(name: &str) -> Option<NearbyEntry> {
         .map(|i| seen.into_iter().nth(i).unwrap())
 }
 
-/// `countersign lan`: visible, discoverable and reachable for exactly as long as this
+/// `gage lan`: visible, discoverable and reachable for exactly as long as this
 /// command is in the foreground.
 ///
 /// This is the shape the design doc argued itself out of and should not have.
@@ -812,7 +812,7 @@ pub fn run(port: u16) -> std::io::Result<()> {
     let my_label = crate::words::label(&me);
 
     let tcp = TcpListener::bind(("0.0.0.0", port))?;
-    println!("countersign lan -- you are \"{my_label}\" on this network");
+    println!("gage lan -- you are \"{my_label}\" on this network");
     println!("  visible and reachable while this runs, silent the moment you stop it");
     println!("  anything sent to you lands unread in inbox/pending");
     println!("  broadcasting to: {}", bcast_targets().join(", "));
@@ -824,16 +824,16 @@ pub fn run(port: u16) -> std::io::Result<()> {
             match s {
                 Ok(s) => {
                     if let Err(e) = handle_inbound(s, &rid) {
-                        eprintln!("countersign lan: {e}");
+                        eprintln!("gage lan: {e}");
                     }
                 }
-                Err(e) => eprintln!("countersign lan: accept: {e}"),
+                Err(e) => eprintln!("gage lan: accept: {e}"),
             }
         }
     });
     std::thread::spawn(move || {
         if let Err(e) = answer_queries(port) {
-            eprintln!("countersign lan: query responder stopped: {e}");
+            eprintln!("gage lan: query responder stopped: {e}");
         }
     });
 
@@ -849,7 +849,7 @@ pub fn run(port: u16) -> std::io::Result<()> {
         std::io::Error::new(
             e.kind(),
             format!(
-                "could not bind udp {} ({e}). Another countersign lan is already running on \
+                "could not bind udp {} ({e}). Another gage lan is already running on \
                  this machine.",
                 announce_bind()
             ),
@@ -917,7 +917,7 @@ pub fn run(port: u16) -> std::io::Result<()> {
         for e in &seen {
             let known = match c.name_for(&e.sign) {
                 Some(n) => format!("paired, on your list as {n}"),
-                None => "not paired -- countersign pair <name> to confirm its key".to_string(),
+                None => "not paired -- gage pair <name> to confirm its key".to_string(),
             };
             lines.push_str(&format!("  {}  at {}  ({known})\n", e.label, e.addr));
             lines.push_str(&format!(
@@ -927,7 +927,7 @@ pub fn run(port: u16) -> std::io::Result<()> {
         }
         if lines != shown {
             if lines.is_empty() {
-                println!("nobody else here yet. Run `countersign lan` on the other machine.");
+                println!("nobody else here yet. Run `gage lan` on the other machine.");
             } else {
                 print!("{lines}");
             }
@@ -968,11 +968,11 @@ fn ctrlc_remove(_path: std::path::PathBuf) -> std::io::Result<()> {
 
 /// Seal a built bundle and hand it to a machine on this network.
 ///
-/// Two ways to find them, and the first needs no pairing at all: if `countersign lan`
+/// Two ways to find them, and the first needs no pairing at all: if `gage lan`
 /// is running it has already written down who is here and where, so an
 /// unpaired device on the list can be sent to by its word-pair label.
 /// Failing that, a contact is found by the signed query, which works without
-/// `countersign lan` open but only for a key already on the other machine's list.
+/// `gage lan` open but only for a key already on the other machine's list.
 ///
 /// Returns the lines to show, because one of its callers is a web page.
 pub fn hand_over(dir: &std::path::Path, who: &str) -> Result<Vec<String>, String> {
@@ -994,12 +994,12 @@ pub fn hand_over(dir: &std::path::Path, who: &str) -> Result<Vec<String>, String
         Some(e) => {
             // An entry older than a minute is not an address any more: DHCP
             // moves on, and sending to whoever holds that IP now is a worse
-            // failure than refusing. `countersign lan` rewrites it every two seconds.
+            // failure than refusing. `gage lan` rewrites it every two seconds.
             let age = now().saturating_sub(e.at);
             if age > 60 {
                 return Err(format!(
                     "the entry for {who} is {age}s old, so it is not an address any more. \
-                     Is `countersign lan` still running on both machines?"
+                     Is `gage lan` still running on both machines?"
                 ));
             }
             if e.boxpub.is_empty() {
@@ -1017,7 +1017,7 @@ pub fn hand_over(dir: &std::path::Path, who: &str) -> Result<Vec<String>, String
             let sign = c.key_for_name(who).ok_or_else(|| {
                 format!(
                     "no machine called {who} on this network, and no contact by that name.\n  \
-                     Run `countersign lan` on both machines and use the word-pair it shows."
+                     Run `gage lan` on both machines and use the word-pair it shows."
                 )
             })?;
             let boxpub = c
@@ -1029,7 +1029,7 @@ pub fn hand_over(dir: &std::path::Path, who: &str) -> Result<Vec<String>, String
                 .map_err(|e| e.to_string())?
                 .ok_or_else(|| {
                     format!(
-                        "no answer from {who} on this network. They need `countersign lan` or `ctx \
+                        "no answer from {who} on this network. They need `gage lan` or `ctx \
                          listen` running, and you need to be on their list -- a query from \
                          a key they do not know is ignored, deliberately and silently."
                     )

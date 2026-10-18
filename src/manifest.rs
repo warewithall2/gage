@@ -39,7 +39,7 @@ pub enum ItemKind {
     File,
     /// Text written to steer a model. The dangerous kind: it is phrased as
     /// instructions, so it is the one a careless reader will obey. Marked
-    /// separately so `countersign open` can fence it louder.
+    /// separately so `gage open` can fence it louder.
     Prompt,
     /// A decision or finding the sender wants carried across. Material, but
     /// the part a human actually wants to read first.
@@ -50,7 +50,7 @@ pub enum ItemKind {
     /// prompt influences one turn; memory that gets merged influences every
     /// future session, after the human who approved it has stopped watching.
     /// Accepting memory is closer to editing your own configuration than to
-    /// reading a message, so `countersign open` fences it hardest and never suggests
+    /// reading a message, so `gage open` fences it hardest and never suggests
     /// merging it.
     Memory,
 }
@@ -214,7 +214,7 @@ impl Manifest {
 
     /// The id this content should have, recomputed from the manifest itself.
     ///
-    /// `id` is a field in a document the sender writes, and `countersign` computes it
+    /// `id` is a field in a document the sender writes, and `gage` computes it
     /// honestly -- but the format is public and anyone can write a client that
     /// does not. That matters because the id is load-bearing locally: it is
     /// the directory name under `pending/`, the dedup key when threads are

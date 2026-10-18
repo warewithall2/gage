@@ -19,7 +19,7 @@ this tool lives.
 
 ## Where ctx stands on each
 
-**(3) is already built, and is the better version.** `countersign accept` exists
+**(3) is already built, and is the better version.** `gage accept` exists
 because arrival is not consent: a bundle sits in `pending/` and nothing reads
 it until you stage it. That is LocalSend's defining moment, and ctx got there
 from the opposite direction -- the buddy list and accept-before-transfer are
@@ -74,16 +74,16 @@ confirmed was your laptop".
 
 ## Built 15 Oct
 
-    countersign nearby [--announce SECS]       # who is announcing, with fingerprints
-    countersign pair <name> [--confirm WORDS]  # compare out of band, then add the key
-    countersign listen                         # be reachable: answer queries, take bundles
-    countersign push <dir> --to laptop --lan   # straight over the network, no relay
+    gage nearby [--announce SECS]       # who is announcing, with fingerprints
+    gage pair <name> [--confirm WORDS]  # compare out of band, then add the key
+    gage listen                         # be reachable: answer queries, take bundles
+    gage push <dir> --to laptop --lan   # straight over the network, no relay
 
 The fingerprint turned out better than four groups of hex: it is four
 word-pairs derived from the signing key (`src/words.rs`), so nobody picks
 their own, and it can be read across a room.
 
-**Nothing announces by default, ever.** `countersign nearby` listens. `--announce`
+**Nothing announces by default, ever.** `gage nearby` listens. `--announce`
 takes a number of seconds, defaults to 60 if you pass the bare flag, and
 stops on its own -- there is no mode in which a laptop keeps shouting onto
 every network it joins. Before it sends anything it prints the handle, both
@@ -91,7 +91,7 @@ public keys and the port, and says they go to every host on the network, so
 the posture change is read rather than discovered.
 
 **After pairing, finding a machine is a query rather than a broadcast of your
-existence.** `countersign listen` binds a UDP socket and answers one thing: a query
+existence.** `gage listen` binds a UDP socket and answers one thing: a query
 signed by a key already on its list. A stranger's query gets silence, which
 is indistinguishable from an empty network. The key being asked about travels
 as `sha256(key + nonce)`, so the segment does not learn who you are sending
@@ -107,7 +107,7 @@ so the pairing mode and the listener never fight over one socket.
 
 The TCP port takes a sealed envelope from anyone who can reach it, and that
 is deliberate: a first bundle from someone new has to be able to arrive, or
-`countersign add` could never be the second step. What protects you is what has
+`gage add` could never be the second step. What protects you is what has
 always protected you -- it lands in `inbox/pending`, unread, under a verdict
 that says `SENDER NOT ON YOUR LIST`, and nothing reads it until you accept
 it. Arrival is not consent over this transport either. The query gate hides
@@ -127,7 +127,7 @@ says so because fetch timing against a relay is already metadata the operator
 can see. Broadcasting a handle and a key on every network you join is a louder
 version of that: a café wifi learns that this laptop exists, what it calls
 itself, and its public key. That is a genuine change of posture, not a
-detail. It wants a default of off, an explicit `countersign nearby --announce`, and a
+detail. It wants a default of off, an explicit `gage nearby --announce`, and a
 plain statement of what leaves the machine.
 
 **The pairing step cannot be removed.** It is the whole difference, so any
@@ -150,15 +150,15 @@ person can see it running. **The time box is the process lifetime.** Ctrl-C
 and the machine is as invisible as it was before, with the state on screen
 instead of in a flag you have to remember you passed.
 
-So `countersign lan` is one foreground command that announces, discovers, listens and
+So `gage lan` is one foreground command that announces, discovers, listens and
 receives, and it collapses `nearby --announce`, `nearby` and `listen` into the
 thing a person actually does. The explicit three remain underneath;
-`countersign listen` in particular is still the right command for a machine that
+`gage listen` in particular is still the right command for a machine that
 should be reachable *without* announcing.
 
 Two further steps went the same way:
 
-- **A name nobody has to choose.** `countersign init` with no argument takes a
+- **A name nobody has to choose.** `gage init` with no argument takes a
   word-pair from its own signing key. Derived rather than random, which is
   strictly better than LocalSend: it is the first pair of the fingerprint, so
   the name on the list and the words you confirm cannot disagree. And `ctx
@@ -177,11 +177,11 @@ Two further steps went the same way:
 
 Default off, time-boxed when on, full disclosure of what is sent, and no
 standing announcement in any mode. The README's "no server, no presence, no
-accounts" survives with one honest amendment: `countersign listen` *is* a process
+accounts" survives with one honest amendment: `gage listen` *is* a process
 holding a port, and the README now says so where it says there is no server.
 
 What was given up to get there: you cannot see a paired machine in a list
-without that machine announcing. `countersign nearby` after pairing shows nothing,
+without that machine announcing. `gage nearby` after pairing shows nothing,
 because nothing is announcing. That is the price of the property, and it is
 the right trade -- a roster that is always visible is a roster somebody else
 can also read.

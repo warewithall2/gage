@@ -59,13 +59,13 @@ when it is settled by preference.)
   board's membership is one object many parties share, and a key is an object
   each party holds an opinion about. This is the weakest of the three.
 
-The board *feel* comes from `countersign threads` instead, which is a local view over
+The board *feel* comes from `gage threads` instead, which is a local view over
 mail this machine received and needs no trusted host.
 
 That is a **different product, not a cheaper board**, and an earlier draft
 called it "the honest version" of one, which a reviewer was right to reject as
 substituting the thing that was built for the thing that was declined. A board
-has shared membership, shared ordering and shared visibility; `countersign threads`
+has shared membership, shared ordering and shared visibility; `gage threads`
 has none of those -- it shows what this machine happens to hold, in the order
 this machine observed it. If a shared board is ever wanted, it has to be
 built, and these three costs are what it will cost.
@@ -74,7 +74,7 @@ built, and these three costs are what it will cost.
 
 **A standing presence roster.** It is the natural next ask for anything that
 feels like a buddy list, and it has been refused twice: a roster that is
-always visible is a roster somebody else can also read. `countersign lan` answers the
+always visible is a roster somebody else can also read. `gage lan` answers the
 question with process lifetime instead -- visible while it runs, silent when
 it stops. A buddy list UI may show *who is on your list* and *who is on this
 network right now*; it may not make this machine continuously announce.
@@ -109,8 +109,8 @@ Two things in the plan as written turned out to be wrong, and the shipped
 version differs:
 
 - **"A hook may accept only within a grant that says so"** is not enforceable.
-  A hook runs `countersign accept` as a separate process; ctx cannot tell a hook's
-  invocation from a human's. So the acceptance is in the tool, in `countersign watch
+  A hook runs `gage accept` as a separate process; ctx cannot tell a hook's
+  invocation from a human's. So the acceptance is in the tool, in `gage watch
   --auto-accept`, where the grant is consulted by the code that does the move.
   The hook is told `CTX_AUTO_ACCEPTED` and never needs to accept anything.
 - **"The exchange count is kept by the receiver, per thread, so nothing a
@@ -126,7 +126,7 @@ The count lives in the journal rather than a counter file — the record of what
 was done is already the record of how much was used — which is the payoff for
 having built capture first.
 
-Why it is needed: `countersign accept` currently moves a directory and records nothing
+Why it is needed: `gage accept` currently moves a directory and records nothing
 about *how* it happened. The moment anything accepts without a human, "did a
 human accept this, or did a grant?" becomes the only question that matters,
 and nothing on disk can answer it. Provenance cannot be retrofitted onto
@@ -160,7 +160,7 @@ The original text follows.
 
 
 The shape the owner actually wants, and the first thing a second person would
-judge the project by. `countersign ui` already has threads, accept/reject, a reply box
+judge the project by. `gage ui` already has threads, accept/reject, a reply box
 and the LAN panel built on 16 Oct. What it does not have:
 
 - **Connection requests as a human decision in the window.** Today pairing is
@@ -186,7 +186,7 @@ of decisions.
 
 `src/journal.rs` records four events with the verdict frozen at the event, and
 auto-accept's exchange budget is counted from it rather than from a counter
-file. The hash chain and `countersign journal --verify` landed 17 Oct, with the limit
+file. The hash chain and `gage journal --verify` landed 17 Oct, with the limit
 asserted in the suite rather than only described: a re-linked edit verifies
 clean, and a check exists to say so.
 

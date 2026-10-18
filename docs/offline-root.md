@@ -2,7 +2,7 @@
 
 Status: **proposed, not implemented.** Designed by the grok reviewer on
 2026-10-15 against `3377f13`, in answer to a specific question: a stolen
-online key can countersign its own replacement, so what fixes that without a
+online key can gage its own replacement, so what fixes that without a
 third party. Recorded here because it is a ceremony change — it alters what a
 person has to keep for the life of an identity — and that is the owner's
 decision, not a reviewer's and not an implementer's.
@@ -22,12 +22,12 @@ not relay challenges, not envelopes. No new crypto; the same
   it.
 * `root.seed` is a separate file the person moves off the machine:
   `{ v, root_seed, root_pub, online }`. `Identity::load` never reads it.
-* `countersign whoami` prints a second line, `root <rootpub>`, leaving line one
+* `gage whoami` prints a second line, `root <rootpub>`, leaving line one
   byte-identical so anything parsing `handle<TAB>signpub.boxpub` keeps working.
-* `countersign add <name> <token> --root <rootpub>` pins it. `contacts.json` gains
+* `gage add <name> <token> --root <rootpub>` pins it. `contacts.json` gains
   `"roots": { "<name>": "<rootpub>" }`, keyed by your name for them rather
   than by the online key, because the online key is the thing that changes.
-* `countersign rotate` refuses without `--root <path>` once an identity has one, and
+* `gage rotate` refuses without `--root <path>` once an identity has one, and
   refuses a path inside the ctx home: that is the file a stolen laptop
   already has.
 * The notice gains `sig_root` over the same claim bytes, and the claim gains

@@ -29,14 +29,14 @@ fail() {
   # fatal: a missing notifier must not turn a passing run into a failure or
   # a failing one into silence -- the log and the exit code are the record.
   if command -v notify-send >/dev/null 2>&1; then
-    notify-send -u critical "countersign selfcheck failed" "$* -- see $LOG" 2>/dev/null || true
+    notify-send -u critical "gage selfcheck failed" "$* -- see $LOG" 2>/dev/null || true
   elif command -v osascript >/dev/null 2>&1; then
-    osascript -e "display notification \"$* -- see $LOG\" with title \"countersign selfcheck failed\"" 2>/dev/null || true
+    osascript -e "display notification \"$* -- see $LOG\" with title \"gage selfcheck failed\"" 2>/dev/null || true
   fi
   exit 1
 }
 
-say "countersign selfcheck on $(uname -s) $(uname -m), $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+say "gage selfcheck on $(uname -s) $(uname -m), $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 # Preflight: the suite binds fixed ports, and a stray listener on one of them
 # once produced 28 failures that looked like real defects and were not. Say

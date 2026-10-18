@@ -49,8 +49,8 @@ echo "building here..."
 cargo build --release >/dev/null 2>&1 || fail "the local build failed"
 HOSTOS=$(uname -s | tr '[:upper:]' '[:lower:]')
 HOSTARCH=$(uname -m)
-LOCAL=$OUT/countersign-$VER-$HOSTOS-$HOSTARCH
-cp target/release/countersign "$LOCAL"
+LOCAL=$OUT/gage-$VER-$HOSTOS-$HOSTARCH
+cp target/release/gage "$LOCAL"
 stamp "$LOCAL" "$HOSTOS-$HOSTARCH"
 
 # Each remote machine builds its own: cross-compiling needs a C toolchain per
@@ -74,8 +74,8 @@ for h in "$@"; do
     || { echo "  skipped: the build on $h failed" >&2; rm -f "$OUT/.plat"; continue; }
   ROS=$(sed -n 1p "$OUT/.plat" | tr '[:upper:]' '[:lower:]')
   RARCH=$(sed -n 2p "$OUT/.plat"); rm -f "$OUT/.plat"
-  B=$OUT/countersign-$VER-$ROS-$RARCH
-  scp -q -o BatchMode=yes "$h:~/ctx/target/release/countersign" "$B" || { echo "  copy failed" >&2; continue; }
+  B=$OUT/gage-$VER-$ROS-$RARCH
+  scp -q -o BatchMode=yes "$h:~/ctx/target/release/gage" "$B" || { echo "  copy failed" >&2; continue; }
   chmod +x "$B"
   # Checked by asking the binary, not by trusting the path it came from.
   # A binary for another platform cannot run here -- so the host that built
@@ -84,7 +84,7 @@ for h in "$@"; do
   if [ "$ROS-$RARCH" = "$HOSTOS-$HOSTARCH" ]; then
     stamp "$B" "$ROS-$RARCH"
   else
-    RSTAMP=$(ssh -o BatchMode=yes "$h" "~/ctx/target/release/countersign --version" 2>/dev/null)
+    RSTAMP=$(ssh -o BatchMode=yes "$h" "~/ctx/target/release/gage --version" 2>/dev/null)
     case "$RSTAMP" in
       *dirty*) fail "$ROS-$RARCH was built from a dirty tree on $h" ;;
       *"$REV"*) echo "  $ROS-$RARCH: $RSTAMP (checked on $h)" ;;
@@ -93,10 +93,10 @@ for h in "$@"; do
   fi
 done
 
-( cd "$OUT" && (sha256sum countersign-"$VER"-* 2>/dev/null || shasum -a 256 countersign-"$VER"-*) > SHA256SUMS )
+( cd "$OUT" && (sha256sum gage-"$VER"-* 2>/dev/null || shasum -a 256 gage-"$VER"-*) > SHA256SUMS )
 echo
 echo "dist/:"
 ls -1sh "$OUT" | sed 's/^/  /'
 echo
 echo "Checksums are in dist/SHA256SUMS. Each binary reports its commit:"
-echo "  countersign --version   ->  countersign $VER ($REV)"
+echo "  gage --version   ->  gage $VER ($REV)"

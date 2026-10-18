@@ -359,7 +359,7 @@ function alerts(m){
   if(m.memories) out.push(['bad',
     `${m.memories} memory file(s). Memory outlives the session that accepts it, so it is never merged automatically.`]);
   if(m.prompts) out.push(['',
-    `${m.prompts} prompt(s): text written to steer a model. Read it with <code>countersign open</code>, which frames it as data.`]);
+    `${m.prompts} prompt(s): text written to steer a model. Read it with <code>gage open</code>, which frames it as data.`]);
   return out.map(([c,h])=>`<div class="alert ${c}">${h}</div>`).join('');
 }
 
@@ -375,7 +375,7 @@ function msgHtml(m){
     : m.stage==='accepted'
       ? `<div class="acts">
           ${m.read?'':`<button class="btn" onclick="act('read','${esc(m.id)}')">Mark read</button>`}
-          <span class="cmd">countersign open ${esc(m.path)}</span></div>`
+          <span class="cmd">gage open ${esc(m.path)}</span></div>`
       : `<div class="acts"><span class="cmd">sent &middot; ${esc(m.id)}</span></div>`;
   return `<div class="m ${m.mine?'mine':''}">
     <div class="mhead">
@@ -399,7 +399,7 @@ function composerHtml(t){
   if(!r.can){
     return `<div class="cwrap"><div class="cblocked">
       Cannot reply from here: ${esc(r.why||'no recipient')}.
-      ${r.to?`<br><code>countersign reply ${esc(t.id)} --text "..."</code>`:''}
+      ${r.to?`<br><code>gage reply ${esc(t.id)} --text "..."</code>`:''}
     </div></div>`;
   }
   const d=DRAFT[t.id]||{text:'',type:r.type||'answer'};
@@ -430,10 +430,10 @@ function render(){
   if(!LERR && DATA.verdicts_stale) st.textContent=
     'Verdicts withheld: your inbox could not be recorded, so a verdict here could read '+
     'milder than the truth. Usually another ctx process is writing \u2014 it clears on '+
-    'the next poll. Until then, read bundles with countersign open in a terminal.';
+    'the next poll. Until then, read bundles with gage open in a terminal.';
   document.getElementById('me').innerHTML = me
     ? `<div class="h">${esc(me.handle)}</div><div class="k">${esc((me.key||'').slice(0,10))}&hellip;</div>`
-    : `<div class="h">no identity</div><div class="k">run countersign init</div>`;
+    : `<div class="h">no identity</div><div class="k">run gage init</div>`;
   const th=DATA.threads||[];
   const needYou=th.filter(t=>t.state.includes('YOU')).length;
   const unread=th.reduce((a,t)=>a+t.unread,0);
@@ -481,12 +481,12 @@ function render(){
         <p>Threads group by the message that started them. What is read, and what
            counts as settled, is yours: a sender cannot mark their own message
            read in your inbox.</p>
-        <p><code>countersign send --to codex --type question --decision q.md</code><br>
-           <code>countersign reply &lt;id&gt; --text "..."</code></p>
+        <p><code>gage send --to codex --type question --decision q.md</code><br>
+           <code>gage reply &lt;id&gt; --text "..."</code></p>
         <p>Replies written here are delivered to a local route. Files you drop
            on a machine in <b>On this network</b> go straight to it, over the
            wifi, and land unread in its inbox. Sending through a <i>relay</i> is
-           still <code>countersign push</code> in a terminal, where you see the list
+           still <code>gage push</code> in a terminal, where you see the list
            first.</p>
       </div>`;
   if(t){
@@ -548,7 +548,7 @@ async function load(){
     LERR='';
   }catch(e){
     LERR='Could not load your inbox from this server: '+(e&&e.message?e.message:e)
-      +'. The server is at '+location.origin+'; countersign ui logs to the terminal it runs in.';
+      +'. The server is at '+location.origin+'; gage ui logs to the terminal it runs in.';
     render();
     return;
   }
@@ -558,7 +558,7 @@ async function load(){
 // ---------------------------------------------------------------------------
 // On this network
 // ---------------------------------------------------------------------------
-// The page never announces. It reads the list `countersign lan` keeps, so the viewer
+// The page never announces. It reads the list `gage lan` keeps, so the viewer
 // cannot make a machine visible that the person did not choose to make
 // visible -- which would be the one thing a button here must not be able to
 // do.
@@ -576,9 +576,9 @@ function lanRender(){
   if(!LAN.devices.length){
     h+=`<div class="lanempty">${on
       ? 'Nobody else here yet.'
-      : 'Not on the network. Run <b>countersign lan</b> in a terminal.'}</div>`
+      : 'Not on the network. Run <b>gage lan</b> in a terminal.'}</div>`
       +`<div class="lansub">${on
-        ? 'Run <b>countersign lan</b> on the other machine too.'
+        ? 'Run <b>gage lan</b> on the other machine too.'
         : 'It announces while it runs and goes silent when you stop it.'}</div>`;
     box.innerHTML=h; return;
   }
@@ -648,7 +648,7 @@ async function lanFiles(fl){
     // 12MB. Refused here with the real number rather than sent and rejected.
     if(total*1.37>11*1024*1024){
       LERR2='That is too much to send through the page ('+kb(total)
-        +'). Use countersign send --dir in the terminal for anything large.';
+        +'). Use gage send --dir in the terminal for anything large.';
       lanRender(); return;
     }
     out.push({name:f.name,size:f.size,data:await b64(f)});
@@ -738,13 +738,13 @@ let REVEAL=null;
 // be selling a check it does not perform.
 const ASKWHY='The word-pairs come from the key itself, so nobody picks their own. '
   +'This screen does not show them yet, on purpose: read the pair below off the '
-  +'OTHER machine, where they must run countersign fingerprint --signing-only. Get it '
+  +'OTHER machine, where they must run gage fingerprint --signing-only. Get it '
   +'right and the rest are shown, so you can check all four before adding.';
 
 // Said on the card, because it is a real limit on what this approval buys.
 const ASKHALF='These words cover the SIGNING key only. A message does not carry its '
   +'sender\u2019s encryption key, so adding them here lets you verify what they '
-  +'sign and not send them sealed mail. For both, get their `countersign add` line and '
+  +'sign and not send them sealed mail. For both, get their `gage add` line and '
   +'compare the normal four pairs.';
 
 // The limit, said where the decision is made rather than in a help page.
@@ -798,7 +798,7 @@ function setTab(t){
       <p>Refusing records that you said no. It is not a block &mdash; nothing in ctx
         can stop a bundle being delivered, and mail from a refused key still arrives
         and still waits for you to accept it.</p>
-      <p><code>countersign decline &lt;key&gt;</code> and <code>countersign undecline &lt;key&gt;</code>
+      <p><code>gage decline &lt;key&gt;</code> and <code>gage undecline &lt;key&gt;</code>
         do the same from a terminal.</p></div>`;
   }else{
     document.getElementById('title').textContent='ctx';
@@ -859,7 +859,7 @@ function reachRow(r){
      +'It is your label, not their identity.'],
     ['on this network now', r.lan_now,
      'This key is announcing itself on this network, which it chose to do by running '
-     +'countersign lan. Nothing here polls anybody.'],
+     +'gage lan. Nothing here polls anybody.'],
     ['mail can be left', r.can_leave_mail,
      'You are joined to a relay and hold an encryption key for them, so mail CAN be '
      +'left. This is about your setup, not about them -- whether they ever collect it '

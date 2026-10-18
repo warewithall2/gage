@@ -1,18 +1,21 @@
-# countersign
+# gage
 
 Hand context between agents — files, prompts and decisions — with a trust
 boundary that survives the hop.
 
-A countersign is the word given back to a challenge, to prove you are who you
-claim. That is what this is: two people compare four word-pairs over a
-channel neither machine controls, and everything downstream — every verdict,
-every grant, every unattended acceptance — is built on that one human moment.
+A gage is a pledge: something of value handed over to stand behind a promise,
+and historically the glove thrown down to open a challenge. Both senses fit.
+Two people compare four word-pairs over a channel neither machine controls,
+and everything downstream — every verdict, every grant, every unattended
+acceptance — rests on that one human moment.
 
-> Renamed from `ctx` on 18 October. **Nothing on disk moves.** An identity key
-> is the one file whose loss cannot be undone — every contact who confirmed
-> your word-pairs confirmed *that* key — so `countersign` reads `~/.ctx` when
-> it is there and `~/.countersign` otherwise, copies nothing, and honours
-> `CTX_HOME` as well as `COUNTERSIGN_HOME`.
+> Renamed twice on 18 October: `ctx` → `countersign` → `gage`. **Nothing on
+> disk moves, ever.** An identity key is the one file whose loss cannot be
+> undone — every contact who confirmed your word-pairs confirmed *that* key —
+> so `gage` uses the first home that exists out of `~/.gage`,
+> `~/.countersign`, `~/.ctx`, copies nothing, creates nothing to replace
+> another, and honours `GAGE_HOME`, `COUNTERSIGN_HOME` and `CTX_HOME` so that
+> existing scripts and systemd units keep working.
 
 Your Claude hands a task to Codex. A colleague's agent sends you their project
 state. Works across vendors because it is not a protocol: a bundle is a signed
@@ -33,7 +36,7 @@ bundle's verdict is read by a language model whose next tokens are the payload
 itself, and which can. A channel that lets one LLM send prompts to another is,
 by default, a prompt-injection delivery network.
 
-So `countersign open` is a renderer, not an importer. It puts the bundle inside a frame
+So `gage open` is a renderer, not an importer. It puts the bundle inside a frame
 that states, before any payload, that the contents are **data** from an
 identified party and carry no authority — and on a bad verdict it withholds
 the contents rather than annotating them, because an annotation is something
@@ -58,7 +61,7 @@ beside swapped files is caught and the contents are withheld.
 
 ## Keys, said out loud
 
-    $ countersign whoami
+    $ gage whoami
     owen	yomSmC3TalJ5IM+H0yvkhhWVab4ujiAVIQFR4WvdXiM=.KlXt+/5rj4y3FMC7eqau4zF5eZV+x7PjYZUdyUXHDEM=
 
       this key says : humble pillar · ruddy lobster · marine armour · eastern dovecote
@@ -68,7 +71,7 @@ LocalSend labels a device with a word pair and it is the nicest thing about
 using it — but there the words are a *name* the device picked, so anyone can
 be Yellow Iguana. Here they are derived from the signing key, so nobody
 chooses their own and two machines showing the same words are holding the same
-key. `countersign fingerprint <name>` says a contact's, and `countersign add` prints the words
+key. `gage fingerprint <name>` says a contact's, and `gage add` prints the words
 for the key it just took, which is the moment you confirm it with them over
 some other channel.
 
@@ -84,11 +87,11 @@ always a real prefix of the fingerprint rather than a separate lookalike.
 
 Install it, then one command on each:
 
-    $ countersign lan
+    $ gage lan
     new identity, named after its own key: grey crowbar
       grey crowbar · lavish jackdaw · sleepy hedgerow · electric delta
 
-    countersign lan -- you are "grey crowbar" on this network
+    gage lan -- you are "grey crowbar" on this network
       visible and reachable while this runs, silent the moment you stop it
       anything sent to you lands unread in inbox/pending
       broadcasting to: 255.255.255.255, 192.168.1.255
@@ -98,7 +101,7 @@ Install it, then one command on each:
 
 Then send, by the two words on the list:
 
-    $ countersign send --to "gallant alcove" --subject hi --file notes.md --lan
+    $ gage send --to "gallant alcove" --subject hi --file notes.md --lan
     handed to gallant alcove at 192.168.1.44:7791, over this network
     it is in their inbox/pending -- not accepted
 
@@ -107,7 +110,7 @@ two words taken from the signing key, so nobody picks their own — LocalSend's
 device names, except derived rather than chosen, which makes them a slightly
 better label at no cost to the person.
 
-**Presence is the process.** It announces while `countersign lan` is in the
+**Presence is the process.** It announces while `gage lan` is in the
 foreground and goes silent the moment you stop it. That is LocalSend's own
 answer to the same objection, and a better one than the flag this started
 with: the state is visible on screen rather than sitting in a number of
@@ -118,7 +121,7 @@ and what arrives is `SENDER NOT ON YOUR LIST`, unread, behind the same accept
 gate as everything else — which is the protection, and always was. When you
 want a key confirmed rather than merely observed:
 
-    $ countersign pair laptop
+    $ gage pair laptop
       gallant alcove  at 192.168.1.44
       says : gallant alcove · indigo burrow · merry banner · glassy nettle
 
@@ -132,8 +135,8 @@ makes a key *yours* rather than *some machine on this wifi*, which is what a
 an agent acts on a message unattended. Requiring it before one file could
 move was a step I added and it was wrong.
 
-Underneath, `countersign nearby`, `countersign pair` and `countersign listen` are still there as the
-explicit forms, and `countersign listen` is the one to use for a machine that should
+Underneath, `gage nearby`, `gage pair` and `gage listen` are still there as the
+explicit forms, and `gage listen` is the one to use for a machine that should
 be reachable without announcing — it answers an address query only when the
 query is signed by a key already on your list, so a stranger gets silence they
 cannot tell from an empty network. Design and the costs:
@@ -149,14 +152,14 @@ them read a verified request from a verified contact and decline, correctly,
 for want of authority.
 
 So authority is computed by the receiver from its own list, exactly as trust
-is. `~/.countersign/authority` is a file **your human writes**:
+is. `~/.gage/authority` is a file **your human writes**:
 
     # no ctx command writes this file; edit it yourself
     allow codex review-request
     allow dana question in-reply-only
     allow <a-public-key> any          # any message KIND, not any action
 
-`countersign authority` prints what is granted. There is deliberately **no command
+`gage authority` prints what is granted. There is deliberately **no command
 that writes a grant** — a `ctx allow` would be reachable by prompt injection,
 letting an agent talked into running it grant itself permission to obey
 whatever talked it into it. Edit the file yourself.
@@ -203,13 +206,13 @@ write. A file you edit is already revocable by editing it.
 
 `accept` has always meant a person looked at a frame and moved a bundle. For
 an unattended loop that is the step nothing can do, so what people build
-instead is a hook that runs `countersign accept` itself — which makes every grant
+instead is a hook that runs `gage accept` itself — which makes every grant
 unbounded and leaves ctx unable to tell, afterwards, which acceptances a
 human performed. So it is in the tool, where it can be counted:
 
     allow sndr answer auto-accept max-exchanges 4
 
-    $ countersign watch --auto-accept
+    $ gage watch --auto-accept
       7382e954: accepted unattended, 1 of 4 in this thread (allow sndr answer
                 in-reply-only auto-accept max-exchanges 4)
       aa3e2665: this thread has used 4 of 4 auto-accepts (…), so it stays pending
@@ -218,7 +221,7 @@ Four conditions, all required:
 
 - **The watcher was started with `--auto-accept`.** The file says what the
   human permits; the flag says *this process* is the unattended one. An
-  interactive `countersign watch` must not move things a reader is about to look for.
+  interactive `gage watch` must not move things a reader is about to look for.
 - **A grant says `auto-accept`.** Which cannot be written without
   `max-exchanges N` and cannot be written against `any`. Both are refusals,
   not defaults: a half-written grant must not read as an unbounded one, and
@@ -277,9 +280,9 @@ Three things follow, and each was a defect first:
 
 **What it is not:** permission to act — with one honest qualification. The
 acceptance itself moves a directory and marks it readable; it does not open
-the bundle, hand it to a model, or run anything, and `countersign open`'s
+the bundle, hand it to a model, or run anything, and `gage open`'s
 `authorised :` block is still the only thing that says what may be done with
-what is inside. But `countersign watch --auto-accept --on-arrival …` is an end-to-end
+what is inside. But `gage watch --auto-accept --on-arrival …` is an end-to-end
 unattended pipeline in one process, and the accept is deliberately ordered
 *before* the hook so the hook finds the bundle accepted. A reviewer was right
 that "nothing opens or runs anything" is true of the acceptance and false of
@@ -293,14 +296,14 @@ exchange — two agents answering each other, a loop, a sender that got stuck �
 stops at a number a human chose rather than at whatever the disk runs out of
 first.
 
-`countersign watch` now also dates arrivals in the journal before anything acts on
+`gage watch` now also dates arrivals in the journal before anything acts on
 them. It did not before, which meant the unattended path — the one the journal
 exists for — was leaving the thinnest record: an `accepted` entry with no
 `observed` entry in front of it.
 
 ## Getting started, and getting someone else started
 
-    countersign connect https://relay.example.com
+    gage connect https://relay.example.com
 
 Three steps that have no decisions in them — make an identity, register a
 mailbox, work out what to share — and then a deliberate stop at the one that
@@ -335,25 +338,25 @@ automated.
 
 ## Use
 
-    countersign init owen                      # make your keypair
-    countersign whoami                         # the line you give to a colleague
-    countersign add dana <their-key>           # buddy list; keyed on the key, not the name
-    countersign rotate                         # replace your key without losing your past
+    gage init owen                      # make your keypair
+    gage whoami                         # the line you give to a colleague
+    gage add dana <their-key>           # buddy list; keyed on the key, not the name
+    gage rotate                         # replace your key without losing your past
 
-    countersign send --to dana --subject "backoff refactor" \
+    gage send --to dana --subject "backoff refactor" \
              --prompt task.md --decision notes.md \
              --file src/client.rs \
              --agent claude-code --model claude-opus-5 \
              --out ./handoff
 
-    countersign inspect ./handoff              # summary, no contents in context
-    countersign open    ./handoff              # render for an agent, inside the frame
-    countersign reply   <id> --text "..."      # answer a thread, recipient inferred
-    countersign forward ./handoff --to group:eng --out ./fwd
+    gage inspect ./handoff              # summary, no contents in context
+    gage open    ./handoff              # render for an agent, inside the frame
+    gage reply   <id> --text "..."      # answer a thread, recipient inferred
+    gage forward ./handoff --to group:eng --out ./fwd
 
-    countersign lan                            # the whole of the local network, one command
-    countersign send --to "grey crowbar" --file notes.md --lan
-    countersign pair laptop                    # confirm a key, rather than just see it
+    gage lan                            # the whole of the local network, one command
+    gage send --to "grey crowbar" --file notes.md --lan
+    gage pair laptop                    # confirm a key, rather than just see it
 
 `open` exits 0 when the bundle is attributable, and 2 when the signature fails,
 the payload does not match, or the signing key has been taken out of service,
@@ -393,9 +396,9 @@ Signing proves who wrote a bundle. It does not hide what is in it. That is
 fine on your own filesystem and not fine on a server, so nothing goes to a
 relay unsealed.
 
-    countersign seal ./handoff --to dana --out handoff.ctxb
-    countersign unseal handoff.ctxb --out ./incoming
-    countersign open ./incoming
+    gage seal ./handoff --to dana --out handoff.ctxb
+    gage unseal handoff.ctxb --out ./incoming
+    gage open ./incoming
 
 A sealed box (X25519 + XSalsa20-Poly1305) encrypts to the recipient's public
 key with a fresh ephemeral keypair. The envelope holds three fields: a version,
@@ -415,12 +418,12 @@ bundle, or that the manifest never declared, is refused rather than written;
 both are unit-tested, since only a malicious *sender implementation* can
 produce them.
 
-Your `countersign whoami` token is now `signpub.boxpub`. Identities created before
+Your `gage whoami` token is now `signpub.boxpub`. Identities created before
 encryption existed gain an encryption key on next load **without changing the
 signing key**, so every bundle you signed previously stays verifiable.
 
 A contact with no encryption key on file can be verified but not sealed to,
-and `countersign seal` refuses rather than silently sending in the clear.
+and `gage seal` refuses rather than silently sending in the clear.
 
 ## Outbound safety
 
@@ -451,7 +454,7 @@ that are *named* like secrets.
 
 **Content scan.** Every item is read before it is sealed. A `notes.md` that
 quotes a customer's address, or a log fragment with a bearer token still in
-it, is what actually leaks -- and its filename says nothing. `countersign send`
+it, is what actually leaks -- and its filename says nothing. `gage send`
 refuses rather than warns: on an outbound path a warning arrives after the
 bundle exists, and for a remote recipient after it has gone.
 
@@ -462,11 +465,11 @@ Findings are **redacted**. A tool whose job is to stop secrets leaving should
 not print them to a terminal or into an agent's context on the way to
 refusing. Built-in rules cover private-key blocks, AWS/Anthropic/OpenAI/GitHub/
 Slack/Google/Stripe key shapes, bearer tokens and real email addresses;
-`example.com` and a bare `sk-ant-` in prose do not fire. `~/.countersign/scrub.json`
+`example.com` and a bare `sk-ant-` in prose do not fire. `~/.gage/scrub.json`
 takes `never_send` literals (a customer domain, a codename) and `disable` for
 rules a repo legitimately trips. `--allow-findings` overrides and says so.
 
-**Confirmation before anything leaves.** `countersign push` prints the recipient,
+**Confirmation before anything leaves.** `gage push` prints the recipient,
 subject and file list and refuses without `--yes`. The accept gate protects
 the receiver; this protects the sender, and it is the one that matters when an
 agent is doing the sending.
@@ -479,7 +482,7 @@ as "is leaving", and it broke every send to an unrouted handle.
 ## Relay
 
 Registration proves possession of the box **secret**, not just knowledge of
-the box key. That key is what you hand out in a `countersign whoami` line, so a relay
+the box key. That key is what you hand out in a `gage whoami` line, so a relay
 that took the claim at face value could have its mailboxes squatted: register
 someone else's box key against your own signing key before they get there,
 and first-registration-wins locks the owner out permanently -- they can never
@@ -498,13 +501,13 @@ key and hands them to whoever proves they hold the matching secret.
 
 On the host that will hold mail:
 
-    countersign relay --bind 100.x.y.z:7788
+    gage relay --bind 100.x.y.z:7788
 
 On each machine:
 
-    countersign join 100.x.y.z:7788        # registers your mailbox, saves the address
-    countersign push ./handoff --to dana   # seals, then uploads
-    countersign pull                       # collects into inbox/pending
+    gage join 100.x.y.z:7788        # registers your mailbox, saves the address
+    gage push ./handoff --to dana   # seals, then uploads
+    gage pull                       # collects into inbox/pending
 
 **The relay cannot read what it stores.** Compromising it leaks metadata --
 which mailbox has mail, how big, when -- and no content. Verified in the test
@@ -514,7 +517,7 @@ grepping the relay's store: neither appears.
 Four properties the relay enforces, each tested:
 
 - **Fetching requires proof of key possession, not a key name.** Anyone who
-  has seen a `countersign whoami` line knows your public key, so a name-only scheme
+  has seen a `gage whoami` line knows your public key, so a name-only scheme
   would let a stranger drain your inbox. The relay issues a random challenge
   and requires an ed25519 signature over it.
 - **A challenge is consumed on first use.** A replayable signature is a stolen
@@ -557,10 +560,10 @@ A stranger must be able to send you a first message — that is exactly what the
 buddy list's "not on your list" section is for — so the answer cannot be
 authentication. It is quotas: bytes and envelopes per mailbox, a total store
 cap as the backstop when many mailboxes are each individually under their
-limit, and a per-address request limit. All four are flags on `countersign relay`, so
+limit, and a per-address request limit. All four are flags on `gage relay`, so
 an operator who wants more says so:
 
-    countersign relay --bind 0.0.0.0:7788 --max-mailbox-mb 64               --max-mailbox-msgs 500 --max-store-mb 4096 --rate-per-min 120
+    gage relay --bind 0.0.0.0:7788 --max-mailbox-mb 64               --max-mailbox-msgs 500 --max-store-mb 4096 --rate-per-min 120
 
 A full mailbox is refused with "mailbox is full" and nothing about who filled
 it. A letterbox does not report its senders to whoever knocks; the person who
@@ -573,8 +576,8 @@ means before it serves a byte.
 
 ### TLS, and why it is here despite the payload being sealed
 
-    countersign join https://relay.example.com      # certificate verified
-    countersign join 100.102.84.72:7788             # no TLS: a tailnet or a loopback test
+    gage join https://relay.example.com      # certificate verified
+    gage join 100.102.84.72:7788             # no TLS: a tailnet or a loopback test
 
 The scheme decides, and the address is written by a person, so the choice is
 visible rather than buried in a default.
@@ -614,7 +617,7 @@ instruction that was already carried out.**
 Delivery used to ask only whether the id was still in `pending`. Once a bundle
 had been accepted that path was gone, so the identical envelope was staged
 again as a fresh arrival — for ever, on demand — and the journal recorded
-nothing at all. `countersign pull` now refuses it and writes a `duplicate` entry, the
+nothing at all. `gage pull` now refuses it and writes a `duplicate` entry, the
 one event in the log that records something the machine *declined* to do.
 
 The check is the witness, which was already being recorded:
@@ -628,17 +631,17 @@ a sender you have heard from before.
 
 A bundle carries what the sender wants from you:
 
-    countersign send --to codex --subject "key rotation" --type question --decision q.md
-    countersign send --to owen  --type answer --reply-to <id> --decision a.md
+    gage send --to codex --subject "key rotation" --type question --decision q.md
+    gage send --to owen  --type answer --reply-to <id> --decision a.md
 
 `share` (default), `question`, `answer`, `review-request`, `ack`. An unknown
 type is refused rather than quietly defaulted. `question` and `review-request`
-leave a ball in the recipient's court, and `countersign inbox` says so.
+leave a ball in the recipient's court, and `gage inbox` says so.
 
-    countersign threads          # grouped, newest activity first
-    countersign threads --mine   # only where the ball is in your court
-    countersign thread <id>      # one exchange, root first
-    countersign close <id>       # settled, in your view
+    gage threads          # grouped, newest activity first
+    gage threads --mine   # only where the ball is in your court
+    gage thread <id>      # one exchange, root first
+    gage close <id>       # settled, in your view
 
 Three rules, each because the obvious version is wrong:
 
@@ -664,7 +667,7 @@ having read the thing.
 
 ## Replying
 
-    countersign reply <thread-or-message-id> --text "Full jitter, cap 30s."
+    gage reply <thread-or-message-id> --text "Full jitter, cap 30s."
 
 The id can be a thread or a single message, and a unique prefix is enough.
 A thread with **two correspondents** is refused rather than guessed, and that
@@ -674,7 +677,7 @@ become "the newest message that is not yours", and collect the reply meant for
 someone else. Naming a message instead of a thread is unambiguous, and while
 you hold the thread's root, naming the thread *is* naming that message. A
 message whose claim to a thread cannot be checked against anything held
-locally is shown as a claim, in the list, in `countersign thread` and in the viewer.
+locally is shown as a claim, in the list, in `gage thread` and in the viewer.
 
 Everything else is worked out: the recipient comes from the **key that signed
 the message being answered**, never from its `from.handle` or its `to` list,
@@ -691,7 +694,7 @@ your own key is not on your list.
 
 ## The viewer
 
-    countersign ui            # http://127.0.0.1:7777
+    gage ui            # http://127.0.0.1:7777
 
 The request head is bounded and the socket has a timeout. `read_line` has no
 size limit of its own, so a client that sent bytes and never a newline made
@@ -703,10 +706,10 @@ Two panes: conversations on the left, the thread on the right, with a
 composer at the bottom. Loopback only, never `0.0.0.0`: an inbox viewer on a
 laptop has no business being reachable from the network it happens to be on.
 
-Under the conversations is **On this network** — every machine `countersign lan` can
+Under the conversations is **On this network** — every machine `gage lan` can
 see, each with its four word-pairs under it. Drop files on one and they go
 straight there over the wifi; `Pair` confirms a fingerprint without leaving
-the page. The panel reads the list `countersign lan` keeps and never announces
+the page. The panel reads the list `gage lan` keeps and never announces
 anything itself, so no button here can make this machine visible when the
 person did not choose to be.
 
@@ -765,7 +768,7 @@ pairs two sections down would leave the answer on screen by another route.
 A contact added this way is **verify-only**. A manifest does not carry the
 sender's encryption key and should not: a sender seals *to* you with the key
 you published and never needs to publish its own. So you can check their
-signatures and not seal mail to them until you have their `countersign whoami` token
+signatures and not seal mail to them until you have their `gage whoami` token
 or pair on the network, and the list labels them so rather than promising
 sealing that silently fails.
 
@@ -780,7 +783,7 @@ sealable, and three flags, each labelled with what it is evidence *of*:
   would mean opening another agent's `identity.key` to learn a public half,
   which this viewer should not do to render a dot.
 - `on this network now` — this key is announcing itself, which it chose to do
-  by running `countersign lan`.
+  by running `gage lan`.
 - `mail can be left` — **your** setup, not them: you are joined to a relay and
   hold an encryption key for them. Whether they ever collect it is not
   something this machine can know.
@@ -793,8 +796,8 @@ so there isn't one. Three booleans, no ages, and nothing here polls anybody.
 
 **Refused.** The third state, and the one that was missing: a list that can
 say yes and "not asked yet" cannot say **no**, so the only way to stop being
-offered the same decision was to accept it. `countersign decline <key>` and the
-Refuse button record it; `countersign undecline` and Un-refuse take it back without
+offered the same decision was to accept it. `gage decline <key>` and the
+Refuse button record it; `gage undecline` and Un-refuse take it back without
 adding anything.
 
 What a refusal is not is a block, and the page, the frame and the CLI all say
@@ -812,12 +815,12 @@ false once everything from it was read — implying delivery had stopped, the
 exact misreading the surrounding text exists to prevent. It is a count of what
 is held right now, and the general fact is stated unconditionally instead.
 
-A key being on the list is still only ever an explicit act: `countersign add` over a
+A key being on the list is still only ever an explicit act: `gage add` over a
 declined key reverses the decline and says so. So the claim is not that a
 declined key can *never* reach a grant — it is that it cannot while declined,
 and that undoing it takes a deliberate add rather than anything a sender does.
 
-A push through a *relay* is still terminal-only behind `countersign push --yes`.
+A push through a *relay* is still terminal-only behind `gage push --yes`.
 Handing a bundle to a machine on your own wifi is allowed from the page
 because the gesture names both halves — particular files, dropped on a
 particular named machine you can see — which is more than `--yes` on a
@@ -827,7 +830,7 @@ override button: a finding sends you back to the terminal to look at the
 file.
 
 It never renders payload contents. A page that pastes a stranger's prompt into
-a browser is a different risk surface, and `countersign open` is where content is read,
+a browser is a different risk surface, and `gage open` is where content is read,
 inside its frame. What the page shows instead is the verdict, the warnings and
 the file list, with the **verdict at the weight of a headline** rather than a
 caption, because it is the product and a redesign that buried it would be a
@@ -838,7 +841,7 @@ both calling themselves `codex` look different before you read a word. It is an
 aid and never a verdict; the verdict is always spelled out beside it.
 
 A reply written here is delivered to a **local route** only. Anything leaving
-the machine still goes through `countersign push`, where you see the list first, because
+the machine still goes through `gage push`, where you see the list first, because
 a button in a web page is not that confirmation. Every mutating request must
 carry a custom header and may not name a cross-site `Origin` or
 `Sec-Fetch-Site`: a page on the open internet can POST to `127.0.0.1` with a
@@ -849,9 +852,9 @@ answer.
 
 ## Nudges
 
-    countersign watch                    # poll, pull, notify
-    countersign watch --once --quiet     # one check, print instead of notifying
-    countersign watch --on-arrival CMD   # and run CMD for an arrival a grant covers
+    gage watch                    # poll, pull, notify
+    gage watch --once --quiet     # one check, print instead of notifying
+    gage watch --on-arrival CMD   # and run CMD for an arrival a grant covers
 
 Polling, because a relay that pushed would hold an open connection per
 mailbox, and the agents are not long-lived processes anyway -- they are
@@ -881,7 +884,7 @@ beside it.
 
 **It fires only where a grant already covers the message.** Not merely
 `SENDER VERIFIED` -- that says whose key signed something, which is a
-statement about what is known, not permission to act. `~/.countersign/authority` is
+statement about what is known, not permission to act. `~/.gage/authority` is
 the only file in the tool that says an agent may act, and this is the
 unattended path, so it is the one caller that must not settle for less. A
 verified sender with no grant, or a grant for a different message kind,
@@ -903,7 +906,7 @@ trustworthy input is a hook with a problem.
 
 **ctx does not accept the bundle.** When the hook returns, ctx has moved
 nothing: still unread, still in `pending`. The hook itself is handed
-`CTX_BUNDLE_ID` and can of course run `countersign accept && countersign open` -- and for an
+`CTX_BUNDLE_ID` and can of course run `gage accept && gage open` -- and for an
 agent loop that is the point. What ctx guarantees is that *it* never crosses
 the gate for you, so crossing it stays an act your own hook performs, with a
 journal entry to show it.
@@ -937,9 +940,9 @@ into noise that hides the one entry that mattered.
 
 ## The journal
 
-    countersign journal                  # what this machine did with what arrived
-    countersign journal --bundle <id>    # one bundle's history
-    countersign journal --json           # the raw JSONL
+    gage journal                  # what this machine did with what arrived
+    gage journal --bundle <id>    # one bundle's history
+    gage journal --json           # the raw JSONL
 
 Every other record in ctx is an artifact -- a bundle in `pending`, a copy in
 `sent`, a witness in `state.json`. Artifacts say *what was said*. None of them
@@ -957,7 +960,7 @@ because its verdict was computed after acceptance and calling that an arrival
 verdict would be a lie.
 
 **The verdict is written down, not derived.** This is the whole reason the file
-exists. A key rotation, a `countersign add`, a retirement -- any of them changes what
+exists. A key rotation, a `gage add`, a retirement -- any of them changes what
 `Contacts::verdict` returns for a bundle that arrived before it, so a verdict
 recomputed on read is a different answer wearing the same name. Retire a
 contact's key and the journal still shows the bundle observed as
@@ -984,12 +987,12 @@ make the audit trail an attack surface. The one sender-chosen value admitted is
 the thread id, and only if it looks like one: hex and bounded, or it is
 recorded as the fact that it was unparseable.
 
-**A rejection is the entry that matters most.** `countersign reject` destroys the
+**A rejection is the entry that matters most.** `gage reject` destroys the
 bundle unread, so without a line written before the delete, deletion is
 indistinguishable from never having arrived.
 
 What it cannot tell you, said here so nobody reads it as more: ctx's knowledge
-stops at the bundle boundary. It cannot say what an agent did after `countersign open`,
+stops at the bundle boundary. It cannot say what an agent did after `gage open`,
 nor whether a human was actually looking -- `accept` records an act, not an
 intention. It cannot prove the record is complete. And it is append-only by
 convention, not tamper-proof: a process running as you can rewrite it, keys
@@ -1016,7 +1019,7 @@ none.
 
 ### The hash chain, and exactly how far it goes
 
-    countersign journal --verify
+    gage journal --verify
 
 Each entry carries the digest of the previous line **as written**, so
 verifying is a re-read of the file and nothing has to agree about canonical
@@ -1050,15 +1053,15 @@ would survive the local-rewrite case.
 ## Key rotation
 
 A key gets replaced: a laptop dies, a secret leaks, a contact starts fresh.
-Before this existed `countersign init` simply refused to overwrite, which is the right
+Before this existed `gage init` simply refused to overwrite, which is the right
 refusal and the wrong ending — the only way out was to delete the key file,
 and that turned every bundle you had ever signed into `SENDER UNVERIFIABLE`.
 Losing your whole history the day you rotate is a bug, and a tool with that
 property teaches people never to rotate.
 
-    countersign rotate                 # new keypair, old one kept on record
-    countersign rotate --compromised   # the old key was stolen
-    countersign keys                   # what is current, what is retired
+    gage rotate                 # new keypair, old one kept on record
+    gage rotate --compromised   # the old key was stolen
+    gage keys                   # what is current, what is retired
 
 Rotation produces a **notice**: a statement binding old key, new key, handle
 and time, signed by the new key and countersigned by the old one. The new
@@ -1072,8 +1075,8 @@ this key instead" is the exact sentence an attacker wants to say and the exact
 sentence an honest person needs to say, and the bytes are identical. So a
 notice is **evidence, never an instruction**:
 
-    countersign keychange notice.json            # report what it proves
-    countersign keychange notice.json --accept   # apply it
+    gage keychange notice.json            # report what it proves
+    gage keychange notice.json --accept   # apply it
 
 `keychange` with no `--accept` changes nothing. With `--accept` it still
 refuses a notice the old key did not countersign, which is why a compromise
@@ -1126,7 +1129,7 @@ with the second would be a lie:
   handed over on a stick. Telling someone that is a rejection would tell them
   a colleague is attacking them.
 
-For a key that was actually stolen, `countersign retire <name> --compromised` refuses
+For a key that was actually stolen, `gage retire <name> --compromised` refuses
 everything it signed, old bundles included, consulting no date at all. That
 form touches one key and says so; `--compromised --all` condemns every key you
 ever held for that person, for when you learn the compromise predates what you
@@ -1157,7 +1160,7 @@ the secrets, and the receiver is told exactly what that buys:
                     stolen, the thief can produce this signature too.
 
 Rotating your own key keeps the old secrets so mail already sealed to it can
-still be collected — `countersign pull` drains the retired mailbox alongside the
+still be collected — `gage pull` drains the retired mailbox alongside the
 current one, because losing in-flight mail on rotation is another way to teach
 people not to rotate. `--compromised` destroys them instead: the thief can
 read those envelopes either way, and keeping a copy only extends the window in
@@ -1187,9 +1190,9 @@ accept-before-transfer carry over and its presence does not. If moving
 directories by hand gets annoying, add a relay — the format does not change.
 
 Three commands do hold a port, and it is worth naming them rather than letting
-"no server" quietly stop being true: `countersign ui` on loopback, and `countersign lan` and
-`countersign listen` on the local network. None is required for anything, all are in
-the foreground where you can see them, and `countersign lan` is the only thing in ctx
+"no server" quietly stop being true: `gage ui` on loopback, and `gage lan` and
+`gage listen` on the local network. None is required for anything, all are in
+the foreground where you can see them, and `gage lan` is the only thing in ctx
 that announces — for exactly as long as you are looking at it.
 
 It does not sandbox anything. A verified sender is an *accountable* sender, not
@@ -1244,7 +1247,7 @@ itself. `selfcheck-status.sh` reads each machine's last result, and reports a
 host it cannot reach as **unreachable** rather than as passing — silence is
 not evidence of health, which is the whole mistake this exists to stop.
 
-It preflights the ports the suite binds, because a stray `countersign ui` once caused
+It preflights the ports the suite binds, because a stray `gage ui` once caused
 28 failures that looked like real defects. Both failure paths were verified by
 causing them: an occupied port, and a deliberately broken verdict label.
 

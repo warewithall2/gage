@@ -1,4 +1,4 @@
-//! `countersign open` -- the only part of this tool that is actually a security
+//! `gage open` -- the only part of this tool that is actually a security
 //! control, and the reason the rest exists.
 //!
 //! An agent runs this and the output goes straight into its context. So the
@@ -80,7 +80,7 @@ pub fn render(l: &Loaded, reveal: bool) -> Result<String, String> {
     // the bundle was from alice. Anyone on your list can rename themselves,
     // so the local name leads and a conflict is stated loudly.
     // A handle that is exactly the key's own word-label is not a claim about
-    // anyone: it is what `countersign init` with no name produces, derived from the
+    // anyone: it is what `gage init` with no name produces, derived from the
     // key rather than chosen. The impersonation warning fired on the owner's
     // own MacBook for this reason during the first injection test -- correct
     // behaviour, wrong conclusion, and a warning that cries wolf on a normal
@@ -90,7 +90,7 @@ pub fn render(l: &Loaded, reveal: bool) -> Result<String, String> {
     // Two conditions, and the second one is the whole of it.
     //
     // A handle equal to the key's own label is normally harmless: it is what
-    // `countersign init` with no name produces, derived rather than chosen. But a
+    // `gage init` with no name produces, derived rather than chosen. But a
     // reviewer pointed out that the inference runs the wrong way -- a string
     // match cannot establish how the handle was *chosen*, and the handle is
     // sender-controlled text. A label is one word-pair, 16 bits, grindable in
@@ -306,7 +306,7 @@ pub fn render(l: &Loaded, reveal: bool) -> Result<String, String> {
         // *reading* rather than *acting*. That reasoning does not extend to a
         // grant that matched.
         //
-        // A reviewer found the consequence. `countersign watch --on-arrival` fires on
+        // A reviewer found the consequence. `gage watch --on-arrival` fires on
         // any grant, `allow mac share` included, and the claim written beside
         // it was that a hook can never fire on an authority the reader was not
         // shown. With the block suppressed on shares, that was simply false --

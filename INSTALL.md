@@ -10,21 +10,21 @@ From `dist/`, pick the one for their machine:
 
 | their machine | file |
 |---|---|
-| Mac, Apple silicon (M1–M4) | `countersign-0.1.0-darwin-arm64` |
-| Linux, 64-bit Intel/AMD | `countersign-0.1.0-linux-x86_64` |
+| Mac, Apple silicon (M1–M4) | `gage-0.1.0-darwin-arm64` |
+| Linux, 64-bit Intel/AMD | `gage-0.1.0-linux-x86_64` |
 
 Send the matching line from `dist/SHA256SUMS` too, over a *different* channel
 from the binary — a text message if you emailed the file. That is the same
 idea as the word-pairs below: one channel can be tampered with, two is harder.
 They check it with:
 
-    shasum -a 256 countersign-0.1.0-darwin-arm64      # macOS
-    sha256sum countersign-0.1.0-linux-x86_64          # Linux
+    shasum -a 256 gage-0.1.0-darwin-arm64      # macOS
+    sha256sum gage-0.1.0-linux-x86_64          # Linux
 
 Then:
 
-    chmod +x countersign-0.1.0-*
-    mkdir -p ~/.local/bin && mv countersign-0.1.0-* ~/.local/bin/ctx
+    chmod +x gage-0.1.0-*
+    mkdir -p ~/.local/bin && mv gage-0.1.0-* ~/.local/bin/ctx
     ctx --version
 
 macOS will refuse to run it the first time, because it was not downloaded
@@ -35,7 +35,7 @@ with no explanation stops there.
 
 ## 2. They run one command
 
-    countersign connect https://your-relay.example.com
+    gage connect https://your-relay.example.com
 
 That makes their identity, registers a mailbox on the relay, and prints the
 single line they send you. Run it again any time to see where you stand — it
@@ -49,12 +49,12 @@ not, which is fine on a private network and not fine across the internet;
 
 `connect` prints a line that looks like this:
 
-    countersign add theirname AbC123….XyZ789…
+    gage add theirname AbC123….XyZ789…
 
 That is public key material, so it is safe to send however you like — email,
 Slack, a text. You run theirs, they run yours.
 
-Then the part that is **not** automated, on purpose. `countersign add` prints four
+Then the part that is **not** automated, on purpose. `gage add` prints four
 word-pairs for the key you just added, and `connect` printed four for your
 own. **Read them to each other out loud — on a call, in person, not in the
 same channel you sent the line through.** If one word differs, it is not
@@ -67,23 +67,23 @@ anyone.
 
 ## 4. Send something
 
-    countersign send --to theirname --type question --subject "spec review" \
+    gage send --to theirname --type question --subject "spec review" \
              --prompt ask.md --file spec.md --out /tmp/pkg
-    countersign push /tmp/pkg --to theirname --yes
+    gage push /tmp/pkg --to theirname --yes
 
 On their side:
 
-    countersign pull
-    countersign inbox
-    countersign accept <id>
-    countersign open ~/.countersign/inbox/accepted/<id>
+    gage pull
+    gage inbox
+    gage accept <id>
+    gage open ~/.gage/inbox/accepted/<id>
 
 What they see is a frame saying who signed it, whether that key is on their
 list, and that nothing inside carries any authority. That is the product.
 
 ## 5. Optional: the window
 
-    countersign ui        # http://127.0.0.1:7777
+    gage ui        # http://127.0.0.1:7777
 
 A buddy list: who is on their list, who has written to them and is not, and
 who they have refused. Approving someone there asks them to type one of the
@@ -97,5 +97,5 @@ four word-pairs, read off *your* screen.
   to skip it. If they skip it, they have added a key they never checked, and
   the verdict `SENDER VERIFIED` then means only "this is the key you were
   given", which may have come from anyone.
-- **Nothing arrives.** `countersign pull` collects; it is not a daemon. `countersign watch`
+- **Nothing arrives.** `gage pull` collects; it is not a daemon. `gage watch`
   polls if they want that.
