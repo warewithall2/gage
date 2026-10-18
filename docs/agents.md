@@ -1,5 +1,11 @@
 # Driving gage from a script
 
+> **There is now an MCP server.** If your agent speaks the Model Context
+> Protocol, [mcp.md](mcp.md) is the better front door: `gage mcp` exposes
+> these operations as tools with the verdict as structured data, so you are
+> not parsing prose. This page remains the reference for the CLI itself, and
+> for anything the tool set deliberately does not expose.
+
 No human at the keyboard. Everything below is non-interactive, exits with a
 code you can branch on, and was checked against the binary rather than
 remembered.
@@ -236,6 +242,7 @@ echo "done"
 - **No identity yet** is now a plain message naming the next command, not
   `No such file or directory`.
 
-See also: [spec.md](spec.md) for what is on the wire,
+See also: [mcp.md](mcp.md) for the MCP front door,
+[spec.md](spec.md) for what is on the wire,
 [threat-model.md](threat-model.md) for what gage does not protect against, and
 [a2a.md](a2a.md) for how this sits relative to Google's A2A.

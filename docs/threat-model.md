@@ -145,6 +145,47 @@ a key you had retired read as unplaceable rather than attributable afterwards.
 That is honest rather than convenient: a witness record that could be
 reconstructed on demand would be one a thief could reconstruct too.
 
+### A local process that can spawn `gage mcp`
+
+Only relevant if you have configured an MCP host to run it; nothing starts it
+on its own.
+
+`gage mcp` serves tools over **stdio**. It has no listener, no port and no
+network surface, so the exposure it creates is exactly the exposure that
+already existed: **any local process that can run the `gage` binary can
+already do everything the CLI can do.** The MCP server does not widen that —
+it does not add a remote entry point, and it cannot be reached from another
+machine. It makes the existing local authority easier to reach, which is the
+point of a front door and is worth being explicit about rather than implying
+the protocol adds a boundary.
+
+So: the server acts with the identity's full authority for anything the CLI
+can do unattended — read the buddy list, send, push off the machine, pull,
+open bundles. It is not a sandbox and does not pretend to be one.
+
+**Except the ceremony.** Putting a key on the buddy list needs the word-pairs
+echoed back through `gage_pair_confirm`, and a wrong echo adds nothing. That
+is the one thing an agent cannot do by asking nicely.
+
+And the honest limit of that, which is the same one the viewer's confirmation
+gate has: **a key knows its own word-pairs**, and `gage_pair_start` hands them
+to the agent, so an echo proves the pairs made a round trip and not that a
+human read them off another screen. It is a checkpoint, not a proof. The tool
+description says so where the model will read it.
+
+Three things are deliberately *not* reachable through MCP, and the reasons are
+different from each other:
+
+- **`export-identity` / `restore-identity`.** A passphrase must never travel
+  as a tool argument. Tool calls land in an agent's context, are logged by
+  hosts, and may be replayed. These stay CLI-only, where the passphrase comes
+  from a no-echo prompt and never appears in argv or the environment.
+- **`init`.** Making an identity is a human moment, and the word-pairs it
+  prints are what a person carries to someone else.
+- **`accept` / `reject`.** The accept gate exists so that crossing it is an
+  act a human performed. An agent able to accept its own arrivals would have
+  removed it. `gage_open` reads a pending bundle without accepting it.
+
 ---
 
 ## Non-goals — what gage does *not* protect against

@@ -53,6 +53,12 @@ Agent2Agent protocol, and what gage deliberately is not — not a transport, not
 a registry, not an identity provider. It is a design position, not code: gage
 speaks no A2A today.
 
+**Calling it from an agent:** [docs/mcp.md](docs/mcp.md) — `gage mcp` serves
+the Model Context Protocol over stdio, so an agent calls gage as tools
+(`claude mcp add gage -- gage mcp`). The word-pair ceremony survives the hop:
+pairing needs the pairs echoed back, and the page is honest about what that
+echo does and does not prove.
+
 **Driving it from a script:** [docs/agents.md](docs/agents.md) is gage with no
 human at the keyboard — the command table for a whole handoff, the exit codes
 (checked, including the case where `1` rather than `2` means "could not read
