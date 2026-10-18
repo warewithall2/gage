@@ -8,7 +8,13 @@ base64 = "0.23.1"
 clap = { version = "4.6.7", features = ["derive"] }
 crypto_box = { version = "0.9.1", features = ["seal", "rand_core"] }
 ed25519-dalek = "3.0.0"
-rustls = "0.23"
+# `ring` rather than the default `aws-lc-rs`. Not a preference: aws-lc-sys
+# is C, compiled against the build machine's headers, and it pulled in
+# `__isoc23_sscanf`/`__isoc23_strtol` (GLIBC_2.38) -- so a binary built here
+# would not start on Ubuntu 22.04, which is what the relay host runs and what
+# a great many other machines run. A release binary that only runs on the
+# machine that built it is not a release.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 rustls-pki-types = "1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
