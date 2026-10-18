@@ -110,6 +110,15 @@ enum Cmd {
     Fingerprint {
         /// A contact's name, or nothing for your own key
         name: Option<String>,
+        /// Show the words for the SIGNING key alone.
+        ///
+        /// The normal form covers both halves of an identity, because
+        /// confirming only the signing key lets an attacker substitute the
+        /// encryption key and still pass the comparison. But a bundle does
+        /// not carry its sender's encryption key, so someone confirming a
+        /// connection request has only the signing half to compare -- and
+        /// must compare it against this
+        #[arg(long)] signing_only: bool,
     },
     /// Show what your authority file pre-authorises. Prints only -- there is
     /// deliberately no command that WRITES a grant, because an agent that
@@ -647,7 +656,10 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             // read a paragraph. Same reason the id note in `open` is on
             // stderr.
             eprintln!();
-            eprintln!("  this key says : {}", words::fingerprint(&id.public_b64()));
+            eprintln!(
+                "  this key says : {}",
+                words::fingerprint_of(&id.public_b64(), Some(&id.box_public_b64()))
+            );
             eprintln!("  shown as      : {}", words::label(&id.public_b64()));
             eprintln!();
             eprintln!("  Those words come from the key, so nobody picks their own.");
@@ -707,20 +719,42 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 );
             }
         }
-        Cmd::Fingerprint { name } => {
-            let (who, key) = match &name {
+        Cmd::Fingerprint { name, signing_only } => {
+            // The encryption key is carried alongside, because the value a
+            // person confirms has to cover BOTH halves of the identity --
+            // otherwise an attacker substitutes the half nobody checks. See
+            // `words::fingerprint_of`.
+            let (who, key, boxpub) = match &name {
                 None => {
                     let id = identity::Identity::load()?;
-                    (id.handle.clone(), id.public_b64())
+                    (id.handle.clone(), id.public_b64(), Some(id.box_public_b64()))
                 }
                 Some(n) => {
                     let c = trust::Contacts::load();
                     match c.key_for_name(n) {
-                        Some(k) => (n.clone(), k),
+                        Some(k) => {
+                            let b = c.box_keys.get(&k).cloned();
+                            if b.is_none() {
+                                // Said out loud rather than quietly showing
+                                // a narrower value as though it were the
+                                // same one.
+                                println!(
+                                    "note: {n} has no encryption key on file, so these words"
+                                );
+                                println!("  cover the signing key only. You can verify them and");
+                                println!("  not seal to them; re-add them from a full token to");
+                                println!("  get both.");
+                            }
+                            (n.clone(), k, b)
+                        }
                         None => match c.retired_by_name(n) {
                             Some((k, r)) => {
                                 println!("note: {n} is a key you retired on {}", r.retired_at);
-                                (n.clone(), k.to_string())
+                                // A retired contact's encryption key is not
+                                // kept, so these words cover the signing key
+                                // only -- which is honest for a key that can
+                                // no longer be sealed to anyway.
+                                (n.clone(), k.to_string(), c.box_keys.get(k).cloned())
                             }
                             None => return Err(format!("no contact named {n}").into()),
                         },
@@ -732,7 +766,13 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             // cut -f2` is the obvious thing to write, and `cut` passes a
             // second line straight through, so two lines here turn one value
             // into two. Found by writing exactly that in the LAN test.
-            println!("{who}\t{}", words::fingerprint(&key));
+            let boxpub = if signing_only { None } else { boxpub };
+            if signing_only {
+                eprintln!("  signing key only -- use this ONLY to confirm a connection");
+                eprintln!("  request, where the other side has no encryption key for you.");
+                eprintln!("  For a full pairing, compare the normal words, which cover both.");
+            }
+            println!("{who}\t{}", words::fingerprint_of(&key, boxpub.as_deref()));
             eprintln!("{who}\t{}\t(the label only -- never confirm against this)", words::label(&key));
         }
         Cmd::Authority => {
@@ -1504,7 +1544,10 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             println!("Ask them for theirs, and run it. Then one thing is left, and it is");
             println!("the only part of this that cannot be done for you:");
             println!();
-            println!("    {}", words::fingerprint(&id.public_b64()));
+            println!(
+                "    {}",
+                words::fingerprint_of(&id.public_b64(), Some(&id.box_public_b64()))
+            );
             println!();
             println!("  Those four word-pairs come from your key, so nobody picks their own.");
             println!("  When they add you, their screen shows four pairs for your key.");
@@ -1977,7 +2020,10 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     None => "NOT on your list -- ctx pair <name> to add it".to_string(),
                 };
                 println!("  \"{}\" at {}  ({known})", s.handle, s.addr.ip());
-                println!("      says : {}", words::fingerprint(&s.sign));
+                println!(
+                    "      says : {}",
+                    words::fingerprint_of(&s.sign, Some(&s.boxpub))
+                );
             }
             println!();
             println!("the handle is decoration. The words are the key, and the only thing");
@@ -2050,7 +2096,10 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     }
                 }
             };
-            let fp = words::fingerprint(&cand.sign);
+            // Both halves: the LAN announcement carries the encryption key
+            // too, and confirming only the signing half is what let an
+            // attacker substitute the key mail gets sealed to.
+            let fp = words::fingerprint_of(&cand.sign, Some(&cand.boxpub));
             println!();
             println!("  \"{}\" at {}", cand.handle, cand.addr.ip());
             println!("  says : {fp}");

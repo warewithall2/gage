@@ -100,8 +100,44 @@ pub const NOUNS: [&str; 256] = [
 ];
 
 /// Four pairs, 64 bits: the value a person confirms when pairing.
+///
+/// **Covers both halves of the identity when both are known**, and that is
+/// not a detail. A reviewer found that computing it over the signing key
+/// alone broke the entire ceremony: the token people exchange is
+/// `signkey.boxkey`, and only the first half was confirmed. An attacker on
+/// the channel the token travels over -- the exact threat these words exist
+/// for -- leaves the signing half untouched and substitutes its own box key.
+/// The recipient compares four word-pairs, hears an exact match, because the
+/// signing key really is the sender's, and then seals every message to the
+/// attacker. Signatures still verify. `SENDER VERIFIED` still prints. The
+/// attacker decrypts, re-seals to the real key and forwards, and both
+/// parties performed the confirmation correctly.
+///
+/// So the value confirmed is over both keys. Changing this changes every
+/// fingerprint, which means contacts confirmed under the old scheme have to
+/// be confirmed again -- the right cost, because what they confirmed did not
+/// cover what it needed to.
+pub fn fingerprint_of(sign_key_b64: &str, box_key_b64: Option<&str>) -> String {
+    match box_key_b64 {
+        // 0x1f between them, so `a` + `bc` and `ab` + `c` cannot collide.
+        // Each half trimmed, not just the concatenation: a key pasted out of
+        // a terminal picks up whitespace, and if that changed the words a
+        // correct pairing would read as an attack.
+        Some(b) => {
+            pairs(&format!("{}\u{1f}{}", sign_key_b64.trim(), b.trim()), 4).join(" · ")
+        }
+        None => pairs(sign_key_b64, 4).join(" · "),
+    }
+}
+
+/// The signing key alone. For a contact with no encryption key on file --
+/// which `add_contact` still supports, since contacts predating encryption
+/// are verifiable and not sealable -- there is nothing else to cover. Every
+/// caller that has a box key must pass it: a confirmation that silently
+/// covers less than the thing being confirmed is worse than none, because
+/// people act on it.
 pub fn fingerprint(sign_key_b64: &str) -> String {
-    pairs(sign_key_b64, 4).join(" · ")
+    fingerprint_of(sign_key_b64, None)
 }
 
 /// One pair, 16 bits: a label for telling devices apart in a list.
@@ -182,12 +218,40 @@ mod tests {
     }
 
     #[test]
-    fn a_full_token_is_not_the_same_as_its_signing_half() {
-        // `ctx whoami` prints signpub.boxpub. The words must be computed from
-        // the signing half alone, or a contact added from a full token and one
-        // added from a bare key would disagree about the same person.
+    fn the_words_cover_the_encryption_key_too() {
+        // This test replaces one that asserted the opposite, and the
+        // reasoning it carried is what caused the hole: it argued the words
+        // "must be computed from the signing half alone, or a contact added
+        // from a full token and one added from a bare key would disagree
+        // about the same person." That optimised for consistency and gave
+        // away coverage. They SHOULD disagree -- they are not the same
+        // security claim, because one can be sealed to and the other cannot.
+        //
+        // The attack it allowed: an attacker on the channel substitutes only
+        // the box half. The recipient compares four word-pairs for the
+        // signing key, hears a perfect match, and then seals every message
+        // to the attacker.
         let sign = "yomSmC3TalJ5IM+H0yvkhhWVab4ujiAVIQFR4WvdXiM=";
-        let full = format!("{sign}.SOMEBOXKEY");
-        assert_ne!(fingerprint(sign), fingerprint(&full));
+        let good = "7amQkpwKszbeF801n5EzMRm4jQlx3BylW8c59lsDcX0=";
+        let evil = "uqYqbyJEhhofgimN/j016/IpGKrK3lp/1CN7JdUHYAc=";
+        assert_ne!(
+            fingerprint_of(sign, Some(good)),
+            fingerprint_of(sign, Some(evil)),
+            "substituting the encryption key did not change the words"
+        );
+        // And covering both is not the same as covering the signing key.
+        assert_ne!(fingerprint_of(sign, Some(good)), fingerprint_of(sign, None));
+        // The separator stops `a`+`bc` colliding with `ab`+`c`.
+        assert_ne!(fingerprint_of("ab", Some("c")), fingerprint_of("a", Some("bc")));
+    }
+
+    #[test]
+    fn whitespace_in_either_half_does_not_change_the_words() {
+        let k = "yomSmC3TalJ5IM+H0yvkhhWVab4ujiAVIQFR4WvdXiM=";
+        let b = "7amQkpwKszbeF801n5EzMRm4jQlx3BylW8c59lsDcX0=";
+        assert_eq!(
+            fingerprint_of(k, Some(b)),
+            fingerprint_of(&format!("  {k}\n"), Some(&format!(" {b} ")))
+        );
     }
 }

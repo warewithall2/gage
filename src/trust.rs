@@ -616,7 +616,12 @@ pub fn add_contact(name: &str, key: &str) -> Result<Vec<String>, String> {
     // confirmation is the only thing that makes a key belong to a person, and
     // it is a great deal easier to do when the thing being compared can be
     // read aloud.
-    let words = c.key_for_name(name).map(|k| crate::words::fingerprint(&k));
+    // Both halves. The value a person is asked to confirm has to cover the
+    // encryption key too, or an attacker substitutes the half nobody checks
+    // and the comparison passes while they read everything.
+    let words = c
+        .key_for_name(name)
+        .map(|k| crate::words::fingerprint_of(&k, c.box_keys.get(&k).map(|s| s.as_str())));
     if let Some(w) = words {
         out.push(String::new());
         out.push(format!("  this key says : {w}"));

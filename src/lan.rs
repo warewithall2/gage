@@ -803,7 +803,7 @@ pub fn run(port: u16) -> std::io::Result<()> {
         Err(_) => {
             let i = Identity::create_named(None)?;
             println!("new identity, named after its own key: {}", i.handle);
-            println!("  {}", crate::words::fingerprint(&i.public_b64()));
+            println!("  {}", crate::words::fingerprint_of(&i.public_b64(), Some(&i.box_public_b64())));
             println!();
             i
         }
@@ -920,7 +920,10 @@ pub fn run(port: u16) -> std::io::Result<()> {
                 None => "not paired -- ctx pair <name> to confirm its key".to_string(),
             };
             lines.push_str(&format!("  {}  at {}  ({known})\n", e.label, e.addr));
-            lines.push_str(&format!("      says : {}\n", crate::words::fingerprint(&e.sign)));
+            lines.push_str(&format!(
+                "      says : {}\n",
+                crate::words::fingerprint_of(&e.sign, Some(&e.boxpub))
+            ));
         }
         if lines != shown {
             if lines.is_empty() {

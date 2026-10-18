@@ -193,6 +193,24 @@ pub enum Event {
     Accepted,
     Rejected,
     Opened,
+    /// Entries before this point were deleted, and this records what they
+    /// were.
+    ///
+    /// Retention is the part of an audit log that is easy to get wrong in a
+    /// specific way: deleting old entries is indistinguishable from
+    /// destroying evidence, and in a chained log it also *looks* like
+    /// tampering, because the next link no longer follows anything. So
+    /// pruning does not simply remove: it leaves a checkpoint carrying how
+    /// many entries went and a digest over exactly the bytes that were
+    /// removed. The chain continues from here.
+    ///
+    /// What that buys and does not: anyone holding a copy of the old lines
+    /// can prove they are the ones this checkpoint covers. Nobody who does
+    /// not hold them can reconstruct them, and whoever ran the prune could
+    /// have edited the file first -- a checkpoint written over altered
+    /// history digests the alteration just as faithfully. It makes deletion
+    /// *stated* rather than silent, which is the honest half of the problem.
+    Pruned,
     /// The same signed manifest arrived again, after this machine had
     /// already seen it, and was refused rather than re-staged.
     ///
@@ -213,6 +231,7 @@ impl Event {
             Event::Rejected => "rejected",
             Event::Opened => "opened",
             Event::Duplicate => "duplicate",
+            Event::Pruned => "pruned",
         }
     }
 }
@@ -432,6 +451,86 @@ pub struct Problem {
     /// 1-based line in the file, which is what a person can go and look at.
     pub line: usize,
     pub what: String,
+}
+
+/// Delete all but the newest `keep` entries, leaving a checkpoint.
+///
+/// Returns how many were removed. The checkpoint is written as part of the
+/// same rewrite, under the journal lock, so there is no moment where the
+/// file is short its history and short the record of that too.
+pub fn prune(keep: usize) -> std::io::Result<usize> {
+    let p = path();
+    let _guard = crate::state::take_lock(&p)?;
+    let Ok(bytes) = std::fs::read(&p) else { return Ok(0) };
+    let raw: Vec<&[u8]> = bytes
+        .split(|b| *b == b'\n')
+        .filter(|l| !l.iter().all(|c| c.is_ascii_whitespace()))
+        .collect();
+    if raw.len() <= keep {
+        return Ok(0);
+    }
+    let cut = raw.len() - keep;
+    // Exactly the bytes being removed, newlines included, so the digest can
+    // be recomputed by anyone who kept a copy.
+    let mut removed = Vec::new();
+    for l in &raw[..cut] {
+        removed.extend_from_slice(l);
+        removed.push(b'\n');
+    }
+    let last_n = serde_json::from_slice::<Entry>(raw[cut - 1]).map(|e| e.n).unwrap_or(0);
+    let mut check = Entry {
+        n: last_n,
+        seq: crate::state::LocalState::load().seq,
+        at: crate::bundle::now_rfc3339(),
+        event: Event::Pruned,
+        bundle: format!("pruned:{cut}"),
+        backfilled: false,
+        witness: crate::bundle::sha256_hex(&removed),
+        from_key: "local".to_string(),
+        author_key: None,
+        verdict: format!("{cut} earlier entries deleted; witness is a digest of their bytes"),
+        thread: None,
+        auto: None,
+        // The checkpoint itself starts the chain again, over what it
+        // replaced, exactly as a first chained entry does over pre-chain
+        // history.
+        prev: Some(format!("genesis:{}", crate::bundle::sha256_hex(&removed))),
+    };
+    let mut out = serde_json::to_vec(&check)?;
+    out.push(b'\n');
+    // The first surviving line must now link to the checkpoint, or the chain
+    // is broken by the prune itself -- which is the thing a prune must not
+    // look like.
+    let mut kept: Vec<Vec<u8>> = Vec::new();
+    let mut prev_hash = crate::bundle::sha256_hex(out.trim_ascii_end());
+    for l in &raw[cut..] {
+        let mut e: Entry = match serde_json::from_slice(l) {
+            Ok(e) => e,
+            Err(_) => {
+                // A line that will not parse cannot be relinked, and
+                // dropping it silently would be the prune deleting more than
+                // it said. Refuse the whole operation.
+                return Err(std::io::Error::other(
+                    "the journal has a line this version cannot read; prune refuses rather                      than delete more than it reports",
+                ));
+            }
+        };
+        e.prev = Some(prev_hash.clone());
+        let mut line = serde_json::to_vec(&e)?;
+        prev_hash = crate::bundle::sha256_hex(&line);
+        line.push(b'\n');
+        kept.push(line);
+    }
+    check.n = last_n; // unchanged; written above
+    for l in kept {
+        out.extend_from_slice(&l);
+    }
+    // Written to a temp file and renamed, so a crash leaves either the old
+    // journal or the new one and never half of either.
+    let tmp = p.with_extension("jsonl.prune");
+    std::fs::write(&tmp, &out)?;
+    std::fs::rename(&tmp, &p)?;
+    Ok(cut)
 }
 
 /// Walk the chain and report every break.

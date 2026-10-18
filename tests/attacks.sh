@@ -1610,8 +1610,34 @@ if [ "$pairs" -eq 4 ]; then ok; else bad "a fingerprint is $pairs pairs, wanted 
 # two. Caught by writing exactly that in the LAN pairing test.
 lines=$(CTX_HOME=$T/a $CTX fingerprint 2>/dev/null | wc -l | tr -d '[:space:]')
 if [ "$lines" -eq 1 ]; then ok; else bad "fingerprint put $lines lines on stdout, wanted 1"; fi
+# The label is NOT part of the fingerprint, and that changed deliberately.
+# The fingerprint now covers the signing key AND the encryption key, because
+# confirming only the signing half let an attacker substitute the key mail
+# gets sealed to and still pass the comparison word for word. The label is a
+# device nickname derived from the signing key alone -- it has to be, since a
+# bundle's manifest carries only that -- so the two now differ, and the
+# output has to stop implying otherwise.
 alab=$(CTX_HOME=$T/a $CTX fingerprint 2>&1 >/dev/null | cut -f2)
-case "$afp" in "$alab"*) ok;; *) bad "the label '$alab' is not a prefix of '$afp'";; esac
+case "$afp" in
+  "$alab"*) bad "the label is still a prefix of the fingerprint, so the fingerprint \
+probably does not cover the encryption key";;
+  *) ok;;
+esac
+# Substituting ONLY the encryption key must change the words. This is the
+# attack: the signing half is left alone, so every word a person reads aloud
+# matches, and mail is then sealed to somebody else.
+AFULL=$(CTX_HOME=$T/a $CTX whoami | cut -f2)
+ASIGN=${AFULL%%.*}
+mkdir -p "$T"/{fpx,fpy}
+CTX_HOME=$T/fpx $CTX init fpx >/dev/null 2>&1
+EVILBOX=$(CTX_HOME=$T/fpx $CTX whoami | cut -f2); EVILBOX=${EVILBOX#*.}
+CTX_HOME=$T/fpy $CTX init fpy >/dev/null 2>&1
+CTX_HOME=$T/fpy $CTX add alice_real "$AFULL" > "$T/fpreal" 2>&1
+CTX_HOME=$T/fpy $CTX add alice_evil "$ASIGN.$EVILBOX" > "$T/fpevil" 2>&1
+REALW=$(grep "this key says" "$T/fpreal" | sed 's/.*: //')
+EVILW=$(grep "this key says" "$T/fpevil" | sed 's/.*: //')
+if [ -n "$REALW" ] && [ "$REALW" != "$EVILW" ]; then ok
+else bad "swapping only the encryption key did not change the words a person confirms"; fi
 # A different key says something different, or the check is decoration.
 bfp=$(CTX_HOME=$T/b $CTX fingerprint 2>/dev/null | head -1 | cut -f2)
 if [ "$afp" != "$bfp" ]; then ok; else bad "two different keys render the same words"; fi
@@ -1747,10 +1773,14 @@ code "init with no handle" $? 0
 h=$(CTX_HOME=$T/sx $CTX whoami 2>/dev/null | cut -f1)
 words=$(printf '%s' "$h" | wc -w)
 if [ "$words" -eq 2 ]; then ok; else bad "a self-named identity is $words words, wanted 2"; fi
-# Derived, not random: it is the first pair of its own fingerprint, so the
-# name on the list and the words you confirm cannot disagree.
-sxfp=$(CTX_HOME=$T/sx $CTX fingerprint 2>/dev/null | cut -f2)
-case "$sxfp" in "$h"*) ok;; *) bad "the handle '$h' is not the first pair of '$sxfp'";; esac
+# Derived from the SIGNING key, not random. It is no longer the first pair of
+# the confirmable fingerprint, and that is deliberate: the fingerprint now
+# covers both halves of an identity, while a derived handle has to come from
+# the signing key alone, because a bundle's manifest carries only that. The
+# two are different values answering different questions, and the output says
+# so rather than letting a person think the handle is a confirmation.
+sxfp=$(CTX_HOME=$T/sx $CTX fingerprint --signing-only 2>/dev/null | cut -f2)
+case "$sxfp" in "$h"*) ok;; *) bad "the handle '$h' is not the first pair of its signing-key words '$sxfp'";; esac
 
 # And `ctx lan` on a machine with no identity makes one rather than failing,
 # because being asked to choose a name before seeing the thing work is the
@@ -2578,7 +2608,9 @@ PY4
 then ok; else bad "the asked pair was the one the label gives away"; fi
 
 # The gate. Pair 1 is on screen, so offering it must not work.
-BLFP=$(CTX_HOME=$T/dc3 $CTX fingerprint 2>/dev/null | head -1 | cut -f2)
+# A request carries no encryption key, so the words both sides compare are
+# the signing-key ones. The card says so.
+BLFP=$(CTX_HOME=$T/dc3 $CTX fingerprint --signing-only 2>/dev/null | head -1 | cut -f2)
 BLLAB=$(printf '%s' "$BLFP" | awk -F' · ' '{print $1}')
 BLASK=$(python3 -c "
 import json;print(json.load(open('$T/bl1'))['requests'][0]['ask_pair'])")

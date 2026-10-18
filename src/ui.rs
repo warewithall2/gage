@@ -448,7 +448,7 @@ fn nearby_json() -> String {
                 "label": e.label,
                 "handle": e.handle,
                 "addr": e.addr,
-                "fingerprint": crate::words::fingerprint(&e.sign),
+                "fingerprint": crate::words::fingerprint_of(&e.sign, Some(&e.boxpub)),
                 "sign": e.sign,
                 // The name on YOUR list, or nothing. The page must not infer
                 // trust from the handle, which is a string that machine chose.
@@ -614,7 +614,7 @@ fn buddies_json() -> String {
                 "key": k,
                 // Shown so a person can confirm a contact they already have,
                 // which is what you do after a machine behaves oddly.
-                "fingerprint": crate::words::fingerprint(k),
+                "fingerprint": crate::words::fingerprint_of(k, contacts.box_keys.get(k).map(|s| s.as_str())),
                 "label": crate::words::label(k),
                 "sealable": contacts.box_keys.contains_key(k),
                 "unread": unread.get(k).copied().unwrap_or(0),
@@ -849,7 +849,7 @@ fn pair_from_ui(body: &str) -> Result<Vec<String>, (&'static str, String)> {
     // the caller is local -- but it catches the real bug, which is a list
     // that changed under the person between seeing the words and clicking.
     let shown = v.get("fingerprint").and_then(|x| x.as_str()).unwrap_or("");
-    let real = crate::words::fingerprint(&e.sign);
+    let real = crate::words::fingerprint_of(&e.sign, Some(&e.boxpub));
     if shown != real {
         return Err((
             "409 Conflict",
@@ -970,7 +970,7 @@ fn connect_from_ui(body: &str) -> Result<Vec<String>, (&'static str, String)> {
     if reveal_only {
         return Ok(vec![
             "reveal".to_string(),
-            crate::words::fingerprint(&key),
+            crate::words::fingerprint_of(&key, contacts.box_keys.get(&key).map(|s| s.as_str())),
         ]);
     }
     // Only the signing key, unless one is already on file.

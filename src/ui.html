@@ -738,8 +738,14 @@ let REVEAL=null;
 // be selling a check it does not perform.
 const ASKWHY='The word-pairs come from the key itself, so nobody picks their own. '
   +'This screen does not show them yet, on purpose: read the pair below off the '
-  +'OTHER machine (ctx fingerprint, or its own window). Get it right and the rest '
-  +'are shown, so you can check all four before adding anything.';
+  +'OTHER machine, where they must run ctx fingerprint --signing-only. Get it '
+  +'right and the rest are shown, so you can check all four before adding.';
+
+// Said on the card, because it is a real limit on what this approval buys.
+const ASKHALF='These words cover the SIGNING key only. A message does not carry its '
+  +'sender\u2019s encryption key, so adding them here lets you verify what they '
+  +'sign and not send them sealed mail. For both, get their `ctx add` line and '
+  +'compare the normal four pairs.';
 
 // The limit, said where the decision is made rather than in a help page.
 // A sender knows all four pairs of its own key, because they come from that
@@ -893,6 +899,7 @@ function budRender(){
       if(open&&!shown){
         h+=`<div class="bgate">
           <div class="bwhy">${esc(ASKWHY)}</div>
+          <div class="bwhy">${esc(ASKHALF)}</div>
           <div class="bwhy" style="color:var(--warn)">${esc(ASKTRAP)}</div>
           <div class="bwhy">Type pair <b>${q.ask_pair}</b> of four, as the other machine shows it.</div>
           <input class="lanin" placeholder="pair ${q.ask_pair}, e.g. two words" value="${esc(ACONF)}"
