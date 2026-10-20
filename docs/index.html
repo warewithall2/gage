@@ -151,12 +151,23 @@
   </figure>
 
   <h2>Where it is</h2>
-  <p>v0.2.0. 118 unit tests and 776 adversarial checks pass, along with the
+  <p>v0.3.0. 130 unit tests and 871 adversarial checks pass, along with the
   identity restore drill and the viewer end-to-end suite. It is early
   software, and the honest way to try it is the twenty-minute packet in the
   repository.</p>
 
-  <p><strong>0.2.0 fixes a security defect in <code>gage open</code></strong>,
+  <p><strong>0.3.0 adds two front doors.</strong> <code>gage mcp</code> serves
+  the Model Context Protocol over stdio, so an agent calls nine gage tools
+  instead of shelling out and parsing prose — a front door, not a second
+  implementation, running the same functions the CLI runs. And the local
+  viewer no longer dead-ends someone with no identity: a first-run wizard
+  walks from nothing to a first verified handoff in the page, with the
+  word-pair comparison still a thing two people do and the pair button
+  disabled until it is confirmed. Passphrases stay in the terminal. An
+  installed 0.2.0 keeps working — nothing about the bundle format or the
+  relay protocol changed.</p>
+
+  <p><strong>0.2.0 fixed a security defect in <code>gage open</code></strong>,
   the one part of gage that is a security control: a sender could get a line
   of their own into the trust frame — including a forged authorisation line
   carrying the frame's real marker. <strong>0.1.0 is affected and upgrading is
@@ -190,6 +201,6 @@
   </ul>
 
   <footer>
-    gage 0.2.0 · dual-licensed MIT or Apache-2.0 · no trackers and no scripts on this page
+    gage 0.3.0 · dual-licensed MIT or Apache-2.0 · no trackers and no scripts on this page
   </footer>
 </div>

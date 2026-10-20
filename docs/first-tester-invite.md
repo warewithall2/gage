@@ -64,7 +64,7 @@ Thanks —
 ---
 
 *Note for Owen, not for the tester: send the binary for their platform —
-`gage-0.2.0-linux-x86_64` or `gage-0.2.0-darwin-arm64`, both in the packet —
+`gage-0.3.0-linux-x86_64` or `gage-0.3.0-darwin-arm64`, both in the packet —
 with `first-tester.md` as the instructions. Send the matching checksum line
 from `SHA256SUMS` on a **different** channel; the instructions tell them to
 compare the two, which is the point. Mac testers are no longer blocked. See

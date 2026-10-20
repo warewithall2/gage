@@ -7,8 +7,8 @@ It is a front door, not a second implementation: every tool runs the same
 functions the CLI runs. If a verdict ever differs between `gage open` and
 `gage_open`, that is a bug here, not a second opinion.
 
-> **Status:** on master, unreleased. `gage --version` must report 0.3.0 or
-> later, or a build from master. The 0.2.0 binary has no `mcp` subcommand.
+> **Status:** shipped in 0.3.0. `gage --version` must report 0.3.0 or later,
+> or a build from master. The 0.2.0 binary has no `mcp` subcommand.
 
 ## Setup
 

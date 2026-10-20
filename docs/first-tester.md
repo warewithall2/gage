@@ -26,13 +26,13 @@ one, they would have to tamper with the other too.
 
 Check the file matches:
 
-    sha256sum gage-0.2.0-linux-x86_64          # Linux
-    shasum -a 256 gage-0.2.0-darwin-arm64      # Mac
+    sha256sum gage-0.3.0-linux-x86_64          # Linux
+    shasum -a 256 gage-0.3.0-darwin-arm64      # Mac
 
 Compare that output to the line they sent. It must match exactly. Then:
 
-    chmod +x gage-0.2.0-*
-    mkdir -p ~/.local/bin && mv gage-0.2.0-* ~/.local/bin/gage
+    chmod +x gage-0.3.0-*
+    mkdir -p ~/.local/bin && mv gage-0.3.0-* ~/.local/bin/gage
     gage --version
 
 **On a Mac, the first run will be refused** with a dialog saying it cannot be
