@@ -318,6 +318,19 @@ textarea:focus{outline:none;border-color:var(--accent)}
 .hint code{font-family:var(--mono);font-size:var(--t2);background:var(--sunk);
   border:1px solid var(--line);border-radius:var(--r1);padding:2px 6px;
   -webkit-box-decoration-break:clone;box-decoration-break:clone}
+.wizard{position:fixed;inset:0;z-index:20;background:var(--bg);display:grid;place-items:center;
+  padding:var(--s5);overflow:auto}
+.wcard{width:min(680px,100%);background:var(--sheet);border:1px solid var(--line);
+  border-radius:var(--r2);padding:clamp(20px,5vw,40px);box-shadow:var(--shadow)}
+.wcard h1{font-size:var(--t5);margin-bottom:var(--s4)}
+.wcard p{color:var(--dim);margin:0 0 var(--s4);max-width:62ch}
+.winput{width:100%;padding:var(--s3);border:1px solid var(--line2);border-radius:var(--r1);
+  background:var(--bg);margin:0 0 var(--s3)}
+.wwords{font-family:var(--mono);font-size:var(--t3);line-height:1.9;white-space:pre-wrap;
+  background:var(--sunk);border-radius:var(--r1);padding:var(--s4);margin:var(--s3) 0}
+.werror{color:var(--bad);margin:var(--s3) 0}
+.wcheck{display:flex;gap:var(--s2);align-items:flex-start;color:var(--dim);margin:var(--s4) 0}
+.wcheck input{margin-top:5px}
 </style>
 
 <div class="app" id="app">
@@ -346,6 +359,7 @@ textarea:focus{outline:none;border-color:var(--accent)}
     <div class="msgs" id="budpane" hidden></div>
   </div>
 </div>
+<div class="wizard" id="wizard" hidden aria-live="polite"></div>
 
 <script>
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -510,7 +524,7 @@ function render(){
           <span class="peers">${esc(who)}</span></span>
       </span>
     </button>`;}).join('')
-    : `<div class="empty">Nothing here yet.<br>Bundles land in <b>pending</b> first.<br>Arriving is not accepting.</div>`;
+    : `<div class="empty">No bundles yet. Pair on this network, then ask your buddy to send you one.</div>`;
 
   // The right-hand pane and the header belong to whichever tab is showing.
   // This runs on every poll, so without the guard it reinstated the Chats
@@ -975,8 +989,7 @@ function budRender(){
   }
   h+=`<div class="bsec">Your list<span class="bnum">${BUD.buddies.length}</span></div>`;
   if(!BUD.buddies.length){
-    h+=`<div class="lansub">Nobody yet. A key that sends you something shows up above,
-      and pairing on this network adds one with its encryption key as well.</div>`;
+    h+=`<div class="lansub">Nobody yet. Pair with a buddy on this network to add their key.</div>`;
   }
   for(const b of BUD.buddies){
     h+=`<div class="dev">
@@ -1047,6 +1060,55 @@ async function budLoad(){
 budLoad();setInterval(budLoad,2500);
 hashRead();
 setTab(TAB);
+
+// First-run guide. It uses the same local endpoints and nearby-device data as
+// the console. The ceremony requires an explicit spoken-comparison checkbox
+// before the fingerprint shown here is submitted to /api/pair.
+let W={stage:'welcome',handle:'',words:[],warning:'',devices:[],chosen:'',name:'',compared:false,
+  subject:'Hello from gage',message:'I have set up gage. Reply when you are ready.',error:'',busy:false};
+function wRender(){
+  const el=document.getElementById('wizard'); if(!el)return;
+  const field=(id,val,placeholder)=>`<input class="winput" id="${id}" value="${esc(val)}" placeholder="${placeholder}" oninput="W.${id==='whandle'?'handle':id==='wname'?'name':id==='wsubject'?'subject':'message'}=this.value">`;
+  let body='';
+  if(W.stage==='welcome')body=`<h1>Welcome to gage</h1><p>Gage lets you exchange signed bundles with people you know. First choose a name for this machine, then compare word-pairs with a buddy before you send them a first bundle.</p><button class="btn go" onclick="W.stage='handle';wRender()">Get started</button>`;
+  if(W.stage==='handle')body=`<h1>Choose a handle</h1><p>This name helps you and your buddies recognize this machine.</p>${field('whandle',W.handle,'Your handle')}<button class="btn go" onclick="wCreate()" ${W.busy?'disabled':''}>${W.busy?'Creating…':'Create identity'}</button>`;
+  if(W.stage==='words')body=`<h1>Your word-pairs</h1><p>Keep these pairs available while you compare them with your buddy. They identify this machine.</p><div class="wwords">${esc(W.words.join('\n'))}</div><p>${esc(W.warning)}</p><p>For a backup, run <code>gage export-identity</code> in a terminal and keep the exported file safe.</p><button class="btn go" onclick="wNearby()">Continue to pairing</button>`;
+  if(W.stage==='pair'){
+    const d=W.devices.find(x=>x.label===W.chosen);
+    body=`<h1>Pair with a buddy</h1><p>Both machines must be running <code>gage lan</code> on the same network. Select your buddy, read all four pairs aloud, and compare them with the other screen.</p>`+
+      (W.devices.length?W.devices.map(x=>`<label class="wcheck"><input type="radio" name="wdevice" ${W.chosen===x.label?'checked':''} onchange="W.chosen='${esc(x.label)}';W.compared=false;wRender()"><span>${esc(x.paired_as||x.label)}</span></label>${W.chosen===x.label?`<div class="wwords">${esc(x.fingerprint)}</div>`:''}`).join(''):'<p>No nearby machines yet. Start <code>gage lan</code> on both machines, then refresh this step.</p>')+
+      `<button class="btn" onclick="wNearby()">Refresh nearby machines</button>`+
+      (d?`<label class="wcheck"><input type="checkbox" ${W.compared?'checked':''} onchange="W.compared=this.checked"><span>We compared these aloud and all four pairs match.</span></label>${field('wname',W.name,'Name for this buddy')}<button class="btn go" onclick="wPair()" ${!W.compared||W.busy?'disabled':''}>${W.busy?'Pairing…':'Pair buddy'}</button>`:'');
+  }
+  if(W.stage==='send')body=`<h1>Send your first bundle</h1><p>Write a short message for ${esc(W.name)}. Gage will send it through the existing bundle flow.</p>${field('wsubject',W.subject,'Subject')}<textarea class="winput" id="wmessage" oninput="W.message=this.value">${esc(W.message)}</textarea><button class="btn go" onclick="wSend()" ${W.busy?'disabled':''}>${W.busy?'Sending…':'Send first bundle'}</button>`;
+  if(W.stage==='done')body=`<h1>You’re set up</h1><p>Your first bundle was sent. You can continue in the gage console.</p><button class="btn go" onclick="document.getElementById('wizard').hidden=true">Open console</button>`;
+  el.innerHTML=`<section class="wcard">${body}${W.error?`<div class="werror">${esc(W.error)}</div>`:''}</section>`;
+}
+async function wCreate(){
+  W.busy=true;W.error='';wRender();
+  try{const r=await post('/api/init',{handle:W.handle});const j=await r.json().catch(()=>({}));if(!r.ok)throw Error(j.error||`HTTP ${r.status}`);
+    W.handle=j.handle;W.words=Array.isArray(j.words)?j.words:(typeof j.words==='string'?j.words.split('\n'):[]);W.warning=j.backup_warning||'';W.stage='words';
+  }catch(e){W.error=e.message||String(e)} W.busy=false;wRender();
+}
+async function wNearby(){
+  W.error='';try{const r=await fetch('/api/nearby');if(!r.ok)throw Error(`HTTP ${r.status}`);const j=await r.json();W.devices=j.devices||[];W.chosen='';W.compared=false;W.stage='pair';}
+  catch(e){W.error=e.message||String(e)}wRender();
+}
+async function wPair(){
+  const d=W.devices.find(x=>x.label===W.chosen);if(!d||!W.compared)return;
+  W.busy=true;W.error='';wRender();
+  try{const r=await post('/api/pair',{label:d.label,name:W.name.trim(),fingerprint:d.fingerprint});const j=await r.json().catch(()=>({}));if(!r.ok)throw Error(j.error||`HTTP ${r.status}`);W.stage='send';}
+  catch(e){W.error=e.message||String(e)}W.busy=false;wRender();
+}
+function wB64(s){const bytes=new TextEncoder().encode(s);let bin='';for(const b of bytes)bin+=String.fromCharCode(b);return btoa(bin)}
+async function wSend(){
+  if(!W.message.trim())return;W.busy=true;W.error='';wRender();
+  try{const r=await post('/api/send',{to:W.name.trim(),subject:W.subject.trim(),type:'share',files:[{name:'hello.txt',data:wB64(W.message)}]});const j=await r.json().catch(()=>({}));if(!r.ok)throw Error(j.error||`HTTP ${r.status}`);W.stage='done';}
+  catch(e){W.error=e.message||String(e)}W.busy=false;wRender();
+}
+async function wStart(){try{const r=await fetch('/api/state');if(!r.ok)throw Error(`HTTP ${r.status}`);const s=await r.json();if(s.has_identity===false){document.getElementById('wizard').hidden=false;wRender()}}
+  catch(e){/* Existing console loader reports API availability failures. */}}
+wStart();
 
 load();setInterval(load,2500);
 </script>
