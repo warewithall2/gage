@@ -1,5 +1,94 @@
 # Changelog
 
+## 0.3.0 — 2026-10-20
+
+Two front doors. gage already did the work; 0.3.0 is about what it takes to
+reach it — an agent can now call gage as MCP tools instead of shelling out and
+parsing prose, and a person with no identity can get one from the local page
+instead of being told to go back to a terminal.
+
+No security fix in this release. **No format or protocol change** — see
+*Notes*.
+
+### Added
+
+- **`gage mcp` — a Model Context Protocol server over stdio.** Nine tools:
+  `gage_identity`, `gage_buddies`, `gage_pair_start`, `gage_pair_confirm`,
+  `gage_send`, `gage_push`, `gage_pull`, `gage_inbox`, `gage_open`. Setup and
+  the full tool table are in [docs/mcp.md](docs/mcp.md).
+
+  A front door, not a second implementation: every tool runs the function the
+  CLI runs, so a verdict cannot differ between `gage open` and `gage_open`.
+  stdio only — no listener, no port, no new network surface. No new crates
+  either; JSON-RPC is a few hundred lines over the `serde_json` already in
+  the tree.
+
+  **The human boundary survives the hop, which is the point.**
+  `gage_pair_start` returns the word-pairs and adds *nothing*;
+  `gage_pair_confirm` completes only if they come back exactly, does not
+  reveal what the right answer was, and holds the pending pairing in memory
+  for the session only. The honest limit is written into the tool's own
+  description, where a model will read it: a key knows its own word-pairs, so
+  echoing back what `pair_start` handed you proves nothing. It is a
+  checkpoint, not a proof.
+
+  **Deliberately not exposed:** `export-identity` / `restore-identity`,
+  because a passphrase must never travel as a tool argument through a context
+  that hosts log and may replay; `init`, because that is a human moment;
+  `accept` and `reject`, because the accept gate exists so that crossing it is
+  an act a human performed. `gage_open` reads a pending bundle without
+  accepting it, which is all an agent needs in order to report.
+  `gage_push` carries the same confirmation `--yes` does, because that is the
+  moment something leaves the machine.
+
+- **A first-run wizard in the local page, and `POST /api/init`.** The viewer
+  no longer dead-ends a visitor who has no identity. `/api/state` now says
+  outright whether one exists (`has_identity`), and the page walks from
+  nothing to a first verified handoff: create an identity, see your four
+  word-pairs, pick a nearby machine and compare its pairs, pair, send one
+  bundle.
+
+  Creation runs `Identity::create_named` — the same function `gage init`,
+  `connect` and `quickstart` reach. The viewer holds no key generation,
+  storage or permission logic of its own, and its refusals are inherited:
+  create will not clobber an existing identity, and that comes back as a 409
+  carrying the CLI's own words. A handle typed here is held to the grammar the
+  page already holds contact names to; an empty one derives the two-word label,
+  as `init` with no name does.
+
+  **The pair button stays disabled until the comparison is confirmed**, and the
+  word-pairs are shown for the machine you selected — the ceremony is not
+  reduced to a click. **Export and restore stay terminal-only: no passphrase
+  ever transits a browser form.**
+
+- **Teaching empty states** throughout the page, so a console with nothing in
+  it yet says what would put something there.
+
+### Changed
+
+- `send_bundle` pushes its human-facing lines into a caller-owned sink instead
+  of printing them. Every CLI caller prints the same lines in the same place,
+  so terminal output is unchanged — but on a stdio transport the server's own
+  stdout *is* the JSON-RPC channel, and a stray `println!` would corrupt the
+  session.
+- `gage inbox --json` and the MCP inbox tool now render from one function, so
+  the two cannot drift.
+
+### Notes
+
+- **No format or protocol change.** `v: 1` manifests and envelopes are
+  unchanged, the relay protocol is unchanged, and **an installed 0.2.0 keeps
+  working and interoperates with 0.3.0.** `seal.rs` is untouched in this
+  release; the new HTTP route and JSON field are additions to the local
+  viewer, which is not a peer protocol.
+- **An agent needs a 0.3.0 binary to use `gage mcp`** — the subcommand does
+  not exist in 0.2.0. Nothing else requires an upgrade.
+- Verified at this commit: 130 unit tests, 871 adversarial checks,
+  the identity restore drill (16 checks), and the viewer end-to-end
+  suite, all passing.
+- The security review of this codebase is still not independent. That remains
+  the largest open item, as [docs/threat-model.md](docs/threat-model.md) says.
+
 ## 0.2.0 — 2026-10-18
 
 **Upgrade recommended.** This release fixes a security defect in the one part
