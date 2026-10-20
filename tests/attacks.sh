@@ -1989,6 +1989,194 @@ wait 2>/dev/null
 unset CTX_LAN_BCAST
 
 echo
+echo "--- the front door: POST /api/init, the one setup act the page performs"
+# The route creates this machine's identity, which is the one act in gage
+# whose failure is unrecoverable: a key written over is a key gone, and every
+# contact would have to confirm a new one out loud. So the checks here are
+# about what it must REFUSE -- a second init, a handle that is not a plain
+# one, and a home whose key is present but will not load -- and about what
+# must never come back out of it, which is key material.
+IPORT=7817
+mkdir -p "$T"/{ini,inx}
+CTX_HOME=$T/ini $CTX ui --port $IPORT > "$T/inilog" 2>&1 &
+INIPID=$!
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  curl -s -m 1 -o /dev/null "http://127.0.0.1:$IPORT/api/state" 2>/dev/null && break
+  sleep 0.3
+done
+I="http://127.0.0.1:$IPORT"
+IH=(-H "Host: 127.0.0.1:$IPORT" -H "X-Gage: 1" -H "Origin: $I" \
+    -H "Content-Type: application/json")
+# Body and status, both: a 200 whose body is an error and a 409 whose body is
+# a new key are different bugs and the code alone cannot tell them apart.
+initc() { curl -s -o "$2" -w '%{http_code}' -X POST "${IH[@]}" -d "$1" "$I/api/init"; }
+
+# An empty home is the only state that may be offered creation, and it says
+# so outright rather than leaving the page to infer it from `me`.
+curl -s "${IH[@]}" "$I/api/state" > "$T/inis0" 2>&1
+want "$T/inis0" '"has_identity":false'
+want "$T/inis0" '"me":null'
+
+# Every guard that covers the older routes covers this one, or it is the way
+# around them -- and a refused request must not leave a key behind, which is
+# the difference between a guard and a speed bump.
+curl -s -X POST -H "Host: 127.0.0.1:$IPORT" -H 'Content-Type: application/json' \
+  -d '{"handle":"drive-by"}' "$I/api/init" > "$T/inig1" 2>&1
+want "$T/inig1" "cross-site request refused"
+curl -s -X POST -H "Host: 127.0.0.1:$IPORT" -H 'X-Gage: 1' \
+  -H 'Origin: http://evil.example' -H 'Content-Type: application/json' \
+  -d '{"handle":"drive-by"}' "$I/api/init" > "$T/inig2" 2>&1
+want "$T/inig2" "cross-site request refused"
+curl -s -X POST -H "Host: evil.example" -H 'X-Gage: 1' -H "Origin: $I" \
+  -H 'Content-Type: application/json' -d '{"handle":"drive-by"}' \
+  "$I/api/init" > "$T/inig3" 2>&1
+want "$T/inig3" "not addressed to this loopback viewer"
+if [ -e "$T/ini/identity.key" ]; then
+  bad "a cross-site POST to /api/init created an identity"
+else ok; fi
+# Reading the route is not a thing, and a GET that fell through to creation
+# would be reachable from an <img> tag.
+ig=$(curl -s -o /dev/null -w '%{http_code}' -H "Host: 127.0.0.1:$IPORT" "$I/api/init")
+code "GET /api/init" "$ig" 404
+if [ -e "$T/ini/identity.key" ]; then bad "a GET to /api/init created an identity"; else ok; fi
+
+# The handle is written to disk as-is, rendered by pages and quoted into shell
+# lines, so the classes that must not reach it are traversal pieces,
+# separators, quotes and control characters -- the newline shape this project
+# has been bitten by in a filename and in a subject -- plus the over-long.
+# Each one must be a 400 AND must leave the home empty: a refusal that has
+# already written the key is not a refusal.
+for h in '"../etc"' '"..%2fetc"' '"a/b"' '"a\\b"' '"line\nbreak"' \
+         '"ret\rurn"' '"tab\there"' '"nul\u0000byte"' '"bell\u0007"' \
+         '"esc\u001b[31m"' '"o'"'"'brien"' '"quote\"d"' '"semi;colon"' \
+         '"back`tick"' '"dollar$var"' '"emoji😀"' \
+         '"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"'; do
+  c=$(initc "{\"handle\":$h}" "$T/inih")
+  if [ "$c" = "400" ]; then ok; else bad "/api/init took the handle $h ($c)"; fi
+  want "$T/inih" "a handle is letters, digits, spaces, - and _"
+  if [ -e "$T/ini/identity.key" ]; then
+    bad "a refused handle ($h) still created an identity"
+    break
+  else ok; fi
+done
+# A body that is not JSON is a 400 too, and not a 500 and not a key.
+c=$(initc 'this is not json' "$T/inib")
+if [ "$c" = "400" ]; then ok; else bad "a non-JSON init body returned $c"; fi
+want "$T/inib" "bad body"
+if [ -e "$T/ini/identity.key" ]; then bad "a non-JSON init body created an identity"; else ok; fi
+
+# A handle that is not a string is the absent handle, which means "derive the
+# label from the key" -- the same thing `gage init` with no name does. What
+# is pinned here is that the non-string never becomes the handle: a `123` or
+# a `{}` written through to the handle file would be a type confusion that
+# reaches disk.
+c=$(initc '{"handle":{"a":1}}' "$T/init1")
+case "$c" in
+  400) ok ;;
+  200) if grep -qF '"handle":"[' "$T/init1" || grep -qF '"handle":"{' "$T/init1"
+       then bad "a non-string handle was written through as the handle"
+       else ok; fi ;;
+  *)   bad "a non-string handle returned $c" ;;
+esac
+rm -rf "$T/ini"/*; mkdir -p "$T/ini"
+
+# The good case, so the refusals above are refusals and not a route that
+# never worked. The contract the wizard consumes is all four fields.
+c=$(initc '{"handle":"front door"}' "$T/init2")
+if [ "$c" = "200" ]; then ok; else bad "a plain handle was refused by /api/init ($c)"; fi
+want "$T/init2" '"ok":true'
+want "$T/init2" '"handle":"front door"'
+want "$T/init2" '"words":'
+want "$T/init2" "gage export-identity"
+if [ -f "$T/ini/identity.key" ]; then ok; else bad "/api/init reported ok and made no key"; fi
+# The words the page shows are this key's own, not a second rendering of it.
+IFP=$(CTX_HOME=$T/ini $CTX fingerprint 2>/dev/null | cut -f2)
+want "$T/init2" "$IFP"
+curl -s "${IH[@]}" "$I/api/state" > "$T/inis1" 2>&1
+want "$T/inis1" '"has_identity":true'
+
+# A second init is the unrecoverable one. It must refuse, and the key on disk
+# must be the same bytes afterwards -- the status code alone would not notice
+# a route that refused the caller and clobbered the file anyway.
+IBEFORE=$(sha256sum "$T/ini/identity.key" | cut -d' ' -f1)
+c=$(initc '{"handle":"second go"}' "$T/init3")
+if [ "$c" = "409" ]; then ok; else bad "a second /api/init returned $c, not 409"; fi
+want "$T/init3" "already exists"
+# The refusal names the one command that does replace a key, as the CLI's does.
+want "$T/init3" "gage rotate"
+IAFTER=$(sha256sum "$T/ini/identity.key" | cut -d' ' -f1)
+if [ "$IBEFORE" = "$IAFTER" ]; then ok; else bad "a second /api/init replaced the key"; fi
+# And an empty handle, the derive-from-key path, is refused the same way
+# rather than falling into creation by another door.
+c=$(initc '{}' "$T/init4")
+if [ "$c" = "409" ]; then ok; else bad "an init with no handle at all returned $c, not 409"; fi
+if [ "$(sha256sum "$T/ini/identity.key" | cut -d' ' -f1)" = "$IAFTER" ]; then ok
+else bad "an init with no handle replaced the key"; fi
+
+# Nothing that comes out of the route, or goes into the server's log, may
+# carry the secret halves of the key. The words are a hash of the PUBLIC key
+# for exactly this reason, and a log line written at creation is the easy
+# place for a seed to end up.
+ISEED=$(python3 -c "import json;print(json.load(open('$T/ini/identity.key'))['sign_seed'])")
+IBOX=$(python3 -c "import json;print(json.load(open('$T/ini/identity.key'))['box_secret'])")
+for f in "$T/init2" "$T/init3" "$T/inis1" "$T/inilog"; do
+  wantno "$f" "$ISEED"
+  wantno "$f" "$IBOX"
+done
+# Belt and braces on the private file itself: it is the owner's alone, and a
+# first run through a browser must not land it any looser than the CLI does.
+# GNU `stat` takes -c and BSD `stat` takes -f, and the wrong one does not
+# fail cleanly: GNU's -f prints filesystem statistics and exits 0, so a
+# `|| ` fallback never runs and the mode comparison is against a paragraph
+# of tmpfs block counts. Try the GNU form and fall back only on a real
+# failure.
+IMODE=$(stat -c '%a' "$T/ini/identity.key" 2>/dev/null \
+        || stat -f '%Lp' "$T/ini/identity.key" 2>/dev/null)
+if [ "$IMODE" = "600" ]; then ok; else bad "the key a page created is mode $IMODE, not 600"; fi
+
+kill $INIPID 2>/dev/null
+wait $INIPID 2>/dev/null
+
+# A home whose identity is PRESENT but will not load is not a first run, and
+# this is the case where saying so matters most: a page that offered creation
+# here would be offering to write over a key whose owner is one bad file
+# permission away from getting it back. `me` is null in both states, so the
+# page cannot use `me` to tell them apart -- `has_identity` is the flag, and
+# it reports the file.
+IPORT2=7818
+printf '{"v":3,"sign_seed":"not-a-key"' > "$T/inx/identity.key"
+chmod 000 "$T/inx/identity.key"
+XBEFORE='{"v":3,"sign_seed":"not-a-key"'
+CTX_HOME=$T/inx $CTX ui --port $IPORT2 > "$T/inxlog" 2>&1 &
+INXPID=$!
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  curl -s -m 1 -o /dev/null "http://127.0.0.1:$IPORT2/api/state" 2>/dev/null && break
+  sleep 0.3
+done
+X="http://127.0.0.1:$IPORT2"
+XH=(-H "Host: 127.0.0.1:$IPORT2" -H "X-Gage: 1" -H "Origin: $X" \
+    -H "Content-Type: application/json")
+curl -s "${XH[@]}" "$X/api/state" > "$T/inxs" 2>&1
+want "$T/inxs" '"has_identity":true'
+want "$T/inxs" '"me":null'
+c=$(curl -s -o "$T/inxi" -w '%{http_code}' -X POST "${XH[@]}" \
+    -d '{"handle":"over the top"}' "$X/api/init")
+case "$c" in
+  409) ok ;;
+  200) bad "/api/init created an identity over an unreadable existing key" ;;
+  *)   bad "/api/init on an unreadable key returned $c, not 409" ;;
+esac
+wantno "$T/inxi" '"ok":true'
+# Readable again only to check it, and the bytes themselves rather than a
+# length: a route that replaced this file with a real key of its own would
+# pass a size comparison and fail the one that matters.
+chmod 600 "$T/inx/identity.key"
+if [ "$(cat "$T/inx/identity.key")" = "$XBEFORE" ]; then ok
+else bad "an unreadable identity.key was written over by /api/init"; fi
+kill $INXPID 2>/dev/null
+wait $INXPID 2>/dev/null
+
+echo
 echo "--- ctx watch --on-arrival: the unattended path"
 # A hook is the only thing in ctx that turns an arrival into an action with
 # nobody watching, so each property it rests on gets a check here. Two homes:
