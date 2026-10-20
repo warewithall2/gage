@@ -2137,6 +2137,49 @@ if [ "$IMODE" = "600" ]; then ok; else bad "the key a page created is mode $IMOD
 kill $INIPID 2>/dev/null
 wait $INIPID 2>/dev/null
 
+# Eight inits at once, into an empty home. `Identity::create` checks that the
+# key file is absent and then writes it, which is a time-of-check race on its
+# own -- and the reason it is not one here is that the viewer answers
+# connections one at a time, from a single accept loop. That is a property of
+# the server and not of the creation path, so it gets a check: if the viewer
+# ever grows a thread per connection, this is what says the front door's one
+# unrecoverable act needs an exclusive create before it can.
+IPORT3=7819
+mkdir -p "$T/inr"
+CTX_HOME=$T/inr $CTX ui --port $IPORT3 > "$T/inrlog" 2>&1 &
+INRPID=$!
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  curl -s -m 1 -o /dev/null "http://127.0.0.1:$IPORT3/api/state" 2>/dev/null && break
+  sleep 0.3
+done
+R="http://127.0.0.1:$IPORT3"
+RH=(-H "Host: 127.0.0.1:$IPORT3" -H "X-Gage: 1" -H "Origin: $R" \
+    -H "Content-Type: application/json")
+rpids=""
+for i in 1 2 3 4 5 6 7 8; do
+  ( curl -s -m 10 -o "$T/race.$i" -w '%{http_code}' -X POST "${RH[@]}" \
+      -d "{\"handle\":\"racer $i\"}" "$R/api/init" > "$T/racec.$i" 2>/dev/null ) &
+  rpids="$rpids $!"
+done
+# Named pids, not a bare `wait`: the fixture's own `gage ui` is a background
+# job of this shell too, and it never exits -- a bare `wait` here hung the
+# suite with no output at all.
+for rp in $rpids; do wait "$rp" 2>/dev/null; done
+RWON=$(grep -l '^200$' "$T"/racec.* 2>/dev/null | wc -l | tr -d '[:space:]')
+if [ "$RWON" = "1" ]; then ok
+else bad "$RWON of eight concurrent inits were told they had created the identity"; fi
+# However many were told yes, there is one key, and the words the winner was
+# given are the words that key renders. A second creation that lost the race
+# and wrote anyway would show up here as a mismatch.
+if [ -f "$T/inr/identity.key" ]; then ok; else bad "eight concurrent inits left no key"; fi
+RFP=$(CTX_HOME=$T/inr $CTX fingerprint 2>/dev/null | cut -f2)
+RBODY=$(grep -l '^200$' "$T"/racec.* 2>/dev/null | head -1 | sed 's/racec\./race./')
+if [ -n "$RBODY" ] && [ -f "$RBODY" ]; then
+  want "$RBODY" "$RFP"
+else bad "no concurrent init reported success, so there is no winner to check"; fi
+kill $INRPID 2>/dev/null
+wait $INRPID 2>/dev/null
+
 # A home whose identity is PRESENT but will not load is not a first run, and
 # this is the case where saying so matters most: a page that offered creation
 # here would be offering to write over a key whose owner is one bad file

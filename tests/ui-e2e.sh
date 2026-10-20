@@ -14,6 +14,8 @@ PORT="${UI_E2E_PORT:-7931}"
 FRPORT="${UI_E2E_FIRSTRUN_PORT:-7932}"
 RXPORT="${UI_E2E_RECEIVE_PORT:-7933}"
 LANPORT="${UI_E2E_LISTEN_PORT:-7934}"
+STPORT="${UI_E2E_SETTLED_PORT:-7935}"
+NCPORT="${UI_E2E_NOCREATE_PORT:-7936}"
 CHROME="${CHROME:-/usr/bin/chromium}"
 HERE=$(cd "$(dirname "$0")" && pwd)
 
@@ -29,7 +31,7 @@ fi
 T=$(mktemp -d)
 pids=""
 trap 'rm -rf "$T"; for p in $pids; do kill "$p" 2>/dev/null; done' EXIT
-mkdir -p "$T"/{u1,u2,u3,fa,fb,w}
+mkdir -p "$T"/{u1,u2,u3,fa,fb,fc,fd,w}
 fail=0
 
 # ---------------------------------------------------------------------------
@@ -148,6 +150,34 @@ CTX_HOME=$T/fb $CTX ui --port "$RXPORT" > "$T/fb-ui.log" 2>&1 &
 pids="$pids $!"
 sleep 2
 scenario receive "http://127.0.0.1:$RXPORT" "Hello from the page" "frontrunner"
+
+# ---------------------------------------------------------------------------
+# Scenario 4: the wizard stays away from a console that is set up, and the
+# empty states a new identity actually looks at say what to do next.
+# ---------------------------------------------------------------------------
+CTX_HOME=$T/fc $CTX init settledone >/dev/null 2>&1
+CTX_HOME=$T/fc $CTX ui --port "$STPORT" > "$T/fc-ui.log" 2>&1 &
+pids="$pids $!"
+sleep 2
+scenario settled "http://127.0.0.1:$STPORT"
+
+# ---------------------------------------------------------------------------
+# Scenario 5: an identity that is PRESENT and will not load is not a first
+# run. This is the page half of the `has_identity` property: `me` is null
+# here and null on a true first run, so a page that decided on `me` would
+# offer to write over a key whose owner is one file permission away from
+# getting it back.
+# ---------------------------------------------------------------------------
+BROKEN='{"v":3,"sign_seed":"not-a-key"'
+printf '%s' "$BROKEN" > "$T/fd/identity.key"
+chmod 600 "$T/fd/identity.key"
+CTX_HOME=$T/fd $CTX ui --port "$NCPORT" > "$T/fd-ui.log" 2>&1 &
+pids="$pids $!"
+sleep 2
+scenario nocreate "http://127.0.0.1:$NCPORT"
+# And the page left it alone, which is the thing that cannot be undone.
+if [ "$(cat "$T/fd/identity.key")" = "$BROKEN" ]; then :; else
+  fail=$((fail+1)); echo "  FAIL: the page wrote over an unreadable identity"; fi
 
 echo
 [ "$fail" -eq 0 ] && echo "ui-e2e: ok" || echo "ui-e2e: $fail scenario(s) failed"

@@ -27,6 +27,15 @@
 //   receive  <base> <subject> <sender>
 //     the second fixture's console: the bundle that arrived renders with the
 //     verified verdict and as pending, and accepting it is a separate act.
+//
+//   settled  <base>
+//     a home that IS set up and has nothing in it yet: the wizard does not
+//     appear, and the two empty states name the next action.
+//
+//   nocreate <base>
+//     a home whose identity is present but will not load. The wizard must
+//     not appear: the page would be offering to write over a key its owner
+//     is one file permission away from getting back.
 import { chromium } from 'playwright';
 
 const [mode, ...args] = process.argv.slice(2);
@@ -47,6 +56,14 @@ const waitFor = async (sel, what, timeout = 10000) => {
   catch { failed++; console.log('  FAIL: ' + what); return false; }
 };
 const text = async sel => (await page.locator(sel).first().textContent()) || '';
+// `page.content()` is the whole document, and the wizard's screens live in
+// template literals inside the page's own <script>. So every string the
+// wizard renders is ALSO in `content()` before anything renders it, and
+// three assertions written against it were vacuous -- two of them passed on
+// a page that showed no wizard at all. Anything the page itself could have
+// said is asserted against the rendered text of the element that says it;
+// `has` is for values that came from outside the page (a key's words, a
+// device label, a subject) and so cannot be in its source.
 const has = async s => (await page.content()).includes(s);
 
 // The confirmation gate on an incoming connection request.
@@ -137,10 +154,12 @@ async function firstrun([base, handle, label, buddyName, subject]) {
      'the words screen did not show four pairs: ' + JSON.stringify(words));
   // The one warning a new identity gets, and the pointer to the terminal
   // that is the only place a backup can be made. If the page stops saying
-  // this, a stranger has no way to know the key is the only copy.
-  ok(await has('gage export-identity'),
+  // this, a stranger has no way to know the key is the only copy. Read off
+  // the wizard's rendered text: both strings are in the page's source too.
+  const wtext = await text('#wizard');
+  ok(/gage export-identity/.test(wtext),
      'the words screen does not point at `gage export-identity`');
-  ok(await has('lose the key, lose everything'),
+  ok(/lose the key, lose everything/.test(wtext),
      "the words screen softened the CLI's own warning about losing the key");
   // Nothing on this screen may be a passphrase prompt: export and restore
   // are terminal-only, and a form here would be the whole reason that rule
@@ -224,8 +243,9 @@ async function receive([base, subject, sender]) {
      'a verified bundle also rendered a warning verdict');
   ok(await has(sender), 'the message does not name the sender as ' + sender);
 
-  // Arriving is not accepting, and the page says so in those words.
-  ok(await has('arriving is not accepting'),
+  // Arriving is not accepting, and the page says so in those words -- in
+  // the pane that renders the bundle, not merely somewhere in the source.
+  ok(/arriving is not accepting/.test(await text('#msgs')),
      'the pending bundle did not say that arriving is not accepting');
   if (!(await waitFor('button:has-text("Accept")', 'a pending bundle offered no accept'))) return;
   await page.locator('button:has-text("Accept")').first().click();
@@ -242,7 +262,56 @@ async function receive([base, subject, sender]) {
      'accepting the bundle changed its verdict');
 }
 
-const SCENARIOS = { buddies, firstrun, receive };
+// The wizard is a full-screen cover, so "does it stay away" is as much a
+// property as "does it appear". One poll interval is 2.5s and `wStart` runs
+// once at load; three seconds is past both, so a wizard that was going to
+// appear has appeared.
+const settle = async () => {
+  await page.waitForTimeout(3200);
+  const up = await page.locator('#wizard:not([hidden])').count();
+  ok(up === 0, 'the wizard covered a console it had no business covering');
+  // Its rendered text, not the document's: the welcome screen is a template
+  // literal in the page's own script and is in the source either way.
+  const w = (await text('#wizard')).trim();
+  ok(w === '', 'the wizard rendered a screen on a page that was not a first run: '
+                + JSON.stringify(w.slice(0, 80)));
+};
+
+// A console with nothing in it yet is the screen a person sees for longest
+// before anything happens, and an empty state that only says "nothing here"
+// leaves them with no next move.
+async function settled([base]) {
+  await page.goto(base + '/');
+  if (!(await waitFor('#list', 'the console never loaded'))) return;
+  await settle();
+
+  if (await waitFor('#list .empty', 'an empty inbox showed no empty state')) {
+    const e = await text('#list .empty');
+    ok(/No bundles yet/.test(e), 'the inbox empty state reads: ' + JSON.stringify(e));
+    ok(/[Pp]air/.test(e), 'the inbox empty state names no next action: ' + JSON.stringify(e));
+  }
+
+  await page.locator('button.tab', { hasText: 'Buddies' }).first().click();
+  if (await waitFor('#buddies .lansub', 'an empty buddy list showed no empty state')) {
+    const b = (await page.locator('#buddies .lansub').allTextContents()).join(' ');
+    ok(/Nobody yet/.test(b), 'the buddy empty state reads: ' + JSON.stringify(b));
+    ok(/[Pp]air/.test(b), 'the buddy empty state names no next action: ' + JSON.stringify(b));
+  }
+}
+
+// The case the `has_identity` flag exists for. `me` is null here and null in
+// a true first run, so a page that decided on `me` would offer creation over
+// a key that is present and merely unreadable -- a bad file permission away
+// from being fine, and gone the moment something writes over it. Creation
+// would refuse anyway, but the page must not need the refusal to be right.
+async function nocreate([base]) {
+  await page.goto(base + '/');
+  await settle();
+  ok(await page.locator('#whandle').count() === 0,
+     'the page offered a handle field over an identity that exists');
+}
+
+const SCENARIOS = { buddies, firstrun, receive, settled, nocreate };
 
 try {
   const run = SCENARIOS[mode];
