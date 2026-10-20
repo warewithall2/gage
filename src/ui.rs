@@ -1860,4 +1860,45 @@ mod tests {
             crate::trust::Trust::Unwitnessed.label()
         );
     }
+
+    #[test]
+    fn a_first_run_handle_is_plain_or_derived() {
+        // Empty is the derived-label path, the one quickstart offers when
+        // the name is left blank.
+        assert!(handle_ok(""));
+        // What a person plausibly types, including the two-word shape the
+        // derived labels themselves take.
+        for good in ["alice", "alice ware", "a-1_b", "crisp beetle"] {
+            assert!(handle_ok(good), "refused a plain handle: {good:?}");
+        }
+        // The hostile shapes. The handle is written to disk as-is and is
+        // later rendered by pages and quoted into shell lines, so what
+        // must not reach it is traversal pieces, separators, quotes and
+        // control characters -- the newline-injection shape -- plus the
+        // over-long, which the contact-name grammar bounds for the same
+        // reason.
+        for bad in [
+            "../etc",
+            "a/b",
+            "a\\b",
+            "line\nbreak",
+            "tab\there",
+            "nul\u{0}byte",
+            "o'brien",
+            "emoji\u{1f600}",
+            &"a".repeat(41),
+        ] {
+            assert!(!handle_ok(bad), "accepted a hostile handle: {bad:?}");
+        }
+    }
+
+    #[test]
+    fn the_first_run_warning_is_the_clis_own_trade() {
+        // The sentence the CLI prints for the same decision, in
+        // export-identity's help and in `backup::export`. If the wording
+        // there changes, this is the prompt to change it here too: the
+        // page must not soften the one warning a new identity gets.
+        assert!(BACKUP_WARNING.contains("lose the key, lose everything"));
+        assert!(BACKUP_WARNING.contains("gage export-identity"));
+    }
 }
