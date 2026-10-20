@@ -16,6 +16,15 @@
 //! RELAY is still terminal-only behind `gage push --yes`, because that
 //! confirmation is the last point at which a person sees what is leaving to a
 //! machine they cannot see.
+
+//! First-run identity creation is the one setup act the page performs
+//! (`POST /api/init`), and it is here for the same reason the reply is: a
+//! front door a stranger cannot get through is not a front door. It runs
+//! the CLI's own creation path (`Identity::create_named`) -- no second key
+//! generator, no second store, no second permission rule -- and it refuses
+//! when an identity already exists, exactly as `gage init` refuses. What
+//! stays terminal-only is everything with a passphrase: export and restore
+//! never transit a browser form, the same rule the MCP server follows.
 //!
 //! Handing a bundle to a machine on the LOCAL NETWORK is allowed from here,
 //! which is a change from what this file used to say, so the reasoning should
@@ -441,6 +450,15 @@ fn handle(stream: TcpStream, port: u16) -> std::io::Result<()> {
             ),
         },
         ("GET", "/api/buddies") => respond(stream, "200 OK", "application/json", &buddies_json()),
+        ("POST", "/api/init") => match init_from_ui(&req.body) {
+            Ok(v) => respond(stream, "200 OK", "application/json", &v),
+            Err((code, msg)) => respond(
+                stream,
+                code,
+                "application/json",
+                &serde_json::json!({ "error": msg }).to_string(),
+            ),
+        },
         ("POST", "/api/connect") => match connect_from_ui(&req.body) {
             Ok(lines) => respond(
                 stream,
@@ -1027,6 +1045,89 @@ pub fn is_a_key(s: &str) -> bool {
 pub fn asked_pair(sign: &str) -> usize {
     let h = crate::bundle::sha256_hex(format!("which-pair:{sign}").as_bytes());
     1 + usize::from_str_radix(&h[..2], 16).unwrap_or(0) % 3
+}
+
+/// The warning a first run ends with. Its closing sentences are the
+/// CLI's own, from `gage export-identity`'s help and from what
+/// `backup::export` prints at the moment of export -- quoted rather than
+/// paraphrased, so the page and the terminal cannot drift into telling a
+/// new identity two different stories about the trade it is being
+/// offered: the key is the only copy, there is no reset, and the one
+/// backup that exists is opt-in and exactly as strong as its passphrase.
+const BACKUP_WARNING: &str = "Your key is the only copy, and it lives on this machine. \
+    If it is lost, this identity is gone and there is no way back in -- every \
+    contact would have to confirm a new key with you out loud. In a terminal, \
+    `gage export-identity` writes a passphrase-encrypted backup of it. Opt-in, \
+    and a real trade: it turns \"lose the key, lose everything\" into \"your \
+    security is your passphrase's strength\". Keep the file somewhere other \
+    than the machine it came from.";
+
+/// May this string be a handle chosen in the page?
+///
+/// The same grammar the page already holds contact names to, and for the
+/// same reason: a handle is written to disk as-is, rendered by pages, and
+/// quoted into shell lines (`shell_word`), and the classes that must not
+/// reach it are traversal pieces and control characters -- the newline
+/// shape this project has been bitten by in a filename and a subject
+/// before now. The CLI accepts more, and stays the route for an exotic
+/// handle; a first run in a browser does not need one. Empty is allowed
+/// and means "derive it from the key", as quickstart has it.
+fn handle_ok(h: &str) -> bool {
+    h.is_empty()
+        || (h
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == ' ')
+            && h.len() <= 40)
+}
+
+/// Create this machine's identity from the page: the front door's one
+/// setup act.
+///
+/// This is `gage init`'s own code path and nothing else:
+/// `Identity::create_named`, the function the CLI's init, `connect` and
+/// quickstart all reach. There is deliberately no key generation,
+/// storage, or permission logic in this file to call instead -- a second
+/// implementation of the one act whose failure is unrecoverable is the
+/// bug this route exists to not have. Refusal is inherited the same way:
+/// `create` refuses when a key file exists, and that refusal is surfaced
+/// as a 409 carrying the CLI's own words, which name `gage rotate` as the
+/// way a key is replaced.
+///
+/// An empty or absent handle derives the two-word label from the key,
+/// exactly as `gage init` with no name does.
+fn init_from_ui(body: &str) -> Result<String, (&'static str, String)> {
+    let v: serde_json::Value =
+        serde_json::from_str(body).map_err(|e| ("400 Bad Request", format!("bad body: {e}")))?;
+    let handle = v
+        .get("handle")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if !handle_ok(&handle) {
+        return Err((
+            "400 Bad Request",
+            "a handle is letters, digits, spaces, - and _".into(),
+        ));
+    }
+    let chosen = if handle.is_empty() {
+        None
+    } else {
+        Some(handle.as_str())
+    };
+    match crate::identity::Identity::create_named(chosen) {
+        Ok(id) => Ok(serde_json::json!({
+            "ok": true,
+            "handle": id.handle,
+            "words": crate::words::fingerprint_of(&id.public_b64(), Some(&id.box_public_b64())),
+            "backup_warning": BACKUP_WARNING,
+        })
+        .to_string()),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            Err(("409 Conflict", e.to_string()))
+        }
+        Err(e) => Err(("500 Internal Server Error", e.to_string())),
+    }
 }
 
 /// Add a key the page is showing as a connection request.
