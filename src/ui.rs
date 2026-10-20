@@ -1332,6 +1332,15 @@ fn state_json() -> String {
     };
 
     serde_json::json!({
+        // Whether a key file exists at all, said outright. `me` is null
+        // both when there is no identity and when one is here but would
+        // not load, and only the first of those is a first run -- so the
+        // page offers creation on this flag and never on `me` alone, and
+        // a key that fails to load cannot read as an invitation to create
+        // over it. Creation would refuse anyway (`Identity::create` will
+        // not clobber), but the state should not need the refusal to be
+        // understood.
+        "has_identity": me.join("identity.key").exists(),
         "me": id.map(|i| serde_json::json!({ "handle": i.handle, "key": i.public_b64() })),
         // The page shows a banner on this and stops presenting verdicts as
         // though they were current.
