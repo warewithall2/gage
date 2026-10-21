@@ -2100,7 +2100,26 @@ mod tests {
         let pane = &pane[..pane.find("\nfunction ").unwrap_or(pane.len())];
         assert!(pane.contains("inviteHtml()"));
         assert!(!INDEX.contains("<img"));
-        assert!(!INDEX.contains("clipboard"));
+        let clipboard = INDEX
+            .split("async function pasteClipboard")
+            .nth(1)
+            .unwrap_or_else(|| panic!("paste clipboard handler missing"));
+        let clipboard = &clipboard[..clipboard.find("\n}").unwrap_or(clipboard.len())];
+        assert!(clipboard.contains("navigator.clipboard.readText()"));
+        assert!(clipboard.contains("Keep the editable paste field as the fallback"));
+        assert!(INDEX.contains("onclick=\"pasteClipboard()\""));
+        assert_eq!(INDEX.matches("navigator.clipboard.readText()").count(), 1);
+        assert!(INDEX.contains("fetch('/api/parse-invite'"));
+        assert!(INDEX.contains("value=\"${esc(ANAME)}\""));
+        assert!(INDEX.contains("${esc(PASTED)}"));
+        assert!(INDEX.contains("${esc(shown)}"));
+        assert!(INDEX.contains("confirm:ACONF"));
+        assert!(INDEX.contains("confirm:p"));
+        assert!(INDEX.contains("All four match -- add them"));
+        assert!(INDEX.contains("onclick=\"pasteClipboard()\""));
+        assert!(INDEX.contains("budReveal('${esc(q.key)}')"));
+        assert!(INDEX.contains("budConnect('${esc(q.key)}')"));
+        assert!(INDEX.contains("Suggested name (edit as needed)"));
         assert!(!INDEX.contains("http://") && !INDEX.contains("https://"));
         assert!(INDEX.contains("inviteLoad(true)"), "creating an identity does not load the code");
     }

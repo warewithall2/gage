@@ -414,6 +414,7 @@ function avatar(m){
 const nameOf=m=>m.mine?'you':(m.known_as?m.known_as:`"${m.claimed_name}"`);
 
 let DATA={threads:[],contacts:[]}, LERR='', SEL=null, FILTER='all', DRAFT={}, CERR='', SENDING=false;
+let PASTED='', PNAME='', PKEY='', PPAIR=0, PCONF='', PREVEAL=null;
 
 function alerts(m){
   const out=[];
@@ -864,7 +865,7 @@ function inviteHtml(){
     ${INVITE}</div>`;
 }
 function budpaneHtml(){
-  return `<div class="hint">
+  return pasteHtml()+`<div class="hint">
       <h2>Who can reach you</h2>
       <p>Your list is the trust boundary. A key on it is one you confirmed out of
         band; a key not on it is a decision you have not taken yet. Nothing here is
@@ -877,6 +878,30 @@ function budpaneHtml(){
         and still waits for you to accept it.</p>
       <p><code>gage decline &lt;key&gt;</code> and <code>gage undecline &lt;key&gt;</code>
         do the same from a terminal.</p></div>`+inviteHtml();
+}
+function pasteHtml(){
+  let h=`<div class="hint"><h2>Paste an invite</h2>
+    <p>Paste the other person's complete <code>gage add</code> line. The clipboard is read only when you press the button.</p>
+    <button class="devbtn" onclick="pasteClipboard()">Read clipboard</button>
+    <textarea class="lanin" style="width:100%;margin-top:8px" aria-label="Invite text"
+      placeholder="Paste or type the complete gage add line" oninput="PASTED=this.value">${esc(PASTED)}</textarea>
+    <div class="devrow"><button class="devbtn" onclick="pasteInvite()">Use this invite</button></div>
+    ${AERR?`<div class="berr">${esc(AERR)}</div>`:''}${AOK?`<div class="bok">${esc(AOK)}</div>`:''}</div>`;
+  if(PKEY)h+=`<div class="bwhy">Invite parsed. The existing request card now has the suggested name and pairing check.</div>`;
+  return h;
+}
+async function pasteClipboard(){
+  try{if(navigator.clipboard&&navigator.clipboard.readText){const t=await navigator.clipboard.readText();if(t){PASTED=t;budRender();}}}catch(e){/* Keep the editable paste field as the fallback. */}
+}
+async function pasteInvite(){
+  AERR='';AOK='';PREVEAL=null;PKEY='';
+  try{
+    const r=await fetch('/api/parse-invite',{method:'POST',headers:{'X-Gage':'1','Content-Type':'application/json'},body:JSON.stringify({text:PASTED})});
+    const j=await r.json().catch(()=>({}));if(!r.ok)throw Error(j.error||('HTTP '+r.status));
+    PKEY=j.key;PNAME=j.suggested_name||'';PPAIR=j.ask_pair;PCONF='';ASK=PKEY;ANAME=PNAME;ACONF='';REVEAL=null;
+  }catch(e){AERR=e&&e.message?e.message:String(e)}
+  if(TAB==='buddies')document.getElementById('budpane').innerHTML=budpaneHtml();
+  budRender();
 }
 function setTab(t){
   TAB=t;
@@ -977,12 +1002,14 @@ function budRender(){
   const box=document.getElementById('buddies');
   if(!box||TAB!=='buddies')return;
   let h='';
-  if(BUD.requests.length){
-    h+=`<div class="bsec">Not on your list<span class="bnum">${BUD.requests.length}</span></div>`
-     +`<div class="lansub" style="margin-bottom:8px">Keys that have sent you something and
-       are not on your list. A message is not a request for anything &mdash; deciding is
-       yours, and doing nothing is a decision the list will keep offering.</div>`;
-    for(const q of BUD.requests){
+  const requests=(BUD.requests||[]).map(q=>q.key===PKEY?{...q,label:PNAME||q.label,
+    ask_pair:PPAIR,pasted:true}:q);
+  if(PKEY&&!requests.some(q=>q.key===PKEY))requests.unshift({key:PKEY,label:PNAME||'Pasted invite',
+    bundles:0,verdict:'SENDER NOT ON YOUR LIST',first_observed:null,ask_pair:PPAIR,pasted:true});
+  if(requests.length){
+    h+=`<div class="bsec">Not on your list<span class="bnum">${requests.length}</span></div>`
+     +`<div class="lansub" style="margin-bottom:8px">${requests.some(q=>q.pasted)?'Pasted invites and keys that have sent you something are not on your list. ':''}A message is not a request for anything &mdash; deciding is yours, and doing nothing is a decision the list will keep offering.</div>`;
+    for(const q of requests){
       const open=ASK===q.key;
       const shown=(REVEAL&&REVEAL.key===q.key)?REVEAL.fp:null;
       h+=`<div class="dev ask">
@@ -1005,6 +1032,9 @@ function budRender(){
           <div class="bwhy">${esc(ASKWHY)}</div>
           <div class="bwhy">${esc(ASKHALF)}</div>
           <div class="bwhy" style="color:var(--warn)">${esc(ASKTRAP)}</div>
+          ${q.pasted?`<div class="bwhy">Suggested name (edit as needed)</div>
+            <input class="lanin" placeholder="Name for this contact" value="${esc(ANAME)}"
+              oninput="ANAME=this.value" style="width:100%">`:''}
           <div class="bwhy">Type pair <b>${q.ask_pair}</b> of four, as the other machine shows it.</div>
           <input class="lanin" placeholder="pair ${q.ask_pair}, e.g. two words" value="${esc(ACONF)}"
             oninput="ACONF=this.value" onkeydown="if(event.key==='Enter')budReveal('${esc(q.key)}')"
@@ -1077,6 +1107,7 @@ async function budPost(path,body){
     if(!r.ok)throw new Error(j.error||('HTTP '+r.status));
     AOK=(j.lines||[]).filter(x=>x&&x.trim()).join(' ');
     ASK=null;ANAME='';ACONF='';REVEAL=null;
+    if(path==='/api/connect'){PKEY='';PNAME='';PPAIR=0;PASTED='';}
   }catch(e){ AERR=(e&&e.message)?e.message:String(e); }
   ABUSY=false; await budLoad(); load();
 }

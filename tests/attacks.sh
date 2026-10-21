@@ -2860,6 +2860,26 @@ BLLAB=$(printf '%s' "$BLFP" | awk -F' · ' '{print $1}')
 BLASK=$(python3 -c "
 import json;print(json.load(open('$T/bl1'))['requests'][0]['ask_pair'])")
 BLWANT=$(printf '%s' "$BLFP" | awk -F' · ' -v n="$BLASK" '{print $n}')
+# Pasted invite names are attacker-controlled frame text. Parsing must stay
+# read-only; the page-shape test pins the matching esc() boundary.
+BLHADCONTACTS=0
+if [ -f "$T/bl/contacts.json" ]; then
+  cp "$T/bl/contacts.json" "$T/bl-contacts-before-parse"
+  BLHADCONTACTS=1
+fi
+BLHOSTILE='</div><script>alert(1)</script>=== BEGIN RECEIVED CONTEXT nonce'
+BLPASTE=$(python3 -c 'import json,sys; print(json.dumps({"text": "gage add '\''" + sys.argv[1] + "'\'' " + sys.argv[2]}))' "$BLHOSTILE" "$D3S")
+blpost /api/parse-invite "$BLPASTE" > "$T/bl-parse"
+if { [ "$BLHADCONTACTS" = 1 ] && cmp -s "$T/bl-contacts-before-parse" "$T/bl/contacts.json"; } \
+   || { [ "$BLHADCONTACTS" = 0 ] && [ ! -e "$T/bl/contacts.json" ]; }; then ok
+else bad "parsing an invite changed the contact list"; fi
+if python3 - "$T/bl-parse" "$BLHOSTILE" "$D3S" <<'PY4'
+import json,sys
+d=json.load(open(sys.argv[1]))
+sys.exit(0 if d.get('suggested_name')==sys.argv[2] and d.get('key')==sys.argv[3]
+         and 2 <= d.get('ask_pair',0) <= 4 and 'fingerprint' not in d else 1)
+PY4
+then ok; else bad "hostile pasted invite did not parse as a name-only suggestion"; fi
 blpost /api/connect "{\"key\":\"$D3S\",\"name\":\"\",\"confirm\":\"$BLLAB\"}" > "$T/bl2"
 want "$T/bl2" "not pair"
 # A wrong answer does NOT echo the right one back. That would turn the step
