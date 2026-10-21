@@ -1,0 +1,94 @@
+#!/bin/sh
+# Route B app process. On quit, stop only the lan/ui/watch processes this
+# launcher started; any service that was already running is left alone.
+set -u
+
+APP_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+GAGE_BIN=${GAGE_BIN:-$APP_DIR/gage}
+
+# Match src/identity.rs exactly: first non-whitespace GAGE_HOME,
+# COUNTERSIGN_HOME or CTX_HOME, then first existing home in order.
+nonblank() {
+  [ -n "$(printf '%s' "$1" | tr -d '[:space:]')" ]
+}
+if nonblank "${GAGE_HOME:-}"; then
+  RESOLVED_HOME=$GAGE_HOME
+elif nonblank "${COUNTERSIGN_HOME:-}"; then
+  RESOLVED_HOME=$COUNTERSIGN_HOME
+elif nonblank "${CTX_HOME:-}"; then
+  RESOLVED_HOME=$CTX_HOME
+elif [ -d "$HOME/.gage" ]; then
+  RESOLVED_HOME=$HOME/.gage
+elif [ -d "$HOME/.countersign" ]; then
+  RESOLVED_HOME=$HOME/.countersign
+elif [ -d "$HOME/.ctx" ]; then
+  RESOLVED_HOME=$HOME/.ctx
+else
+  RESOLVED_HOME=$HOME/.gage
+fi
+export GAGE_HOME=$RESOLVED_HOME
+
+STARTED=""
+cleanup() {
+  trap - EXIT HUP INT TERM
+  for pid in $STARTED; do
+    kill "$pid" 2>/dev/null || :
+  done
+  for pid in $STARTED; do
+    wait "$pid" 2>/dev/null || :
+  done
+}
+trap cleanup EXIT
+trap 'exit 0' HUP INT TERM
+
+# A process belongs to a service when its argv names the gage executable and
+# that service command. pgrep is present on macOS and Linux; ps is the fallback.
+service_running() {
+  service=$1
+  bin_name=${GAGE_BIN##*/}
+  if command -v pgrep >/dev/null 2>&1; then
+    pgrep -f "(^|/)${bin_name} ${service}([[:space:]]|$)" >/dev/null 2>&1
+  else
+    ps -axo command= 2>/dev/null | grep -E "(^|/)${bin_name} ${service}([[:space:]]|$)" | grep -v grep >/dev/null
+  fi
+}
+
+start_service() {
+  service=$1
+  shift
+  if service_running "$service"; then
+    echo "gage $service already running; adopting it" >&2
+  else
+    "$GAGE_BIN" "$service" "$@" >/dev/null 2>&1 &
+    STARTED="$STARTED $!"
+  fi
+}
+
+start_service lan
+start_service ui
+start_service watch --every 120
+
+ui_port=${GAGE_UI_PORT:-7777}
+timeout=${GAGE_START_TIMEOUT:-30}
+elapsed=0
+while [ "$elapsed" -lt "$timeout" ]; do
+  if curl -fsS --max-time 1 "http://127.0.0.1:$ui_port/" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+  elapsed=$((elapsed + 1))
+done
+if ! curl -fsS --max-time 1 "http://127.0.0.1:$ui_port/" >/dev/null 2>&1; then
+  echo "Gage could not start: http://127.0.0.1:$ui_port did not answer within ${timeout}s." >&2
+  echo "Check whether another application is using port $ui_port, then try again." >&2
+  exit 1
+fi
+
+if [ -n "${GAGE_OPEN:-}" ]; then
+  "$GAGE_OPEN" "http://127.0.0.1:$ui_port/"
+else
+  open "http://127.0.0.1:$ui_port/"
+fi
+
+# Keep the app process alive until macOS quits it. The EXIT trap owns cleanup.
+while :; do sleep 1 & wait "$!" || :; done
