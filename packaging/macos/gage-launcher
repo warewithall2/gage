@@ -41,67 +41,42 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 0' HUP INT TERM
 
-# Does this PID resolve to the home this launcher selected? Services started
-# by Gage inherit GAGE_HOME; older invocations may use a compatibility
-# variable or only HOME. Read the live process environment so a same-named
-# process for another identity is never adopted.
-process_has_home() {
-  pid=$1
-  if [ "${GAGE_FORCE_PS_ENV:-0}" != 1 ] && [ -r "/proc/$pid/environ" ]; then
-    environment=$(tr '\000' ' ' < "/proc/$pid/environ" 2>/dev/null) || return 1
-  else
-    # On Darwin, `-o command=` suppresses the environment appended by `e`.
-    # Keep the default format so GAGE_HOME and HOME remain visible in `eww`.
-    environment=$(ps eww -p "$pid" 2>/dev/null) || return 1
-  fi
-
-  env_has_var() {
-    case " $environment " in *" $1="*) return 0;; *) return 1;; esac
-  }
-  env_has_value() {
-    case " $environment " in *" $1=$2 "*) return 0;; *) return 1;; esac
-  }
-
-  for variable in GAGE_HOME COUNTERSIGN_HOME CTX_HOME; do
-    if env_has_var "$variable"; then
-      env_has_value "$variable" "$RESOLVED_HOME"
-      return $?
-    fi
-  done
-  if env_has_value HOME "$HOME"; then
-    if [ -d "$HOME/.gage" ]; then
-      process_home=$HOME/.gage
-    elif [ -d "$HOME/.countersign" ]; then
-      process_home=$HOME/.countersign
-    elif [ -d "$HOME/.ctx" ]; then
-      process_home=$HOME/.ctx
-    else
-      process_home=$HOME/.gage
-    fi
-    [ "$process_home" = "$RESOLVED_HOME" ]
-    return $?
-  fi
-  return 1
-}
-
-service_pids() {
-  service=$1
-  bin_name=${GAGE_BIN##*/}
-  if command -v pgrep >/dev/null 2>&1; then
-    pgrep -f "(^|/)${bin_name} ${service}([[:space:]]|$)" 2>/dev/null || :
-  else
-    ps -axo pid=,command= 2>/dev/null | awk -v re="(^|/)${bin_name} ${service}([[:space:]]|$)" '$0 ~ re {print $1}'
-  fi
-}
-
+# A run record is only a candidate. It counts as running only when it contains
+# one positive PID, that PID is alive, and ps confirms the executable and the
+# subcommand in argv positions one and two. Stale, unreadable, malformed, and
+# reused PIDs all mean "not running".
 service_running() {
   service=$1
-  for pid in $(service_pids "$service"); do
-    if process_has_home "$pid"; then
-      return 0
-    fi
-  done
-  return 1
+  record_file=$RESOLVED_HOME/run/$service.pid
+  [ -f "$record_file" ] && [ -r "$record_file" ] || return 1
+  record_lines=$(wc -l < "$record_file" 2>/dev/null | tr -d '[:space:]') || return 1
+  [ "$record_lines" = 1 ] || return 1
+  IFS= read -r record_pid < "$record_file" || return 1
+  case "$record_pid" in
+    ''|*[!0-9]*) return 1 ;;
+    *[1-9]*) ;;
+    *) return 1 ;;
+  esac
+  kill -0 "$record_pid" 2>/dev/null || return 1
+
+  command_line=$(ps -p "$record_pid" -o command= 2>/dev/null) || return 1
+  [ -n "$command_line" ] || return 1
+  set -f
+  set -- $command_line
+  set +f
+  [ "$#" -ge 2 ] || return 1
+  # Prefix, not an exact name, and the same rule as src/runfile.rs. The
+  # release binaries are shipped as `gage-0.3.0-darwin-arm64`, so a tester
+  # running one of those directly is still running that service. Matching
+  # loosely here cannot adopt a stranger: the record was read out of THIS
+  # home, so only a service for this home could have written it, and the argv
+  # check exists solely to catch a reused pid.
+  executable=${1##*/}
+  case "$executable" in
+    gage*|ctx*|countersign*) ;;
+    *) return 1 ;;
+  esac
+  [ "$2" = "$service" ]
 }
 
 start_service() {

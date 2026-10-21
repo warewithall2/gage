@@ -3,23 +3,37 @@ set -u
 cd "$(dirname "$0")/.." || exit 2
 T=$(mktemp -d)
 pass=0; fail=0
+LAUNCH_PID=; EXISTING_PID=
 ok() { pass=$((pass+1)); }
 bad() { fail=$((fail+1)); echo "  FAIL: $1"; }
 want() { if grep -qF -- "$2" "$1"; then ok; else bad "expected '$2' in ${1##*/}"; fi; }
 cleanup() {
-  [ -n "${LAUNCH_PID:-}" ] && kill "$LAUNCH_PID" 2>/dev/null || :
-  [ -n "${EXISTING_PID:-}" ] && kill "$EXISTING_PID" 2>/dev/null || :
+  [ -n "$LAUNCH_PID" ] && kill "$LAUNCH_PID" 2>/dev/null || :
+  [ -n "$EXISTING_PID" ] && kill "$EXISTING_PID" 2>/dev/null || :
   wait 2>/dev/null || :
   rm -rf "$T"
 }
 trap cleanup EXIT
 
 mkdir -p "$T/bin"
-FIXTURE_BIN="$T/bin/gagefixture$$"
+# The run directory is the isolation boundary: use the accepted executable
+# name, but keep every record under this run's private fixture home.
+FIXTURE_BIN="$T/bin/gage"
 cat > "$FIXTURE_BIN" <<'STUB'
 #!/bin/bash
-printf '%s|%s|%s\n' "$GAGE_HOME" "$*" "$$" >> "$GAGE_TEST_LOG"
-exec -a "${0##*/} $*" /bin/sleep 600
+service=${1:-}; shift || :
+printf '%s|%s %s|%s\n' "$GAGE_HOME" "$service" "$*" "$$" >> "$GAGE_TEST_LOG"
+if [ "$service" = watch ] && [ "${1:-}" = --once ]; then exit 0; fi
+case "$service" in lan|ui|watch) ;; *) exec -a "gage $service $*" /bin/sleep 600;; esac
+mkdir -p "$GAGE_HOME/run"
+record="$GAGE_HOME/run/$service.pid"
+printf '%s\n' "$$" > "$record"
+exec -a "gage $service" /bin/bash -c '
+record=$1
+trap '\''rm -f "$record"'\'' EXIT
+trap '\''exit 0'\'' HUP INT TERM
+while :; do sleep 1 & wait "$!" || :; done
+' "gage $service" "$record"
 STUB
 chmod +x "$FIXTURE_BIN"
 cat > "$T/bin/open" <<'OPEN'
@@ -34,153 +48,192 @@ printf '%s\n' "$*" >> "$GAGE_CURL_LOG"
 printf '{"home":"%s"}\n' "$GAGE_CURL_HOME"
 CURL
 chmod +x "$T/bin/curl"
-
-# Force the launcher's Darwin-style ps environment fallback on Linux when
-# GAGE_TEST_PS_ENV=1. This shim emits the same command-plus-environment shape
-# that `ps eww -p PID` uses, sourced from fixture processes' proc entries.
-if [ "${GAGE_TEST_PS_ENV:-0}" = 1 ]; then
-  cat > "$T/bin/ps" <<'PS'
+cat > "$T/bin/vim" <<'VIM'
 #!/bin/bash
-if [ "$#" -eq 3 ] && [ "${1:-}" = eww ] && [ "${2:-}" = -p ]; then
-  pid=$3
-  argv=$(tr '\000' ' ' < "/proc/$pid/cmdline") || exit 1
-  envs=$(tr '\000' ' ' < "/proc/$pid/environ") || exit 1
-  printf '  PID TTY STAT TIME COMMAND\n%s ?? S 0:00 %s %s\n' "$pid" "$argv" "$envs"
-else
-  exec /bin/ps "$@"
-fi
-PS
-  chmod +x "$T/bin/ps"
-fi
+exec -a 'vim src/lan.rs' /bin/sleep 600
+VIM
+chmod +x "$T/bin/vim"
 
-# Fixture homes. Ensure the identity path chosen by the launcher is passed
-# unchanged to the stub services.
-run_with_home() {
-  label=$1; home=$2; expected=$3; existing=${4:-}
+start_stub() {
+  home=$1; log=$2; service=$3; shift 3
+  env -u GAGE_HOME -u COUNTERSIGN_HOME -u CTX_HOME HOME="$home" GAGE_HOME="$home" \
+    GAGE_TEST_LOG="$log" "$FIXTURE_BIN" "$service" "$@" &
+  EXISTING_PID=$!
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    [ -s "$home/run/$service.pid" ] && break
+    sleep .05
+  done
+}
+stop_existing() {
+  [ -n "$EXISTING_PID" ] || return 0
+  kill "$EXISTING_PID" 2>/dev/null || :
+  wait "$EXISTING_PID" 2>/dev/null || :
+  EXISTING_PID=
+}
+run_launcher() {
+  label=$1; home=$2; curl_home=$3; timeout=${4:-2}; mode=${5:-explicit}; base_home=${6:-$T/user-$label}
   mkdir -p "$home"
-  : > "$T/services-$label.log"; : > "$T/open-$label.log"
-  : > "$T/curl-$label.log"
-  if [ -n "$existing" ]; then
-    env -u GAGE_HOME -u COUNTERSIGN_HOME -u CTX_HOME HOME="$home" \
-      GAGE_TEST_LOG="$T/services-$label.log" "$FIXTURE_BIN" "$existing" & EXISTING_PID=$!
-    sleep .1
-  fi
-  GAGE_BIN="$FIXTURE_BIN" GAGE_TEST_LOG="$T/services-$label.log" \
+  : > "$T/services-$label.log"; : > "$T/open-$label.log"; : > "$T/curl-$label.log"
+  user_home=$base_home; mkdir -p "$user_home"
+  selector=(GAGE_HOME="$home")
+  case "$mode" in
+    gage) selector=(GAGE_HOME= HOME="$user_home"); mkdir -p "$user_home/.gage" "$user_home/.countersign" "$user_home/.ctx"; home="$user_home/.gage" ;;
+    countersign) selector=(GAGE_HOME= HOME="$user_home"); mkdir -p "$user_home/.countersign" "$user_home/.ctx"; home="$user_home/.countersign" ;;
+    ctx) selector=(GAGE_HOME= HOME="$user_home"); mkdir -p "$user_home/.ctx"; home="$user_home/.ctx" ;;
+    countersign_env) selector=(GAGE_HOME= COUNTERSIGN_HOME="$home");;
+    ctx_env) selector=(GAGE_HOME= CTX_HOME="$home");;
+  esac
+  env GAGE_BIN="$FIXTURE_BIN" GAGE_TEST_LOG="$T/services-$label.log" \
     GAGE_OPEN="$T/bin/open" GAGE_OPEN_LOG="$T/open-$label.log" \
-    GAGE_CURL_LOG="$T/curl-$label.log" GAGE_CURL_HOME="$expected" PATH="$T/bin:$PATH" \
-    GAGE_FORCE_PS_ENV="${GAGE_TEST_PS_ENV:-0}" \
-    GAGE_HOME="${explicit_home:-}" COUNTERSIGN_HOME="${counter_home:-}" \
-    CTX_HOME="${ctx_home:-}" HOME="$home" GAGE_UI_PORT=17777 GAGE_START_TIMEOUT=2 \
+    GAGE_CURL_LOG="$T/curl-$label.log" GAGE_CURL_HOME="$curl_home" PATH="$T/bin:$PATH" \
+    "${selector[@]}" GAGE_UI_PORT=17777 GAGE_START_TIMEOUT="$timeout" \
     "$PWD/packaging/macos/gage-launcher" >"$T/out-$label" 2>&1 &
   LAUNCH_PID=$!
-  for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s "$T/open-$label.log" ] && break; sleep .1; done
-  want "$T/open-$label.log" "http://127.0.0.1:17777/"
-  want "$T/curl-$label.log" "http://127.0.0.1:17777/api/state"
-  # The stub logs argv. Home selection is proven by an env capture wrapper
-  # around the stub for this check below, while these counts prove no duplicate.
-  if [ -n "$existing" ]; then
-    n=$(grep -c "|$existing|" "$T/services-$label.log" || :)
-    [ "$n" = 1 ] && ok || bad "$label started duplicate $existing service (count $n)"
-  else
-    want "$T/services-$label.log" "lan"
-    want "$T/services-$label.log" "ui"
-    want "$T/services-$label.log" "watch --every 120"
-  fi
-  kill "$LAUNCH_PID" 2>/dev/null || :; wait "$LAUNCH_PID" 2>/dev/null || :; LAUNCH_PID=
-  if [ -n "$existing" ]; then
-    if kill -0 "$EXISTING_PID" 2>/dev/null; then ok; else bad "launcher killed pre-existing $existing"; fi
-    kill "$EXISTING_PID" 2>/dev/null || :; wait "$EXISTING_PID" 2>/dev/null || :; EXISTING_PID=
-  fi
-  :
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+    [ -s "$T/open-$label.log" ] && break
+    sleep .05
+  done
 }
+stop_launcher() {
+  [ -n "$LAUNCH_PID" ] || return 0
+  kill "$LAUNCH_PID" 2>/dev/null || :
+  wait "$LAUNCH_PID" 2>/dev/null || :
+  LAUNCH_PID=
+}
+count_service() { grep -c "|$1 " "$2" 2>/dev/null || :; }
 
-echo "home selection follows identity.rs"
-mkdir -p "$T/homes/explicit" "$T/homes/.gage" "$T/homes/.countersign" "$T/homes/.ctx"
-# Four branches: explicit override, then each fallback as the first extant home.
+echo "Linux ps argv probe (the same command used by the launcher)"
+GAGE_HOME="$T/probe-home" "$FIXTURE_BIN" lan > /dev/null 2>&1 & probe_pid=$!
+for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s "$T/probe-home/run/lan.pid" ] && break; sleep .05; done
+probe_line=$(ps -p "$probe_pid" -o command= 2>/dev/null || :)
+case "$probe_line" in "gage lan"*) ok;; *) bad "Linux ps argv did not expose gage subcommand: $probe_line";; esac
+kill "$probe_pid" 2>/dev/null || :; wait "$probe_pid" 2>/dev/null || :
+
+echo "identity home selection follows identity.rs"
 for branch in explicit gage countersign ctx countersign_env ctx_env; do
   h="$T/h-$branch"; mkdir -p "$h"
-  counter_home=; ctx_home=
   case "$branch" in
-    explicit) mkdir -p "$h/.gage"; explicit_home="$T/homes/explicit"; want_home="$T/homes/explicit" ;;
-    gage) mkdir -p "$h/.gage" "$h/.countersign" "$h/.ctx"; explicit_home=; want_home="$h/.gage" ;;
-    countersign) mkdir -p "$h/.countersign" "$h/.ctx"; explicit_home=; want_home="$h/.countersign" ;;
-    ctx) mkdir -p "$h/.ctx"; explicit_home=; want_home="$h/.ctx" ;;
-    countersign_env) mkdir -p "$h/.gage"; explicit_home=; counter_home="$T/homes/countersign"; want_home="$T/homes/countersign" ;;
-    ctx_env) mkdir -p "$h/.gage"; explicit_home=; ctx_home="$T/homes/.ctx"; want_home="$T/homes/.ctx" ;;
+    explicit) selected="$T/homes/explicit"; mkdir -p "$selected" ;;
+    gage) selected="$h/.gage" ;;
+    countersign) selected="$h/.countersign" ;;
+    ctx) selected="$h/.ctx" ;;
+    countersign_env) selected="$T/homes/countersign"; mkdir -p "$selected" ;;
+    ctx_env) selected="$T/homes/ctx"; mkdir -p "$selected" ;;
   esac
-  run_with_home "$branch" "$h" "$want_home"
+  mkdir -p "$h"
+  run_launcher "$branch" "$selected" "$selected" 2 "$branch" "$h"
+  want "$T/open-$branch.log" "http://127.0.0.1:17777/"
   first=$(head -1 "$T/services-$branch.log")
-  case "$first" in "$want_home|"*) ok;; *) bad "$branch selected wrong home: $first";; esac
+  case "$first" in "$selected|"*) ok;; *) bad "$branch selected wrong home: $first";; esac
+  stop_launcher
   for candidate in "$h/.gage" "$h/.countersign" "$h/.ctx"; do
-    if [ -e "$candidate/identity.key" ]; then bad "$branch created an identity at $candidate"; else ok; fi
+    if [ -e "$candidate/identity.key" ]; then bad "$branch created identity at $candidate"; else ok; fi
   done
 done
 
-echo "existing services are adopted; quit cleans up owned processes only"
-h="$T/h-adopt"; mkdir -p "$h/.gage"
-explicit_home=; counter_home=; ctx_home=
-# One already-running service does not get a second invocation.
-run_with_home adopt "$h" "$h/.gage" lan
-for service in ui 'watch --every 120'; do
-  if grep -qF "$service" "$T/services-adopt.log"; then ok; else bad "missing newly started $service"; fi
+echo "live per-home records are adopted only for their own service"
+for existing in lan ui watch; do
+  h="$T/adopt-$existing/.gage"; mkdir -p "$h"
+  : > "$T/adopt-$existing-existing.log"
+  start_stub "$h" "$T/adopt-$existing-existing.log" "$existing" ${existing:+$( [ "$existing" = watch ] && printf '%s' '--every 120' )}
+  run_launcher "adopt-$existing" "$h" "$h"
+  want "$T/open-adopt-$existing.log" "http://127.0.0.1:17777/"
+  for service in lan ui watch; do
+    n=$(count_service "$service" "$T/services-adopt-$existing.log")
+    if [ "$service" = "$existing" ]; then [ "$n" = 0 ] && ok || bad "$existing duplicate started (count $n)"; else [ "$n" = 1 ] && ok || bad "missing newly started $service (count $n)"; fi
+  done
+  kill -0 "$EXISTING_PID" 2>/dev/null && ok || bad "adopted $existing was not left running"
+  stop_launcher; stop_existing
 done
-# The launcher must have reaped its two child services when it quit.
-while IFS='|' read -r _home service pid; do
-  case "$service" in lan) continue;; esac
-  if kill -0 "$pid" 2>/dev/null; then bad "launcher-owned $service process $pid survived quit"; else ok; fi
-done < "$T/services-adopt.log"
 
-echo "a same-named service from another home is not adopted"
-h="$T/h-wrong-home"; wrong="$T/other-home"; mkdir -p "$h/.gage" "$wrong"
-: > "$T/wrong-home.log"; : > "$T/wrong-home-curl.log"
-GAGE_HOME="$wrong" GAGE_TEST_LOG="$T/wrong-home.log" "$FIXTURE_BIN" ui & EXISTING_PID=$!
-sleep .1
-GAGE_BIN="$FIXTURE_BIN" GAGE_TEST_LOG="$T/wrong-home.log" GAGE_OPEN="$T/bin/open" \
-  GAGE_OPEN_LOG="$T/wrong-home-open.log" GAGE_CURL_LOG="$T/wrong-home-curl.log" \
-  GAGE_CURL_HOME="$h/.gage" PATH="$T/bin:$PATH" HOME="$h" GAGE_UI_PORT=17777 \
-  GAGE_FORCE_PS_ENV="${GAGE_TEST_PS_ENV:-0}" GAGE_START_TIMEOUT=2 \
-  "$PWD/packaging/macos/gage-launcher" >"$T/wrong-home-out" 2>&1 &
-LAUNCH_PID=$!
-for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s "$T/wrong-home-open.log" ] && break; sleep .1; done
-kill "$LAUNCH_PID" 2>/dev/null || :; wait "$LAUNCH_PID" 2>/dev/null || :; LAUNCH_PID=
-[ -s "$T/wrong-home-open.log" ] && ok || bad "launcher did not start its own UI after finding only a different-home service"
-n=$(grep -c '|ui|' "$T/wrong-home.log" || :)
-[ "$n" = 2 ] && ok || bad "wrong-home UI was adopted or an unexpected duplicate was started (ui count $n)"
-if kill -0 "$EXISTING_PID" 2>/dev/null; then ok; else bad "launcher stopped the pre-existing wrong-home UI"; fi
-kill "$EXISTING_PID" 2>/dev/null || :; wait "$EXISTING_PID" 2>/dev/null || :; EXISTING_PID=
+echo "a live service record does not answer for other services"
+h="$T/cross-service/.gage"; mkdir -p "$h"; : > "$T/cross-service-existing.log"
+start_stub "$h" "$T/cross-service-existing.log" ui
+ui_pid=$(cat "$h/run/ui.pid")
+printf '%s\n' "$ui_pid" > "$h/run/lan.pid"
+printf '%s\n' "$ui_pid" > "$h/run/watch.pid"
+run_launcher cross-service "$h" "$h"
+[ "$(count_service lan "$T/services-cross-service.log")" = 1 ] && ok || bad "UI record incorrectly answered for lan"
+[ "$(count_service watch "$T/services-cross-service.log")" = 1 ] && ok || bad "UI record incorrectly answered for watch"
+[ "$(count_service ui "$T/services-cross-service.log")" = 0 ] && ok || bad "UI record did not answer for ui"
+stop_launcher; stop_existing
 
-echo "a UI endpoint must report the selected home before opening"
-h="$T/h-wrong-ui-state"; mkdir -p "$h/.gage"; : > "$T/wrong-ui-state.log"
-GAGE_HOME="$h/.gage" GAGE_TEST_LOG="$T/wrong-ui-state.log" "$FIXTURE_BIN" ui & EXISTING_PID=$!
-sleep .1
-GAGE_BIN="$FIXTURE_BIN" GAGE_TEST_LOG="$T/wrong-ui-state.log" GAGE_OPEN="$T/bin/open" \
-  GAGE_OPEN_LOG="$T/wrong-ui-state-open.log" GAGE_CURL_LOG="$T/wrong-ui-state-curl.log" \
-  GAGE_CURL_HOME="$T/other-home" PATH="$T/bin:$PATH" HOME="$h" GAGE_UI_PORT=17777 \
-  GAGE_FORCE_PS_ENV="${GAGE_TEST_PS_ENV:-0}" GAGE_START_TIMEOUT=1 \
-  "$PWD/packaging/macos/gage-launcher" >"$T/wrong-ui-state-out" 2>&1
+echo "legacy executable names remain adoptable"
+for name in ctx countersign; do
+  ln -s "$FIXTURE_BIN" "$T/bin/$name"
+  h="$T/legacy-$name/.gage"; mkdir -p "$h"; : > "$T/legacy-$name-existing.log"
+  env GAGE_HOME="$h" GAGE_TEST_LOG="$T/legacy-$name-existing.log" "$T/bin/$name" lan & EXISTING_PID=$!
+  for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s "$h/run/lan.pid" ] && break; sleep .05; done
+  run_launcher "legacy-$name" "$h" "$h"
+  [ "$(count_service lan "$T/services-legacy-$name.log")" = 0 ] && ok || bad "$name service was not adopted"
+  stop_launcher; stop_existing
+done
+
+echo "a stale record and a live non-gage PID are not adopted"
+h="$T/stale/.gage"; mkdir -p "$h/run"; : > "$T/stale-source.log"
+/bin/sleep 600 & stale_pid=$!; kill "$stale_pid"; wait "$stale_pid" 2>/dev/null || :
+printf '%s\n' "$stale_pid" > "$h/run/lan.pid"
+run_launcher stale "$h" "$h"
+[ "$(count_service lan "$T/services-stale.log")" = 1 ] && ok || bad "dead stale PID suppressed lan startup"
+stop_launcher
+
+h="$T/reused/.gage"; mkdir -p "$h/run"
+/bin/sleep 600 & reused_pid=$!; printf '%s\n' "$reused_pid" > "$h/run/lan.pid"
+run_launcher reused "$h" "$h"
+[ "$(count_service lan "$T/services-reused.log")" = 1 ] && ok || bad "live non-gage PID was adopted"
+stop_launcher; kill "$reused_pid" 2>/dev/null || :; wait "$reused_pid" 2>/dev/null || :
+
+echo "different-home records are invisible; malformed and missing records start"
+other="$T/other/.gage"; target="$T/target/.gage"; mkdir -p "$target"
+: > "$T/other.log"; start_stub "$other" "$T/other.log" lan
+run_launcher other-home "$target" "$target"
+[ "$(count_service lan "$T/services-other-home.log")" = 1 ] && ok || bad "different-home record suppressed lan startup"
+stop_launcher; stop_existing
+
+mkdir -p "$target/run"; printf '12x\n' > "$target/run/lan.pid"
+run_launcher malformed "$target" "$target"
+[ "$(count_service lan "$T/services-malformed.log")" = 1 ] && ok || bad "malformed record suppressed lan startup"
+stop_launcher
+rm -f "$target/run/lan.pid"
+run_launcher missing "$target" "$target"
+[ "$(count_service lan "$T/services-missing.log")" = 1 ] && ok || bad "missing record suppressed lan startup"
+stop_launcher
+
+echo "argv matching uses executable and subcommand positions"
+h="$T/argv-send/.gage"; mkdir -p "$h/run"
+GAGE_HOME="$h" GAGE_TEST_LOG="$T/send.log" "$FIXTURE_BIN" send --file lan & fake_pid=$!
+printf '%s\n' "$fake_pid" > "$h/run/lan.pid"
+run_launcher argv-send "$h" "$h"
+[ "$(count_service lan "$T/services-argv-send.log")" = 1 ] && ok || bad "gage send --file lan matched lan service"
+stop_launcher; kill "$fake_pid" 2>/dev/null || :; wait "$fake_pid" 2>/dev/null || :
+
+h="$T/argv-vim/.gage"; mkdir -p "$h/run"
+"$T/bin/vim" & fake_pid=$!; printf '%s\n' "$fake_pid" > "$h/run/lan.pid"
+run_launcher argv-vim "$h" "$h"
+[ "$(count_service lan "$T/services-argv-vim.log")" = 1 ] && ok || bad "vim src/lan.rs matched lan service"
+stop_launcher; kill "$fake_pid" 2>/dev/null || :; wait "$fake_pid" 2>/dev/null || :
+
+echo "a UI state home mismatch is refused even with a live home record"
+h="$T/wrong-ui/.gage"; mkdir -p "$h"
+: > "$T/wrong-ui-existing.log"; start_stub "$h" "$T/wrong-ui-existing.log" ui
+GAGE_BIN="$FIXTURE_BIN" GAGE_TEST_LOG="$T/services-wrong-ui.log" GAGE_OPEN="$T/bin/open" \
+  GAGE_OPEN_LOG="$T/open-wrong-ui.log" GAGE_CURL_LOG="$T/curl-wrong-ui.log" GAGE_CURL_HOME="$T/stranger" \
+  PATH="$T/bin:$PATH" GAGE_HOME="$h" HOME="$T/wrong-ui-user" GAGE_UI_PORT=17777 GAGE_START_TIMEOUT=1 \
+  "$PWD/packaging/macos/gage-launcher" > "$T/out-wrong-ui" 2>&1
 rc=$?
-[ "$rc" -ne 0 ] && ok || bad "launcher opened a UI reporting another home"
-n=$(grep -c '|ui|' "$T/wrong-ui-state.log" || :)
-[ "$n" = 1 ] && ok || bad "same-home UI was not adopted cleanly (ui count $n)"
-[ ! -s "$T/wrong-ui-state-open.log" ] && ok || bad "browser opened a UI whose state named another home"
-if kill -0 "$EXISTING_PID" 2>/dev/null; then ok; else bad "launcher stopped the pre-existing UI"; fi
-kill "$EXISTING_PID" 2>/dev/null || :; wait "$EXISTING_PID" 2>/dev/null || :; EXISTING_PID=
+[ "$rc" -ne 0 ] && ok || bad "launcher accepted UI state for another home"
+[ ! -s "$T/open-wrong-ui.log" ] && ok || bad "browser opened wrong-home UI"
+[ "$(count_service ui "$T/services-wrong-ui.log")" = 0 ] && ok || bad "duplicate UI started despite valid home record"
+kill -0 "$EXISTING_PID" 2>/dev/null && ok || bad "existing UI was stopped after state mismatch"
+stop_existing
 
-echo "a missing UI port fails within the configured bound"
-: > "$T/fail.log"
-GAGE_BIN="$FIXTURE_BIN" GAGE_TEST_LOG="$T/fail.log" GAGE_OPEN="$T/bin/open" \
-  GAGE_OPEN_LOG="$T/fail-open.log" GAGE_HOME="$T/fail-home" HOME="$T" \
-  GAGE_CURL_LOG="$T/fail-curl.log" GAGE_CURL_FAIL=1 GAGE_CURL_HOME= PATH="$T/bin:$PATH" \
-  GAGE_FORCE_PS_ENV="${GAGE_TEST_PS_ENV:-0}" \
-  GAGE_UI_PORT=17778 GAGE_START_TIMEOUT=1 "$PWD/packaging/macos/gage-launcher" >"$T/failure" 2>&1
-rc=$?
-[ "$rc" -ne 0 ] && ok || bad "launcher succeeded without a listener"
-want "$T/failure" "did not report the selected home within 1s"
-[ ! -s "$T/fail-open.log" ] && ok || bad "browser opened although the UI did not answer"
+echo "watch --once writes no run record"
+h="$T/once/.gage"; mkdir -p "$h"
+GAGE_HOME="$h" GAGE_TEST_LOG="$T/once.log" "$FIXTURE_BIN" watch --once
+[ ! -e "$h/run/watch.pid" ] && ok || bad "watch --once wrote a service record"
 
 echo "bundle metadata is a valid plist XML document"
-mkdir -p "$T/app-input"
-cp "$FIXTURE_BIN" "$T/app-input/gage"
+mkdir -p "$T/app-input"; cp "$FIXTURE_BIN" "$T/app-input/gage"
 bash packaging/macos/make-app.sh "$T/app-input/gage" "$T/bundle" >"$T/make" 2>&1
 if xmllint --noout "$T/bundle/Gage.app/Contents/Info.plist" 2>/dev/null; then ok; else bad "Info.plist is not well-formed XML"; fi
 want "$T/bundle/Gage.app/Contents/Info.plist" "sh.gage.app"
