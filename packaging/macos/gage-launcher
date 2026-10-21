@@ -47,10 +47,12 @@ trap 'exit 0' HUP INT TERM
 # process for another identity is never adopted.
 process_has_home() {
   pid=$1
-  if [ -r "/proc/$pid/environ" ]; then
+  if [ "${GAGE_FORCE_PS_ENV:-0}" != 1 ] && [ -r "/proc/$pid/environ" ]; then
     environment=$(tr '\000' ' ' < "/proc/$pid/environ" 2>/dev/null) || return 1
   else
-    environment=$(ps eww -p "$pid" -o command= 2>/dev/null) || return 1
+    # On Darwin, `-o command=` suppresses the environment appended by `e`.
+    # Keep the default format so GAGE_HOME and HOME remain visible in `eww`.
+    environment=$(ps eww -p "$pid" 2>/dev/null) || return 1
   fi
 
   env_has_var() {

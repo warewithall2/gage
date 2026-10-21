@@ -35,6 +35,24 @@ printf '{"home":"%s"}\n' "$GAGE_CURL_HOME"
 CURL
 chmod +x "$T/bin/curl"
 
+# Force the launcher's Darwin-style ps environment fallback on Linux when
+# GAGE_TEST_PS_ENV=1. This shim emits the same command-plus-environment shape
+# that `ps eww -p PID` uses, sourced from fixture processes' proc entries.
+if [ "${GAGE_TEST_PS_ENV:-0}" = 1 ]; then
+  cat > "$T/bin/ps" <<'PS'
+#!/bin/bash
+if [ "$#" -eq 3 ] && [ "${1:-}" = eww ] && [ "${2:-}" = -p ]; then
+  pid=$3
+  argv=$(tr '\000' ' ' < "/proc/$pid/cmdline") || exit 1
+  envs=$(tr '\000' ' ' < "/proc/$pid/environ") || exit 1
+  printf '  PID TTY STAT TIME COMMAND\n%s ?? S 0:00 %s %s\n' "$pid" "$argv" "$envs"
+else
+  exec /bin/ps "$@"
+fi
+PS
+  chmod +x "$T/bin/ps"
+fi
+
 # Fixture homes. Ensure the identity path chosen by the launcher is passed
 # unchanged to the stub services.
 run_with_home() {
@@ -50,6 +68,7 @@ run_with_home() {
   GAGE_BIN="$FIXTURE_BIN" GAGE_TEST_LOG="$T/services-$label.log" \
     GAGE_OPEN="$T/bin/open" GAGE_OPEN_LOG="$T/open-$label.log" \
     GAGE_CURL_LOG="$T/curl-$label.log" GAGE_CURL_HOME="$expected" PATH="$T/bin:$PATH" \
+    GAGE_FORCE_PS_ENV="${GAGE_TEST_PS_ENV:-0}" \
     GAGE_HOME="${explicit_home:-}" COUNTERSIGN_HOME="${counter_home:-}" \
     CTX_HOME="${ctx_home:-}" HOME="$home" GAGE_UI_PORT=17777 GAGE_START_TIMEOUT=2 \
     "$PWD/packaging/macos/gage-launcher" >"$T/out-$label" 2>&1 &
@@ -119,7 +138,8 @@ sleep .1
 GAGE_BIN="$FIXTURE_BIN" GAGE_TEST_LOG="$T/wrong-home.log" GAGE_OPEN="$T/bin/open" \
   GAGE_OPEN_LOG="$T/wrong-home-open.log" GAGE_CURL_LOG="$T/wrong-home-curl.log" \
   GAGE_CURL_HOME="$h/.gage" PATH="$T/bin:$PATH" HOME="$h" GAGE_UI_PORT=17777 \
-  GAGE_START_TIMEOUT=2 "$PWD/packaging/macos/gage-launcher" >"$T/wrong-home-out" 2>&1 &
+  GAGE_FORCE_PS_ENV="${GAGE_TEST_PS_ENV:-0}" GAGE_START_TIMEOUT=2 \
+  "$PWD/packaging/macos/gage-launcher" >"$T/wrong-home-out" 2>&1 &
 LAUNCH_PID=$!
 for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s "$T/wrong-home-open.log" ] && break; sleep .1; done
 kill "$LAUNCH_PID" 2>/dev/null || :; wait "$LAUNCH_PID" 2>/dev/null || :; LAUNCH_PID=
@@ -136,7 +156,8 @@ sleep .1
 GAGE_BIN="$FIXTURE_BIN" GAGE_TEST_LOG="$T/wrong-ui-state.log" GAGE_OPEN="$T/bin/open" \
   GAGE_OPEN_LOG="$T/wrong-ui-state-open.log" GAGE_CURL_LOG="$T/wrong-ui-state-curl.log" \
   GAGE_CURL_HOME="$T/other-home" PATH="$T/bin:$PATH" HOME="$h" GAGE_UI_PORT=17777 \
-  GAGE_START_TIMEOUT=1 "$PWD/packaging/macos/gage-launcher" >"$T/wrong-ui-state-out" 2>&1
+  GAGE_FORCE_PS_ENV="${GAGE_TEST_PS_ENV:-0}" GAGE_START_TIMEOUT=1 \
+  "$PWD/packaging/macos/gage-launcher" >"$T/wrong-ui-state-out" 2>&1
 rc=$?
 [ "$rc" -ne 0 ] && ok || bad "launcher opened a UI reporting another home"
 n=$(grep -c '|ui|' "$T/wrong-ui-state.log" || :)
@@ -150,6 +171,7 @@ echo "a missing UI port fails within the configured bound"
 GAGE_BIN="$FIXTURE_BIN" GAGE_TEST_LOG="$T/fail.log" GAGE_OPEN="$T/bin/open" \
   GAGE_OPEN_LOG="$T/fail-open.log" GAGE_HOME="$T/fail-home" HOME="$T" \
   GAGE_CURL_LOG="$T/fail-curl.log" GAGE_CURL_FAIL=1 GAGE_CURL_HOME= PATH="$T/bin:$PATH" \
+  GAGE_FORCE_PS_ENV="${GAGE_TEST_PS_ENV:-0}" \
   GAGE_UI_PORT=17778 GAGE_START_TIMEOUT=1 "$PWD/packaging/macos/gage-launcher" >"$T/failure" 2>&1
 rc=$?
 [ "$rc" -ne 0 ] && ok || bad "launcher succeeded without a listener"
