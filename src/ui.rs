@@ -26,6 +26,11 @@
 //! stays terminal-only is everything with a passphrase: export and restore
 //! never transit a browser form, the same rule the MCP server follows.
 //!
+//! `GET /api/invite` is the public `gage add` line drawn as SVG in this
+//! process. The page inserts that markup. It is not a scanner: no camera,
+//! no clipboard, and no second protocol. The line is the one `gage connect`
+//! prints, and a missing identity is a 404 rather than an empty picture.
+//!
 //! Handing a bundle to a machine on the LOCAL NETWORK is allowed from here,
 //! which is a change from what this file used to say, so the reasoning should
 //! be on the record rather than only in a commit. The old rule was that a
@@ -450,6 +455,13 @@ fn handle(stream: TcpStream, port: u16) -> std::io::Result<()> {
             ),
         },
         ("GET", "/api/buddies") => respond(stream, "200 OK", "application/json", &buddies_json()),
+        // The add line, as a picture. Not part of the poll: the page fetches
+        // it once. A missing identity is the same 404 as any other absent
+        // route, and the body does not say where the key file would be.
+        ("GET", "/api/invite") => match invite_response() {
+            Ok(svg) => respond(stream, "200 OK", "image/svg+xml", &svg),
+            Err((code, body)) => respond(stream, code, "text/plain", body),
+        },
         ("POST", "/api/init") => match init_from_ui(&req.body) {
             Ok(v) => respond(stream, "200 OK", "application/json", &v),
             Err((code, msg)) => respond(
@@ -524,6 +536,19 @@ fn handle(stream: TcpStream, port: u16) -> std::io::Result<()> {
 
 /// Who is on this network, as the page shows it.
 ///
+/// SVG of this machine's public add line, or why there isn't one.
+fn invite_response() -> Result<String, (&'static str, &'static str)> {
+    let id = match crate::identity::Identity::load() {
+        Ok(id) => id,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Err(("404 Not Found", "not found\n"));
+        }
+        Err(_) => return Err(("500 Internal Server Error", "identity could not be read\n")),
+    };
+    crate::invite::svg(&id.add_line())
+        .map_err(|_| ("500 Internal Server Error", "the add line does not fit in a QR code\n"))
+}
+
 /// Read from the list `gage lan` keeps rather than by sending anything: the
 /// viewer does not announce, and a page that could make a machine broadcast
 /// would be a way to make it visible without the person choosing to be.
@@ -1890,6 +1915,35 @@ mod tests {
         ] {
             assert!(!handle_ok(bad), "accepted a hostile handle: {bad:?}");
         }
+    }
+
+    #[test]
+    fn the_invite_is_markup_fetched_from_this_server() {
+        // Same honesty as the reveal/add pin above: this is a grep of the
+        // page, which is what this tree has instead of a headless browser.
+        // It locks the shape the CSP allows. An `<img src>` is not one.
+        assert!(INDEX.contains("fetch('/api/invite')"));
+        assert!(INDEX.contains("function inviteOk"));
+        assert!(INDEX.contains("function budpaneHtml"));
+        assert!(INDEX.contains("function inviteHtml"));
+        let words = INDEX
+            .lines()
+            .find(|l| l.contains("W.stage==='words'"))
+            .unwrap_or_else(|| panic!("words stage missing"));
+        assert!(
+            words.contains("inviteHtml()"),
+            "the first-run words stage does not show the code"
+        );
+        let pane = INDEX
+            .split("function budpaneHtml")
+            .nth(1)
+            .unwrap_or_else(|| panic!("budpaneHtml missing"));
+        let pane = &pane[..pane.find("\nfunction ").unwrap_or(pane.len())];
+        assert!(pane.contains("inviteHtml()"));
+        assert!(!INDEX.contains("<img"));
+        assert!(!INDEX.contains("clipboard"));
+        assert!(!INDEX.contains("http://") && !INDEX.contains("https://"));
+        assert!(INDEX.contains("inviteLoad(true)"), "creating an identity does not load the code");
     }
 
     #[test]

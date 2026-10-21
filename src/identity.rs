@@ -134,6 +134,18 @@ fn b64_32(s: &str) -> std::io::Result<[u8; 32]> {
         .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "key is not 32 bytes"))
 }
 
+/// `gage add <handle> <signpub.boxpub>`, the line `gage connect` prints.
+///
+/// `handle` is quoted the way a shell needs, and `full_key` is the public
+/// token only. Callers that have an [`Identity`] want [`Identity::add_line`].
+pub fn add_line(handle: &str, full_key: &str) -> String {
+    format!(
+        "gage add {} {}",
+        crate::manifest::one_line(&crate::manifest::shell_word(handle)),
+        full_key
+    )
+}
+
 /// Split a `signpub.boxpub` token. The signing key alone is still accepted,
 /// because contacts added before encryption existed only have that one -- they
 /// can be verified but not sealed to.
@@ -414,6 +426,16 @@ impl Identity {
     /// What you hand a colleague: both public keys, one token.
     pub fn full_key(&self) -> String {
         format!("{}.{}", self.public_b64(), self.box_public_b64())
+    }
+
+    /// The command a colleague runs.
+    ///
+    /// The same string `gage connect` prints, without the four-space indent
+    /// that only sets it in from the terminal margin. The handle is shell-quoted
+    /// the same way, and the token is `full_key` — both public halves, nothing
+    /// from `identity.key`.
+    pub fn add_line(&self) -> String {
+        crate::identity::add_line(&self.handle, &self.full_key())
     }
 
     pub fn retired(&self) -> &[RetiredSelf] {

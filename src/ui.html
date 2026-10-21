@@ -318,6 +318,13 @@ textarea:focus{outline:none;border-color:var(--accent)}
 .hint code{font-family:var(--mono);font-size:var(--t2);background:var(--sunk);
   border:1px solid var(--line);border-radius:var(--r1);padding:2px 6px;
   -webkit-box-decoration-break:clone;box-decoration-break:clone}
+/* The QR is black modules on a white field, including in the dark theme.
+   `fill` on the element is explicit too; this is the quiet zone around it. */
+.invite{margin-top:var(--s5)}
+.invite h2{font-size:var(--t4);font-weight:var(--w3);color:var(--fg);margin-bottom:var(--s3)}
+.invite p{color:var(--dim);margin-bottom:var(--s4);max-width:58ch}
+.invite svg{display:block;width:min(260px,100%);height:auto;background:#fff;
+  border:1px solid var(--line);border-radius:var(--r1)}
 .wizard{position:fixed;inset:0;z-index:20;background:var(--bg);display:grid;place-items:center;
   padding:var(--s5);overflow:auto}
 .wcard{width:min(680px,100%);background:var(--sheet);border:1px solid var(--line);
@@ -828,6 +835,49 @@ function tabsRender(){
    +`<button class="tab${TAB==='buddies'?' on':''}" onclick="setTab('buddies')">Buddies`
    +(n?`<span class="bdg">${n}</span>`:'')+`</button>`;
 }
+// The add-line QR. Fetched once: it does not change while this page is
+// open, and it must not ride the 2.5s poll. Inserted as markup. An image
+// URL would be blocked by this page's CSP.
+let INVITE=null, inviteSeq=0;
+function inviteOk(t){
+  if(typeof t!=='string'||t.length<20||t.length>200000)return false;
+  if(!t.startsWith('<svg ')||!t.endsWith('</svg>'))return false;
+  if((t.match(/<svg/g)||[]).length!==1)return false;
+  if(/<\s*(script|img|object|embed|iframe|link|foreignObject)\b|<!DOCTYPE|<\?xml/i.test(t))return false;
+  return true;
+}
+async function inviteLoad(force){
+  if(!force&&INVITE!==null)return;
+  const seq=++inviteSeq;
+  let next='';
+  try{
+    const r=await fetch('/api/invite');
+    if(r.ok){const t=await r.text();if(inviteOk(t))next=t;}
+  }catch(e){}
+  if(seq===inviteSeq)INVITE=next;
+}
+function inviteHtml(){
+  if(!INVITE)return '';
+  return `<div class="invite"><h2>The line the other person runs</h2>
+    <p>This is the public <code>gage add</code> line <code>gage connect</code> prints.
+    It names this machine and its public key, and nothing else.</p>
+    ${INVITE}</div>`;
+}
+function budpaneHtml(){
+  return `<div class="hint">
+      <h2>Who can reach you</h2>
+      <p>Your list is the trust boundary. A key on it is one you confirmed out of
+        band; a key not on it is a decision you have not taken yet. Nothing here is
+        automatic, and nothing a sender writes puts it on the list.</p>
+      <p>Approving one asks for a word-pair you have to read off the other machine.
+        That is not a formality: the pairs come from the key, so a key can quote its
+        own in a message to you, and only the other machine's screen is evidence.</p>
+      <p>Refusing records that you said no. It is not a block &mdash; nothing in gage
+        can stop a bundle being delivered, and mail from a refused key still arrives
+        and still waits for you to accept it.</p>
+      <p><code>gage decline &lt;key&gt;</code> and <code>gage undecline &lt;key&gt;</code>
+        do the same from a terminal.</p></div>`+inviteHtml();
+}
 function setTab(t){
   TAB=t;
   // In the URL, so a reload keeps the tab you were on -- this page polls and
@@ -850,19 +900,10 @@ function setTab(t){
     const c=document.getElementById('composer'); if(c)c.hidden=true;
     const se=document.getElementById('settle'); if(se)se.hidden=true;
     document.getElementById('hstate').textContent='';
-    document.getElementById('budpane').innerHTML=`<div class="hint">
-      <h2>Who can reach you</h2>
-      <p>Your list is the trust boundary. A key on it is one you confirmed out of
-        band; a key not on it is a decision you have not taken yet. Nothing here is
-        automatic, and nothing a sender writes puts it on the list.</p>
-      <p>Approving one asks for a word-pair you have to read off the other machine.
-        That is not a formality: the pairs come from the key, so a key can quote its
-        own in a message to you, and only the other machine's screen is evidence.</p>
-      <p>Refusing records that you said no. It is not a block &mdash; nothing in gage
-        can stop a bundle being delivered, and mail from a refused key still arrives
-        and still waits for you to accept it.</p>
-      <p><code>gage decline &lt;key&gt;</code> and <code>gage undecline &lt;key&gt;</code>
-        do the same from a terminal.</p></div>`;
+    document.getElementById('budpane').innerHTML=budpaneHtml();
+    if(INVITE===null)inviteLoad(false).then(()=>{if(TAB==='buddies'){
+      document.getElementById('budpane').innerHTML=budpaneHtml();
+    }});
   }else{
     document.getElementById('title').textContent='gage';
   }
@@ -1072,7 +1113,7 @@ function wRender(){
   let body='';
   if(W.stage==='welcome')body=`<h1>Welcome to gage</h1><p>Gage lets you exchange signed bundles with people you know. First choose a name for this machine, then compare word-pairs with a buddy before you send them a first bundle.</p><button class="btn go" onclick="W.stage='handle';wRender()">Get started</button>`;
   if(W.stage==='handle')body=`<h1>Choose a handle</h1><p>This name helps you and your buddies recognize this machine.</p>${field('whandle',W.handle,'Your handle')}<button class="btn go" onclick="wCreate()" ${W.busy?'disabled':''}>${W.busy?'Creating…':'Create identity'}</button>`;
-  if(W.stage==='words')body=`<h1>Your word-pairs</h1><p>Keep these pairs available while you compare them with your buddy. They identify this machine.</p><div class="wwords">${esc(W.words.join('\n'))}</div><p>${esc(W.warning)}</p><p>For a backup, run <code>gage export-identity</code> in a terminal and keep the exported file safe.</p><button class="btn go" onclick="wNearby()">Continue to pairing</button>`;
+  if(W.stage==='words')body=`<h1>Your word-pairs</h1><p>Keep these pairs available while you compare them with your buddy. They identify this machine.</p><div class="wwords">${esc(W.words.join('\n'))}</div><p>${esc(W.warning)}</p><p>For a backup, run <code>gage export-identity</code> in a terminal and keep the exported file safe.</p>`+inviteHtml()+`<button class="btn go" onclick="wNearby()">Continue to pairing</button>`;
   if(W.stage==='pair'){
     const d=W.devices.find(x=>x.label===W.chosen);
     body=`<h1>Pair with a buddy</h1><p>Both machines must be running <code>gage lan</code> on the same network. Select your buddy, read all four pairs aloud, and compare them with the other screen.</p>`+
@@ -1088,6 +1129,7 @@ async function wCreate(){
   W.busy=true;W.error='';wRender();
   try{const r=await post('/api/init',{handle:W.handle});const j=await r.json().catch(()=>({}));if(!r.ok)throw Error(j.error||`HTTP ${r.status}`);
     W.handle=j.handle;W.words=Array.isArray(j.words)?j.words:(typeof j.words==='string'?j.words.split('\n'):[]);W.warning=j.backup_warning||'';W.stage='words';
+    await inviteLoad(true);
   }catch(e){W.error=e.message||String(e)} W.busy=false;wRender();
 }
 async function wNearby(){

@@ -32,3 +32,17 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 sha2 = "0.11.1"
 webpki-roots = "1.0"
+# The public `gage add` line, drawn as SVG the page inserts as markup.
+# Nothing is fetched when it is shown: the page already refuses every
+# external load, and an `<img src>` would be one.
+#
+# Defaults stay off. This crate's default features are `image`, `svg` and
+# `pic`, and `image` is its one optional dependency -- leaving the defaults
+# on would pull an image codec this binary does not use, which is the same
+# mistake the `ring` pin above exists to avoid (a stack you did not ask
+# for, compiled into a release). `svg` is an empty feature: the renderer
+# ships in the crate, so this pin is one crate, no transitive crate, and
+# no C. The licence line is already MIT OR Apache-2.0. 0.14.1 is that
+# crate's last release; `qrcode-rs` 2.x is a different crate, with a
+# default set that turns on image, svg, pic, eps, html and pdf.
+qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
