@@ -48,6 +48,40 @@ else
   : > "$RESOURCES/Gage.icns"
 fi
 
+# The window, when this machine can build it. Route A.
+#
+# The SDK is named explicitly and that is the whole trick. The Command Line
+# Tools ship a Swift 6.1.2 compiler beside a MacOSX26 SDK built with Swift
+# 6.2, and swiftc picks the NEWEST SDK unless told otherwise, which fails
+# with "this SDK is not supported by the compiler". Nothing is missing when
+# that happens; installing Xcode is not the fix. So: pick the newest SDK the
+# compiler actually accepts, by trying each from newest down and keeping the
+# first that compiles. If none does -- or there is no swiftc, as on Linux --
+# the bundle ships without a window and the launcher opens the browser
+# instead, which is Route B and still a working app.
+WINDOW_SRC=$(dirname "$0")/GageApp.swift
+if command -v swiftc >/dev/null 2>&1 && [ -f "$WINDOW_SRC" ]; then
+  SDK_ROOT=$(xcode-select -p 2>/dev/null)/SDKs
+  built=
+  for sdk in $(ls -d "$SDK_ROOT"/MacOSX*.sdk 2>/dev/null | sort -Vr); do
+    case ${sdk##*/} in MacOSX.sdk) continue ;; esac
+    if swiftc -O -sdk "$sdk" -target arm64-apple-macos13 \
+         -o "$MACOS/GageWindow" "$WINDOW_SRC" >/dev/null 2>&1; then
+      built=$sdk
+      break
+    fi
+  done
+  if [ -n "$built" ]; then
+    chmod 755 "$MACOS/GageWindow"
+    echo "  window: built against ${built##*/}"
+  else
+    rm -f "$MACOS/GageWindow"
+    echo "warning: no SDK here compiles the window; the app will open a browser" >&2
+  fi
+else
+  echo "  window: skipped (no swiftc); the app will open a browser" >&2
+fi
+
 if command -v codesign >/dev/null 2>&1; then
   codesign -s - --force --deep "$APP"
 else

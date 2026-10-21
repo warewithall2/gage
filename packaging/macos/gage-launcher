@@ -114,8 +114,21 @@ if ! ui_state_matches_home; then
   exit 1
 fi
 
+# The window if this bundle has one, the browser if it does not. Route A is
+# the window; Route B is the same app opening the default browser. The only
+# difference between them is this branch, which is why B was built first.
+#
+# The window runs in the FOREGROUND and owns the rest of this process's
+# life: when the person closes it, this script continues to the EXIT trap,
+# which stops the services it started. The browser path cannot do that --
+# nothing tells us when a tab closes -- so it falls through to the wait loop
+# below and quits when macOS quits the app.
+WINDOW=$APP_DIR/GageWindow
 if [ -n "${GAGE_OPEN:-}" ]; then
   "$GAGE_OPEN" "http://127.0.0.1:$ui_port/"
+elif [ -x "$WINDOW" ]; then
+  "$WINDOW" "http://127.0.0.1:$ui_port/"
+  exit 0
 else
   open "http://127.0.0.1:$ui_port/"
 fi

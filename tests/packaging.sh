@@ -261,6 +261,65 @@ h="$T/once/.gage"; mkdir -p "$h"
 GAGE_HOME="$h" GAGE_TEST_LOG="$T/once.log" "$FIXTURE_BIN" watch --once
 [ ! -e "$h/run/watch.pid" ] && ok || bad "watch --once wrote a service record"
 
+echo "the window is preferred when the bundle has one, the browser when it does not"
+
+# Route A vs Route B is one branch in the launcher, so it is pinned here.
+# A stub window records that it ran and exits, which is what closing the real
+# window does; the launcher must then exit on its own rather than fall through
+# to the browser or sit in the wait loop.
+mkdir -p "$T/win/Gage.app/Contents/MacOS"
+WINAPP=$T/win/Gage.app/Contents/MacOS
+cp packaging/macos/gage-launcher "$WINAPP/gage-launcher"
+cat > "$WINAPP/GageWindow" <<'WIN'
+#!/bin/sh
+printf '%s\n' "$1" >> "$GAGE_WINDOW_LOG"
+WIN
+chmod +x "$WINAPP/GageWindow"
+winhome=$T/win-home/.gage; mkdir -p "$winhome"
+: > "$T/win-window.log"; : > "$T/win-open.log"; : > "$T/win-services.log"
+( trap - EXIT; exec env GAGE_BIN="$FIXTURE_BIN" GAGE_TEST_LOG="$T/win-services.log" \
+  GAGE_WINDOW_LOG="$T/win-window.log" GAGE_OPEN_LOG="$T/win-open.log" \
+  GAGE_CURL_LOG="$T/win-curl.log" GAGE_CURL_HOME="$winhome" PATH="$T/bin:$PATH" \
+  GAGE_HOME="$winhome" GAGE_UI_PORT=17777 GAGE_START_TIMEOUT=2 \
+  "$WINAPP/gage-launcher" ) >"$T/out-win" 2>&1 &
+winpid=$!
+track_pid "$winpid"
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+  [ -s "$T/win-window.log" ] && break
+  sleep .05
+done
+if [ -s "$T/win-window.log" ]; then ok; else bad "the bundled window was not used"; fi
+if grep -q '^http://127.0.0.1:17777/$' "$T/win-window.log"; then ok
+else bad "the window was not given the loopback url: $(cat "$T/win-window.log")"; fi
+if [ ! -s "$T/win-open.log" ]; then ok; else bad "a browser was opened as well as the window"; fi
+# The window exited, so the launcher must have too.
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+  kill -0 "$winpid" 2>/dev/null || break
+  sleep .05
+done
+if kill -0 "$winpid" 2>/dev/null; then bad "the launcher outlived its window"; else ok; fi
+forget_pid "$winpid"
+
+# No window in the bundle: the same launcher opens the browser instead. This
+# is Route B, and it has to keep working, because a machine whose SDKs cannot
+# compile the window still gets an app.
+rm -f "$WINAPP/GageWindow"
+nowinhome=$T/nowin-home/.gage; mkdir -p "$nowinhome"
+: > "$T/nowin-open.log"; : > "$T/nowin-services.log"
+( trap - EXIT; exec env GAGE_BIN="$FIXTURE_BIN" GAGE_TEST_LOG="$T/nowin-services.log" \
+  GAGE_OPEN_LOG="$T/nowin-open.log" \
+  GAGE_CURL_LOG="$T/nowin-curl.log" GAGE_CURL_HOME="$nowinhome" PATH="$T/bin:$PATH" \
+  GAGE_HOME="$nowinhome" GAGE_UI_PORT=17777 GAGE_START_TIMEOUT=2 \
+  "$WINAPP/gage-launcher" ) >"$T/out-nowin" 2>&1 &
+nowinpid=$!
+track_pid "$nowinpid"
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+  [ -s "$T/nowin-open.log" ] && break
+  sleep .05
+done
+if [ -s "$T/nowin-open.log" ]; then ok; else bad "no window and no browser either"; fi
+stop_pid "$nowinpid"
+
 echo "bundle metadata is a valid plist XML document"
 mkdir -p "$T/app-input"; cp "$FIXTURE_BIN" "$T/app-input/gage"
 bash packaging/macos/make-app.sh "$T/app-input/gage" "$T/bundle" >"$T/make" 2>&1
