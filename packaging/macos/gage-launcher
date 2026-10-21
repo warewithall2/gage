@@ -41,16 +41,65 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 0' HUP INT TERM
 
-# A process belongs to a service when its argv names the gage executable and
-# that service command. pgrep is present on macOS and Linux; ps is the fallback.
-service_running() {
+# Does this PID resolve to the home this launcher selected? Services started
+# by Gage inherit GAGE_HOME; older invocations may use a compatibility
+# variable or only HOME. Read the live process environment so a same-named
+# process for another identity is never adopted.
+process_has_home() {
+  pid=$1
+  if [ -r "/proc/$pid/environ" ]; then
+    environment=$(tr '\000' ' ' < "/proc/$pid/environ" 2>/dev/null) || return 1
+  else
+    environment=$(ps eww -p "$pid" -o command= 2>/dev/null) || return 1
+  fi
+
+  env_has_var() {
+    case " $environment " in *" $1="*) return 0;; *) return 1;; esac
+  }
+  env_has_value() {
+    case " $environment " in *" $1=$2 "*) return 0;; *) return 1;; esac
+  }
+
+  for variable in GAGE_HOME COUNTERSIGN_HOME CTX_HOME; do
+    if env_has_var "$variable"; then
+      env_has_value "$variable" "$RESOLVED_HOME"
+      return $?
+    fi
+  done
+  if env_has_value HOME "$HOME"; then
+    if [ -d "$HOME/.gage" ]; then
+      process_home=$HOME/.gage
+    elif [ -d "$HOME/.countersign" ]; then
+      process_home=$HOME/.countersign
+    elif [ -d "$HOME/.ctx" ]; then
+      process_home=$HOME/.ctx
+    else
+      process_home=$HOME/.gage
+    fi
+    [ "$process_home" = "$RESOLVED_HOME" ]
+    return $?
+  fi
+  return 1
+}
+
+service_pids() {
   service=$1
   bin_name=${GAGE_BIN##*/}
   if command -v pgrep >/dev/null 2>&1; then
-    pgrep -f "(^|/)${bin_name} ${service}([[:space:]]|$)" >/dev/null 2>&1
+    pgrep -f "(^|/)${bin_name} ${service}([[:space:]]|$)" 2>/dev/null || :
   else
-    ps -axo command= 2>/dev/null | grep -E "(^|/)${bin_name} ${service}([[:space:]]|$)" | grep -v grep >/dev/null
+    ps -axo pid=,command= 2>/dev/null | awk -v re="(^|/)${bin_name} ${service}([[:space:]]|$)" '$0 ~ re {print $1}'
   fi
+}
+
+service_running() {
+  service=$1
+  for pid in $(service_pids "$service"); do
+    if process_has_home "$pid"; then
+      return 0
+    fi
+  done
+  return 1
 }
 
 start_service() {
@@ -71,15 +120,19 @@ start_service watch --every 120
 ui_port=${GAGE_UI_PORT:-7777}
 timeout=${GAGE_START_TIMEOUT:-30}
 elapsed=0
+ui_state_matches_home() {
+  state=$(curl -fsS --max-time 1 "http://127.0.0.1:$ui_port/api/state" 2>/dev/null) || return 1
+  printf '%s\n' "$state" | grep -F "\"home\":\"$RESOLVED_HOME\"" >/dev/null
+}
 while [ "$elapsed" -lt "$timeout" ]; do
-  if curl -fsS --max-time 1 "http://127.0.0.1:$ui_port/" >/dev/null 2>&1; then
+  if ui_state_matches_home; then
     break
   fi
   sleep 1
   elapsed=$((elapsed + 1))
 done
-if ! curl -fsS --max-time 1 "http://127.0.0.1:$ui_port/" >/dev/null 2>&1; then
-  echo "Gage could not start: http://127.0.0.1:$ui_port did not answer within ${timeout}s." >&2
+if ! ui_state_matches_home; then
+  echo "Gage could not start: the UI at http://127.0.0.1:$ui_port did not report the selected home within ${timeout}s; refusing to open another home's UI." >&2
   echo "Check whether another application is using port $ui_port, then try again." >&2
   exit 1
 fi
