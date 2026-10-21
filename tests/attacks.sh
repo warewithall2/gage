@@ -1952,8 +1952,27 @@ curl -s -X POST "${H[@]}" \
   -d "{\"to\":\"$blab\",\"files\":[{\"name\":\"a.md\",\"data\":\"$X\"},{\"name\":\"a.md\",\"data\":\"$X\"}]}" \
   "$U/api/send" > "$T/us5" 2>&1
 want "$T/us5" "one would have overwritten the other"
+# Nothing at all is still refused -- the wording changed when a typed note
+# became a send on its own, the rule did not.
 curl -s -X POST "${H[@]}" -d "{\"to\":\"$blab\",\"files\":[]}" "$U/api/send" > "$T/us6" 2>&1
-want "$T/us6" "no files"
+want "$T/us6" "drop a file, write a note"
+# Whitespace is not a note either.
+curl -s -X POST "${H[@]}" -d "{\"to\":\"$blab\",\"files\":[],\"text\":\"   \"}" \
+  "$U/api/send" > "$T/us6b" 2>&1
+want "$T/us6b" "drop a file, write a note"
+# A note on its own IS a send: it must not come back refused as empty. It can
+# still fail for want of a route, which is a different answer.
+curl -s -X POST "${H[@]}" -d "{\"to\":\"$blab\",\"files\":[],\"text\":\"look at this machine\"}" \
+  "$U/api/send" > "$T/us6c" 2>&1
+if grep -qF "drop a file, write a note" "$T/us6c"; then
+  bad "a note-only send was refused as empty"
+else ok; fi
+# A dropped file called message.md collides with the note rather than one
+# quietly overwriting the other.
+curl -s -X POST "${H[@]}" \
+  -d "{\"to\":\"$blab\",\"text\":\"note\",\"files\":[{\"name\":\"message.md\",\"data\":\"$X\"}]}" \
+  "$U/api/send" > "$T/us6d" 2>&1
+want "$T/us6d" "two files called message.md"
 
 # Pairing from the page is the same comparison, and the page cannot name a key
 # that was never on screen.

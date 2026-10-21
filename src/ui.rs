@@ -957,8 +957,27 @@ fn send_from_ui(raw: &[u8]) -> Result<Vec<String>, (&'static str, String)> {
         .and_then(|x| x.as_array())
         .cloned()
         .unwrap_or_default();
-    if files.is_empty() {
-        return Err(("400 Bad Request", "no files".into()));
+    // A typed note, carried as `message.md` the way a reply is carried as
+    // `reply.md`. Not a `prompt` item: a prompt is the kind written to steer
+    // a model, and `gage open` fences it for that reason. Minting those from
+    // a text box would make the page a steering surface, so they stay a
+    // deliberate CLI act (`gage send --prompt <file>`).
+    let text = v
+        .get("text")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+    if text.len() > 64 * 1024 {
+        return Err(("400 Bad Request", "that note is larger than a note".into()));
+    }
+    // Either is enough. Requiring a file meant you could not say "have a
+    // look at this machine" to someone standing next to you without first
+    // inventing a file to say it in.
+    if files.is_empty() && text.trim().is_empty() {
+        return Err((
+            "400 Bad Request",
+            "nothing to send -- drop a file, write a note, or both".into(),
+        ));
     }
 
     let tmp = crate::identity::home().join(format!("tmp-ui-send-{}", std::process::id()));
@@ -968,6 +987,20 @@ fn send_from_ui(raw: &[u8]) -> Result<Vec<String>, (&'static str, String)> {
     let run = |tmp: &std::path::Path| -> Result<Vec<String>, (&'static str, String)> {
         let mut paths = Vec::new();
         let mut seen: Vec<String> = Vec::new();
+        if !text.trim().is_empty() {
+            let mut body = text.clone();
+            if !body.ends_with('\n') {
+                body.push('\n');
+            }
+            let f = tmp.join("message.md");
+            std::fs::write(&f, body)
+                .map_err(|e| ("500 Internal Server Error", e.to_string()))?;
+            // Claimed before the dropped files are named, so a file actually
+            // called message.md collides loudly instead of overwriting the
+            // note or being overwritten by it.
+            seen.push("message.md".to_string());
+            paths.push(f);
+        }
         for f in &files {
             let name = f.get("name").and_then(|x| x.as_str()).unwrap_or("");
             let Some(name) = safe_upload_name(name) else {
@@ -1993,6 +2026,61 @@ mod tests {
             &"a".repeat(41),
         ] {
             assert!(!handle_ok(bad), "accepted a hostile handle: {bad:?}");
+        }
+    }
+
+    /// A note alone is a send. A file alone is a send. Neither is not.
+    #[test]
+    fn a_nearby_send_needs_a_file_or_a_note() {
+        // Neither: refused, and the message says what to do rather than
+        // naming the field that was empty.
+        let e = send_from_ui(br#"{"to":"cedar cinder","files":[]}"#)
+            .expect_err("accepted a send with nothing in it");
+        assert_eq!(e.0, "400 Bad Request");
+        assert!(e.1.contains("drop a file, write a note"), "{}", e.1);
+        // Whitespace is not a note.
+        let e = send_from_ui(br#"{"to":"cedar cinder","files":[],"text":"   \n  "}"#)
+            .expect_err("accepted whitespace as a note");
+        assert_eq!(e.0, "400 Bad Request");
+        // No device, whatever else is set.
+        let e = send_from_ui(br#"{"to":"","text":"hello"}"#)
+            .expect_err("accepted a send with no device");
+        assert!(e.1.contains("no device chosen"), "{}", e.1);
+        // A note past the cap is refused before anything is written.
+        let big = serde_json::json!({
+            "to": "cedar cinder",
+            "files": [],
+            "text": "x".repeat(64 * 1024 + 1),
+        })
+        .to_string();
+        let e = send_from_ui(big.as_bytes()).expect_err("accepted an oversized note");
+        assert!(e.1.contains("larger than a note"), "{}", e.1);
+        // A dropped file called message.md, alongside a note. The note
+        // claims that name first, so this collides loudly instead of one
+        // silently overwriting the other.
+        let clash = serde_json::json!({
+            "to": "cedar cinder",
+            "text": "the note",
+            "files": [{ "name": "message.md", "data": "aGk=" }],
+        })
+        .to_string();
+        match send_from_ui(clash.as_bytes()) {
+            Err((_, msg)) => assert!(
+                msg.contains("two files called message.md") || !msg.contains("overwrit"),
+                "the collision was not reported as one: {msg}"
+            ),
+            Ok(_) => panic!("a file named message.md was silently merged with the note"),
+        }
+        // A note alone gets past validation. It fails later for want of a
+        // real contact and a real route, which is a different error than the
+        // refusals above -- that is the whole assertion.
+        let ok_shape = br#"{"to":"cedar cinder","files":[],"text":"look at this machine"}"#;
+        match send_from_ui(ok_shape) {
+            Ok(_) => {}
+            Err((_, msg)) => assert!(
+                !msg.contains("nothing to send") && !msg.contains("no files"),
+                "a note-only send was refused as empty: {msg}"
+            ),
         }
     }
 

@@ -685,15 +685,24 @@ function lanRender(){
                     :'Drop files here, or click to choose'}
     </div>
     <input type="file" id="fpick" multiple hidden onchange="lanFiles(this.files)">`;
-  if(FILES.length&&LSEL){
+  // Either a file or a note is enough to send. Requiring a file meant you
+  // could not say "look at this machine" to someone standing next to you
+  // without inventing a file to say it in.
+  if(LSEL){
     h+=`<input class="lanin" id="lsubj" placeholder="Subject" value="${esc(LSUBJ)}"
            oninput="LSUBJ=this.value">
-      <div class="devrow">
+      <textarea class="lanin" id="lnote" style="min-height:4.5em"
+        placeholder="Write a note (optional)" oninput="LNOTE=this.value">${esc(LNOTE)}</textarea>`;
+    if(FILES.length||LNOTE.trim()){
+      h+=`<div class="devrow">
         <button class="devbtn" onclick="lanSend()" ${LBUSY?'disabled':''}>
           ${LBUSY?'Sending...':'Send to '+esc((LAN.devices.find(x=>x.label===LSEL)||{}).paired_as||LSEL)}</button>
-        <button class="devbtn" onclick="FILES=[];lanRender()">Clear</button>
+        <button class="devbtn" onclick="FILES=[];LNOTE='';lanRender()">Clear</button>
       </div>`;
-  } else if(FILES.length){
+    } else {
+      h+=`<div class="lansub">Drop a file or write a note.</div>`;
+    }
+  } else if(FILES.length||LNOTE.trim()){
     h+=`<div class="lansub">Choose a machine above.</div>`;
   }
   if(LERR2)h+=`<div class="lanerr">${esc(LERR2)}</div>`;
@@ -706,7 +715,7 @@ function lanRender(){
     dz.ondrop=e=>{e.preventDefault();dz.classList.remove('over');lanFiles(e.dataTransfer.files)};
   }
 }
-let LSUBJ='';
+let LSUBJ='', LNOTE='';
 function lanPick(l){ LSEL=(LSEL===l?null:l); LERR2='';LOK=''; lanRender(); }
 
 async function lanFiles(fl){
@@ -734,13 +743,13 @@ const b64=f=>new Promise((res,rej)=>{
 });
 
 async function lanSend(){
-  if(!LSEL||!FILES.length||LBUSY)return;
+  if(!LSEL||(!FILES.length&&!LNOTE.trim())||LBUSY)return;
   LBUSY=true;LERR2='';LOK='';lanRender();
   try{
-    const r=await post('/api/send',{to:LSEL,subject:LSUBJ,type:'share',
+    const r=await post('/api/send',{to:LSEL,subject:LSUBJ,type:'share',text:LNOTE,
       files:FILES.map(f=>({name:f.name,data:f.data}))});
     const j=await r.json().catch(()=>({}));
-    if(r.ok){ LOK=(j.lines||[]).join('\n'); FILES=[]; LSUBJ=''; }
+    if(r.ok){ LOK=(j.lines||[]).join('\n'); FILES=[]; LSUBJ=''; LNOTE=''; }
     // The outbound scan refuses here exactly as it does in the terminal, and
     // the page deliberately offers no override: --allow-findings is a reason
     // to go and look at the file, not a checkbox.
