@@ -24,6 +24,7 @@ mod relay;
 mod remote;
 mod rotate;
 mod routes;
+mod runfile;
 mod scrub;
 mod seal;
 mod sig;
@@ -2133,6 +2134,14 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             // active, since fetch timing is metadata they can see. Two
             // minutes is slow enough not to be a presence feed.
             let every = every.max(10);
+            // Only the loop claims the home. `--once` is a single poll that
+            // exits, not a service, and a record for it would make the app
+            // skip starting the watcher it came to start.
+            let _run = if once {
+                None
+            } else {
+                runfile::RunFile::claim("watch")
+            };
             // Latched for the life of the process, not reset each poll: a
             // journal that cannot be written is not a transient condition to
             // retry against, and retrying is what would make it unbounded.
@@ -2360,9 +2369,14 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             }
         }
         Cmd::Ui { port } => {
+            // Held for as long as the service runs, so something outside gage
+            // can tell this home is already served. See src/runfile.rs for why
+            // the record lives in the home and not in the process table.
+            let _run = runfile::RunFile::claim("ui");
             ui::serve(port)?;
         }
         Cmd::Lan { port } => {
+            let _run = runfile::RunFile::claim("lan");
             lan::run(port)?;
         }
         Cmd::Nearby { announce, r#for } => {
