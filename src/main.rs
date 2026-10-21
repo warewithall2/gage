@@ -12,6 +12,7 @@ mod backup;
 mod bundle;
 mod collect;
 mod identity;
+mod invite;
 mod journal;
 mod lan;
 mod manifest;
@@ -1877,14 +1878,9 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             // other person runs. The fingerprint goes with it so they have
             // something to compare against -- NOT so they can skip the
             // comparison, which the wording below has to earn.
-            let token = format!("{}.{}", id.public_b64(), id.box_public_b64());
             println!("Send this line to the person you want to exchange with:");
             println!();
-            println!(
-                "    gage add {} {}",
-                one_line(&shell_word(&id.handle)),
-                token
-            );
+            println!("    {}", id.add_line());
             println!();
             println!("Ask them for theirs, and run it. Then one thing is left, and it is");
             println!("the only part of this that cannot be done for you:");
