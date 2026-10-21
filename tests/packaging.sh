@@ -3,17 +3,43 @@ set -u
 cd "$(dirname "$0")/.." || exit 2
 T=$(mktemp -d)
 pass=0; fail=0
-LAUNCH_PID=; EXISTING_PID=
+LAUNCH_PID=; EXISTING_PID=; CHILD_PIDS=
 ok() { pass=$((pass+1)); }
 bad() { fail=$((fail+1)); echo "  FAIL: $1"; }
 want() { if grep -qF -- "$2" "$1"; then ok; else bad "expected '$2' in ${1##*/}"; fi; }
 cleanup() {
-  [ -n "$LAUNCH_PID" ] && kill "$LAUNCH_PID" 2>/dev/null || :
-  [ -n "$EXISTING_PID" ] && kill "$EXISTING_PID" 2>/dev/null || :
-  wait 2>/dev/null || :
+  for pid in $CHILD_PIDS; do kill "$pid" 2>/dev/null || :; done
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+    alive=
+    for pid in $CHILD_PIDS; do
+      if kill -0 "$pid" 2>/dev/null; then alive="$alive $pid"; fi
+    done
+    [ -z "$alive" ] && break
+    sleep .05
+  done
+  for pid in $CHILD_PIDS; do kill -KILL "$pid" 2>/dev/null || :; done
+  for pid in $CHILD_PIDS; do wait "$pid" 2>/dev/null || :; done
   rm -rf "$T"
 }
 trap cleanup EXIT
+track_pid() { CHILD_PIDS="$CHILD_PIDS $1"; }
+forget_pid() {
+  target=$1; kept=
+  for pid in $CHILD_PIDS; do [ "$pid" = "$target" ] || kept="$kept $pid"; done
+  CHILD_PIDS=$kept
+}
+stop_pid() {
+  target=$1
+  [ -n "$target" ] || return 0
+  kill "$target" 2>/dev/null || :
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+    kill -0 "$target" 2>/dev/null || break
+    sleep .05
+  done
+  kill -KILL "$target" 2>/dev/null || :
+  wait "$target" 2>/dev/null || :
+  forget_pid "$target"
+}
 
 mkdir -p "$T/bin"
 # The run directory is the isolation boundary: use the accepted executable
@@ -56,9 +82,10 @@ chmod +x "$T/bin/vim"
 
 start_stub() {
   home=$1; log=$2; service=$3; shift 3
-  env -u GAGE_HOME -u COUNTERSIGN_HOME -u CTX_HOME HOME="$home" GAGE_HOME="$home" \
-    GAGE_TEST_LOG="$log" "$FIXTURE_BIN" "$service" "$@" &
+  ( trap - EXIT; exec env -u GAGE_HOME -u COUNTERSIGN_HOME -u CTX_HOME HOME="$home" GAGE_HOME="$home" \
+    GAGE_TEST_LOG="$log" "$FIXTURE_BIN" "$service" "$@" ) &
   EXISTING_PID=$!
+  track_pid "$EXISTING_PID"
   for _ in 1 2 3 4 5 6 7 8 9 10; do
     [ -s "$home/run/$service.pid" ] && break
     sleep .05
@@ -66,8 +93,7 @@ start_stub() {
 }
 stop_existing() {
   [ -n "$EXISTING_PID" ] || return 0
-  kill "$EXISTING_PID" 2>/dev/null || :
-  wait "$EXISTING_PID" 2>/dev/null || :
+  stop_pid "$EXISTING_PID"
   EXISTING_PID=
 }
 run_launcher() {
@@ -83,12 +109,13 @@ run_launcher() {
     countersign_env) selector=(GAGE_HOME= COUNTERSIGN_HOME="$home");;
     ctx_env) selector=(GAGE_HOME= CTX_HOME="$home");;
   esac
-  env GAGE_BIN="$FIXTURE_BIN" GAGE_TEST_LOG="$T/services-$label.log" \
+  ( trap - EXIT; exec env GAGE_BIN="$FIXTURE_BIN" GAGE_TEST_LOG="$T/services-$label.log" \
     GAGE_OPEN="$T/bin/open" GAGE_OPEN_LOG="$T/open-$label.log" \
     GAGE_CURL_LOG="$T/curl-$label.log" GAGE_CURL_HOME="$curl_home" PATH="$T/bin:$PATH" \
     "${selector[@]}" GAGE_UI_PORT=17777 GAGE_START_TIMEOUT="$timeout" \
-    "$PWD/packaging/macos/gage-launcher" >"$T/out-$label" 2>&1 &
+    "$PWD/packaging/macos/gage-launcher" ) >"$T/out-$label" 2>&1 &
   LAUNCH_PID=$!
+  track_pid "$LAUNCH_PID"
   for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
     [ -s "$T/open-$label.log" ] && break
     sleep .05
@@ -96,18 +123,18 @@ run_launcher() {
 }
 stop_launcher() {
   [ -n "$LAUNCH_PID" ] || return 0
-  kill "$LAUNCH_PID" 2>/dev/null || :
-  wait "$LAUNCH_PID" 2>/dev/null || :
+  stop_pid "$LAUNCH_PID"
   LAUNCH_PID=
 }
 count_service() { grep -c "|$1 " "$2" 2>/dev/null || :; }
 
 echo "Linux ps argv probe (the same command used by the launcher)"
-GAGE_HOME="$T/probe-home" "$FIXTURE_BIN" lan > /dev/null 2>&1 & probe_pid=$!
+( trap - EXIT; exec env GAGE_HOME="$T/probe-home" "$FIXTURE_BIN" lan ) > /dev/null 2>&1 & probe_pid=$!
+track_pid "$probe_pid"
 for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s "$T/probe-home/run/lan.pid" ] && break; sleep .05; done
 probe_line=$(ps -p "$probe_pid" -o command= 2>/dev/null || :)
 case "$probe_line" in "gage lan"*) ok;; *) bad "Linux ps argv did not expose gage subcommand: $probe_line";; esac
-kill "$probe_pid" 2>/dev/null || :; wait "$probe_pid" 2>/dev/null || :
+stop_pid "$probe_pid"
 
 echo "identity home selection follows identity.rs"
 for branch in explicit gage countersign ctx countersign_env ctx_env; do
@@ -162,7 +189,8 @@ echo "legacy executable names remain adoptable"
 for name in ctx countersign; do
   ln -s "$FIXTURE_BIN" "$T/bin/$name"
   h="$T/legacy-$name/.gage"; mkdir -p "$h"; : > "$T/legacy-$name-existing.log"
-  env GAGE_HOME="$h" GAGE_TEST_LOG="$T/legacy-$name-existing.log" "$T/bin/$name" lan & EXISTING_PID=$!
+  ( trap - EXIT; exec env GAGE_HOME="$h" GAGE_TEST_LOG="$T/legacy-$name-existing.log" "$T/bin/$name" lan ) & EXISTING_PID=$!
+  track_pid "$EXISTING_PID"
   for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s "$h/run/lan.pid" ] && break; sleep .05; done
   run_launcher "legacy-$name" "$h" "$h"
   [ "$(count_service lan "$T/services-legacy-$name.log")" = 0 ] && ok || bad "$name service was not adopted"
@@ -171,17 +199,18 @@ done
 
 echo "a stale record and a live non-gage PID are not adopted"
 h="$T/stale/.gage"; mkdir -p "$h/run"; : > "$T/stale-source.log"
-/bin/sleep 600 & stale_pid=$!; kill "$stale_pid"; wait "$stale_pid" 2>/dev/null || :
+( trap - EXIT; exec /bin/sleep 600 ) & stale_pid=$!; track_pid "$stale_pid"
+kill "$stale_pid"; wait "$stale_pid" 2>/dev/null || :; forget_pid "$stale_pid"
 printf '%s\n' "$stale_pid" > "$h/run/lan.pid"
 run_launcher stale "$h" "$h"
 [ "$(count_service lan "$T/services-stale.log")" = 1 ] && ok || bad "dead stale PID suppressed lan startup"
 stop_launcher
 
 h="$T/reused/.gage"; mkdir -p "$h/run"
-/bin/sleep 600 & reused_pid=$!; printf '%s\n' "$reused_pid" > "$h/run/lan.pid"
+( trap - EXIT; exec /bin/sleep 600 ) & reused_pid=$!; track_pid "$reused_pid"; printf '%s\n' "$reused_pid" > "$h/run/lan.pid"
 run_launcher reused "$h" "$h"
 [ "$(count_service lan "$T/services-reused.log")" = 1 ] && ok || bad "live non-gage PID was adopted"
-stop_launcher; kill "$reused_pid" 2>/dev/null || :; wait "$reused_pid" 2>/dev/null || :
+stop_launcher; stop_pid "$reused_pid"
 
 echo "different-home records are invisible; malformed and missing records start"
 other="$T/other/.gage"; target="$T/target/.gage"; mkdir -p "$target"
@@ -201,17 +230,17 @@ stop_launcher
 
 echo "argv matching uses executable and subcommand positions"
 h="$T/argv-send/.gage"; mkdir -p "$h/run"
-GAGE_HOME="$h" GAGE_TEST_LOG="$T/send.log" "$FIXTURE_BIN" send --file lan & fake_pid=$!
+( trap - EXIT; exec env GAGE_HOME="$h" GAGE_TEST_LOG="$T/send.log" "$FIXTURE_BIN" send --file lan ) & fake_pid=$!; track_pid "$fake_pid"
 printf '%s\n' "$fake_pid" > "$h/run/lan.pid"
 run_launcher argv-send "$h" "$h"
 [ "$(count_service lan "$T/services-argv-send.log")" = 1 ] && ok || bad "gage send --file lan matched lan service"
-stop_launcher; kill "$fake_pid" 2>/dev/null || :; wait "$fake_pid" 2>/dev/null || :
+stop_launcher; stop_pid "$fake_pid"
 
 h="$T/argv-vim/.gage"; mkdir -p "$h/run"
-"$T/bin/vim" & fake_pid=$!; printf '%s\n' "$fake_pid" > "$h/run/lan.pid"
+( trap - EXIT; exec "$T/bin/vim" ) & fake_pid=$!; track_pid "$fake_pid"; printf '%s\n' "$fake_pid" > "$h/run/lan.pid"
 run_launcher argv-vim "$h" "$h"
 [ "$(count_service lan "$T/services-argv-vim.log")" = 1 ] && ok || bad "vim src/lan.rs matched lan service"
-stop_launcher; kill "$fake_pid" 2>/dev/null || :; wait "$fake_pid" 2>/dev/null || :
+stop_launcher; stop_pid "$fake_pid"
 
 echo "a UI state home mismatch is refused even with a live home record"
 h="$T/wrong-ui/.gage"; mkdir -p "$h"
