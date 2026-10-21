@@ -1,0 +1,124 @@
+#!/bin/sh
+# Route B app process. On quit, stop only the lan/ui/watch processes this
+# launcher started; any service that was already running is left alone.
+set -u
+
+APP_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+GAGE_BIN=${GAGE_BIN:-$APP_DIR/gage}
+
+# Match src/identity.rs exactly: first non-whitespace GAGE_HOME,
+# COUNTERSIGN_HOME or CTX_HOME, then first existing home in order.
+nonblank() {
+  [ -n "$(printf '%s' "$1" | tr -d '[:space:]')" ]
+}
+if nonblank "${GAGE_HOME:-}"; then
+  RESOLVED_HOME=$GAGE_HOME
+elif nonblank "${COUNTERSIGN_HOME:-}"; then
+  RESOLVED_HOME=$COUNTERSIGN_HOME
+elif nonblank "${CTX_HOME:-}"; then
+  RESOLVED_HOME=$CTX_HOME
+elif [ -d "$HOME/.gage" ]; then
+  RESOLVED_HOME=$HOME/.gage
+elif [ -d "$HOME/.countersign" ]; then
+  RESOLVED_HOME=$HOME/.countersign
+elif [ -d "$HOME/.ctx" ]; then
+  RESOLVED_HOME=$HOME/.ctx
+else
+  RESOLVED_HOME=$HOME/.gage
+fi
+export GAGE_HOME=$RESOLVED_HOME
+
+STARTED=""
+cleanup() {
+  trap - EXIT HUP INT TERM
+  for pid in $STARTED; do
+    kill "$pid" 2>/dev/null || :
+  done
+  for pid in $STARTED; do
+    wait "$pid" 2>/dev/null || :
+  done
+}
+trap cleanup EXIT
+trap 'exit 0' HUP INT TERM
+
+# A run record is only a candidate. It counts as running only when it contains
+# one positive PID, that PID is alive, and ps confirms the executable and the
+# subcommand in argv positions one and two. Stale, unreadable, malformed, and
+# reused PIDs all mean "not running".
+service_running() {
+  service=$1
+  record_file=$RESOLVED_HOME/run/$service.pid
+  [ -f "$record_file" ] && [ -r "$record_file" ] || return 1
+  record_lines=$(wc -l < "$record_file" 2>/dev/null | tr -d '[:space:]') || return 1
+  [ "$record_lines" = 1 ] || return 1
+  IFS= read -r record_pid < "$record_file" || return 1
+  case "$record_pid" in
+    ''|*[!0-9]*) return 1 ;;
+    *[1-9]*) ;;
+    *) return 1 ;;
+  esac
+  kill -0 "$record_pid" 2>/dev/null || return 1
+
+  command_line=$(ps -p "$record_pid" -o command= 2>/dev/null) || return 1
+  [ -n "$command_line" ] || return 1
+  set -f
+  set -- $command_line
+  set +f
+  [ "$#" -ge 2 ] || return 1
+  # Prefix, not an exact name, and the same rule as src/runfile.rs. The
+  # release binaries are shipped as `gage-0.3.0-darwin-arm64`, so a tester
+  # running one of those directly is still running that service. Matching
+  # loosely here cannot adopt a stranger: the record was read out of THIS
+  # home, so only a service for this home could have written it, and the argv
+  # check exists solely to catch a reused pid.
+  executable=${1##*/}
+  case "$executable" in
+    gage*|ctx*|countersign*) ;;
+    *) return 1 ;;
+  esac
+  [ "$2" = "$service" ]
+}
+
+start_service() {
+  service=$1
+  shift
+  if service_running "$service"; then
+    echo "gage $service already running; adopting it" >&2
+  else
+    "$GAGE_BIN" "$service" "$@" >/dev/null 2>&1 &
+    STARTED="$STARTED $!"
+  fi
+}
+
+start_service lan
+start_service ui
+start_service watch --every 120
+
+ui_port=${GAGE_UI_PORT:-7777}
+timeout=${GAGE_START_TIMEOUT:-30}
+elapsed=0
+ui_state_matches_home() {
+  state=$(curl -fsS --max-time 1 "http://127.0.0.1:$ui_port/api/state" 2>/dev/null) || return 1
+  printf '%s\n' "$state" | grep -F "\"home\":\"$RESOLVED_HOME\"" >/dev/null
+}
+while [ "$elapsed" -lt "$timeout" ]; do
+  if ui_state_matches_home; then
+    break
+  fi
+  sleep 1
+  elapsed=$((elapsed + 1))
+done
+if ! ui_state_matches_home; then
+  echo "Gage could not start: the UI at http://127.0.0.1:$ui_port did not report the selected home within ${timeout}s; refusing to open another home's UI." >&2
+  echo "Check whether another application is using port $ui_port, then try again." >&2
+  exit 1
+fi
+
+if [ -n "${GAGE_OPEN:-}" ]; then
+  "$GAGE_OPEN" "http://127.0.0.1:$ui_port/"
+else
+  open "http://127.0.0.1:$ui_port/"
+fi
+
+# Keep the app process alive until macOS quits it. The EXIT trap owns cleanup.
+while :; do sleep 1 & wait "$!" || :; done
