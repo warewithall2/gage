@@ -83,6 +83,15 @@ start_service() {
   service=$1
   shift
   if service_running "$service"; then
+    # Adoption is deliberately INVISIBLE to the person using the app (Owen's
+    # call, 2026-10-21). In the normal case the thing being adopted is a CLI
+    # or a system service they started themselves, and announcing it would
+    # explain a mechanism to someone who has no decision to make about it.
+    # The case where it is worth knowing -- two app copies open, the services
+    # owned by whichever launched first, so closing THAT one takes them from
+    # the other -- is something only a developer reaches, and it belongs in
+    # the tester packet rather than in the window. This line goes to stderr,
+    # which nothing shows.
     echo "gage $service already running; adopting it" >&2
   else
     "$GAGE_BIN" "$service" "$@" >/dev/null 2>&1 &
