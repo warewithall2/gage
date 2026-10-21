@@ -231,7 +231,11 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
 
 /// Pull a name and a key out of whatever was pasted: the whole
 /// `gage add NAME KEY` line, a quoted name, or a bare key.
-fn parse_add(s: &str) -> (Option<String>, Option<String>) {
+///
+/// Shared with the viewer's paste path (`ui::parse_invite`) rather than
+/// copied into it. Two parsers for one format drift, and the one that
+/// drifts is the one a person is pasting an attacker's line into.
+pub(crate) fn parse_add(s: &str) -> (Option<String>, Option<String>) {
     let looks_like_key = |t: &str| t.len() > 40 && t.contains('=');
     let rest = s
         .trim()

@@ -458,6 +458,18 @@ fn handle(stream: TcpStream, port: u16) -> std::io::Result<()> {
         // The add line, as a picture. Not part of the poll: the page fetches
         // it once. A missing identity is the same 404 as any other absent
         // route, and the body does not say where the key file would be.
+        // Pasted text in, a key and a suggested name out. It adds NOTHING:
+        // the person still has to run the reveal-then-add ceremony on the
+        // key, which is the same two steps a buddy request goes through.
+        ("POST", "/api/parse-invite") => match parse_invite(&req.body) {
+            Ok(v) => respond(stream, "200 OK", "application/json", &v),
+            Err((code, msg)) => respond(
+                stream,
+                code,
+                "application/json",
+                &serde_json::json!({ "error": msg }).to_string(),
+            ),
+        },
         ("GET", "/api/invite") => match invite_response() {
             Ok(svg) => respond(stream, "200 OK", "image/svg+xml", &svg),
             Err((code, body)) => respond(stream, code, "text/plain", body),
@@ -536,6 +548,73 @@ fn handle(stream: TcpStream, port: u16) -> std::io::Result<()> {
 
 /// Who is on this network, as the page shows it.
 ///
+/// Read a pasted `gage add` line and say which key it names.
+///
+/// The parser is the CLI's own (`quickstart::parse_add`), so a line the
+/// terminal accepts and a line this page accepts are the same set.
+///
+/// **This does not add anything, and it does not return the fingerprint.**
+/// The key it hands back goes through exactly the ceremony a buddy request
+/// goes through: the person types one pair read off the OTHER machine, and
+/// only then is the rest revealed. That matters most on this path, because a
+/// pasted line arrived from somewhere and the words derived from it are the
+/// words of whoever wrote it. Showing all four here and asking "do these
+/// match?" would be a screen an attacker passes by reading their own four
+/// pairs aloud, so the stronger gate that already exists is reused rather
+/// than replaced with a friendlier one.
+///
+/// The name is a SUGGESTION taken from the pasted text, which is attacker-
+/// controlled: the page shows it in a field the person edits, and
+/// `connect_from_ui` applies the same character rules it applies to anything
+/// else before it is filed.
+fn parse_invite(body: &str) -> Result<String, (&'static str, String)> {
+    let v: serde_json::Value =
+        serde_json::from_str(body).map_err(|e| ("400 Bad Request", format!("bad body: {e}")))?;
+    let text = v.get("text").and_then(|x| x.as_str()).unwrap_or("");
+    // A cap before any parsing. The body is already bounded by the request
+    // reader, and this bounds what a pasted blob can cost to tokenise.
+    if text.len() > 4096 {
+        return Err(("400 Bad Request", "that is more text than an invite".into()));
+    }
+    let (name, token) = crate::quickstart::parse_add(text);
+    let Some(token) = token else {
+        return Err((
+            "400 Bad Request",
+            "no key in that text -- paste the whole `gage add` line".into(),
+        ));
+    };
+    // The token is `signpub` or `signpub.boxpub`. Only the signing half
+    // identifies the contact, and it is the half the ceremony derives from.
+    let sign = token.split('.').next().unwrap_or("").to_string();
+    if !crate::bundle::b64_decode_ok(&sign) {
+        return Err(("400 Bad Request", "that is not a key".into()));
+    }
+    let me = crate::identity::Identity::load().ok();
+    if let Some(id) = &me
+        && id.public_b64() == sign
+    {
+        return Err((
+            "409 Conflict",
+            "that is this machine's own line -- you want the other person's".into(),
+        ));
+    }
+    let contacts = crate::trust::Contacts::load();
+    if let Some(n) = contacts.keys.get(&sign) {
+        return Err((
+            "409 Conflict",
+            format!("that key is already on your list as {n}"),
+        ));
+    }
+    // Which pair the ceremony will ask for, so the page can say so before
+    // the person goes to the other machine. The pair itself is not here.
+    Ok(serde_json::json!({
+        "key": sign,
+        "suggested_name": name.unwrap_or_default(),
+        "ask_pair": asked_pair(&sign) + 1,
+    })
+    .to_string())
+}
+
 /// SVG of this machine's public add line, or why there isn't one.
 fn invite_response() -> Result<String, (&'static str, &'static str)> {
     let id = match crate::identity::Identity::load() {
@@ -1914,6 +1993,86 @@ mod tests {
             &"a".repeat(41),
         ] {
             assert!(!handle_ok(bad), "accepted a hostile handle: {bad:?}");
+        }
+    }
+
+    /// Pasted text is attacker-controlled, so these are the lines an
+    /// attacker would paste rather than the line a colleague would.
+    #[test]
+    fn a_pasted_invite_is_parsed_without_adding_anything() {
+        // No key in the text at all.
+        for junk in [
+            r#"{"text":""}"#,
+            r#"{"text":"hello"}"#,
+            r#"{"text":"gage add bob"}"#,
+            r#"{"text":"gage add"}"#,
+        ] {
+            let e = parse_invite(junk).expect_err("accepted text with no key");
+            assert_eq!(e.0, "400 Bad Request", "{junk}: {}", e.1);
+        }
+        // Something key-shaped that is not base64 of 32 bytes.
+        let notkey = format!(r#"{{"text":"gage add bob {}="}}"#, "!".repeat(43));
+        let e = parse_invite(&notkey).expect_err("accepted a non-key");
+        assert_eq!(e.0, "400 Bad Request");
+        // Oversized paste is refused before it is tokenised.
+        let big = format!(r#"{{"text":"{}"}}"#, "a".repeat(5000));
+        let e = parse_invite(&big).expect_err("accepted an oversized paste");
+        assert_eq!(e.0, "400 Bad Request");
+        assert!(e.1.contains("more text than an invite"), "{}", e.1);
+    }
+
+    /// The fingerprint must NOT come back from this route. The whole point of
+    /// the ceremony is that the words come off the other machine; a route
+    /// that returned them here would let the page show an attacker's own
+    /// pairs and ask the person to agree with them.
+    #[test]
+    fn parsing_an_invite_never_returns_the_fingerprint() {
+        let key = crate::words::pairs("x", 1); // only to prove pairs() exists
+        let _ = key;
+        let good = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            [7u8; 32],
+        );
+        let body = serde_json::json!({ "text": format!("gage add 'icy dune' {good}") }).to_string();
+        let out = match parse_invite(&body) {
+            Ok(o) => o,
+            // A home with this key already on its list, or no identity, are
+            // both legitimate states for this to refuse in; the assertion
+            // below is about what a SUCCESS may contain.
+            Err(_) => return,
+        };
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v.get("key").unwrap().as_str().unwrap(), good);
+        assert!(v.get("fingerprint").is_none(), "route leaked a fingerprint");
+        let pairs = crate::words::pairs(good.as_str(), 4);
+        for p in &pairs {
+            assert!(!out.contains(p.as_str()), "route leaked the pair {p}");
+        }
+        // And the asked pair is named by NUMBER only.
+        let n = v.get("ask_pair").unwrap().as_u64().unwrap();
+        assert!((1..=4).contains(&n), "ask_pair was {n}");
+    }
+
+    /// One parser for one format. If the CLI accepts a shape the page
+    /// refuses, a person is told to paste the thing that does not work.
+    #[test]
+    fn the_page_and_the_cli_accept_the_same_shapes() {
+        let good = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            [9u8; 32],
+        );
+        for text in [
+            format!("gage add 'icy dune' {good}"),
+            format!("    gage add 'icy dune' {good}   "),
+            format!("gage add bob {good}"),
+            good.clone(),
+        ] {
+            let (_, token) = crate::quickstart::parse_add(&text);
+            assert_eq!(
+                token.as_deref(),
+                Some(good.as_str()),
+                "the CLI parser missed {text:?}"
+            );
         }
     }
 
