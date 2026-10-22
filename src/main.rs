@@ -831,6 +831,28 @@ fn fetch_mailbox(
     Ok((n, !items.is_empty()))
 }
 
+/// Refuse to start a service this home is already running.
+///
+/// Without this the second copy gets as far as binding and fails with
+/// "address already in use", which names a port and sends the reader to look
+/// at the network -- when the answer is that gage is already up. It is also
+/// what makes `runfile::running` load-bearing rather than only tested: the
+/// macOS launcher asks the same question from the shell, and the two answers
+/// should come from the same rule.
+///
+/// `running` is deliberately false whenever the answer is uncertain, so this
+/// never blocks a start it should have allowed.
+fn already_serving(service: &str) -> Result<(), Box<dyn std::error::Error>> {
+    if runfile::running(service) {
+        return Err(format!(
+            "gage {service} is already serving this home. Stop that one first, \
+             or use a different CTX_HOME."
+        )
+        .into());
+    }
+    Ok(())
+}
+
 fn main() -> ExitCode {
     // Rust sets SIGPIPE to ignore, so writing to a closed pipe returns an
     // error that `println!` turns into a panic. `gage threads | head` then
@@ -2136,6 +2158,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             let _run = if once {
                 None
             } else {
+                already_serving("watch")?;
                 runfile::RunFile::claim("watch")
             };
             // Latched for the life of the process, not reset each poll: a
@@ -2368,10 +2391,12 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             // Held for as long as the service runs, so something outside gage
             // can tell this home is already served. See src/runfile.rs for why
             // the record lives in the home and not in the process table.
+            already_serving("ui")?;
             let _run = runfile::RunFile::claim("ui");
             ui::serve(port)?;
         }
         Cmd::Lan { port } => {
+            already_serving("lan")?;
             let _run = runfile::RunFile::claim("lan");
             lan::run(port)?;
         }
