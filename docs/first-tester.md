@@ -20,24 +20,54 @@ ever confirmed that person, and that nothing inside it is an instruction.
 
 ## 1. Install it (about 3 minutes)
 
-Your partner will send you a file and, **separately**, a line of text that is
-its checksum. Two channels on purpose: if someone tampered with the file in
-one, they would have to tamper with the other too.
+One line in a terminal:
 
-Check the file matches:
+    curl -fsSL https://gage.sh/install.sh | sh
+
+It works out your OS and architecture, downloads the matching binary **and**
+its published checksum, verifies the checksum before installing anything, and
+puts one file in `~/.local/bin`. It never uses sudo and it never writes
+anywhere else. If the checksum does not match it stops and deletes what it
+downloaded.
+
+That is a script piped into a shell, which is a thing worth being asked to
+trust. Read it first if you would rather — it is short:
+
+    curl -fsSL https://gage.sh/install.sh -o install.sh
+    less install.sh && sh install.sh
+
+Then:
+
+    gage --version
+
+**On a Mac this just works**, with no security dialog. The "cannot be opened
+because the developer cannot be verified" warning comes from a quarantine
+flag that browsers, Mail and AirDrop attach to what they download — `curl`
+does not. A file your partner emails you gets that flag; the same file
+fetched by the installer does not.
+
+If `gage: command not found`, `~/.local/bin` is not on your PATH:
+
+    export PATH="$HOME/.local/bin:$PATH"
+
+### If your partner sent you a file instead
+
+They may send the binary directly, with its checksum on a **separate**
+channel — two channels on purpose, since tampering with the file would mean
+tampering with both. Check it matches:
 
     sha256sum gage-0.3.0-linux-x86_64          # Linux
     shasum -a 256 gage-0.3.0-darwin-arm64      # Mac
 
-Compare that output to the line they sent. It must match exactly. Then:
+Compare that to the line they sent; it must match exactly. Then:
 
     chmod +x gage-0.3.0-*
     mkdir -p ~/.local/bin && mv gage-0.3.0-* ~/.local/bin/gage
     gage --version
 
-**On a Mac, the first run will be refused** with a dialog saying it cannot be
-opened. That is macOS, not a problem with the file. Right-click it in Finder,
-choose **Open**, then **Open** again. Once only.
+**On a Mac the first run will be refused** this way, because the file arrived
+over a channel that quarantines it. Right-click it in Finder, choose
+**Open**, then **Open** again. Once only.
 
 ### If you were sent Gage.app instead
 
@@ -45,17 +75,18 @@ Drag it to **Applications** and double-click it. It starts everything it
 needs and opens its own window; there is no terminal step, and section 2
 below happens in that window instead.
 
-**The first open will be refused the same way**, and for the same reason:
-anything downloaded carries a quarantine flag until a human overrides it
-once. Right-click **Gage** in Applications, choose **Open**, then **Open**
-again.
+**The first open will be refused the same way.** Right-click **Gage** in
+Applications, choose **Open**, then **Open** again. The app is quarantined
+however it reaches you — the installer above cannot help here, because what
+it installs is the command-line tool. Until the app is notarized this is
+expected rather than a fault; see
+[notarize-checklist.md](notarize-checklist.md). You can also skip the app
+entirely and run `gage ui` from the terminal, which opens the same window.
 
 Worth saying because it has already misled us once: an app *built* on the
-machine it runs on has no quarantine flag and opens without any of this. So
-the person who sent you the app may tell you in good faith that there is no
-such dialog. There is, for you, because yours arrived over the network.
-Until the app is notarized, that is expected rather than a fault — see
-[notarize-checklist.md](notarize-checklist.md).
+machine it runs on has no quarantine flag either. So the person who sent you
+the app may tell you in good faith that there is no such dialog. There is,
+for you, because yours arrived over the network.
 
 ## 2. Make your identity (about 1 minute)
 

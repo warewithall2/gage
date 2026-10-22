@@ -19,9 +19,19 @@ I'll be doing it from my side at the same time.
 
 **What it involves, about twenty minutes:**
 
-1. **Install it.** I'll send you a file and, separately, a short line of text
-   to check it against. One command and it's installed — no compiler, nothing
-   to configure.
+1. **Install it.** One line in a terminal, no compiler and nothing to
+   configure:
+
+       curl -fsSL https://gage.sh/install.sh | sh
+
+   It works out your OS, downloads the matching binary, checks it against a
+   published checksum before installing anything, and puts one file in
+   `~/.local/bin`. It never uses sudo. If you'd rather read it first —
+   reasonable, and I'd encourage it — it's short:
+
+       curl -fsSL https://gage.sh/install.sh -o install.sh
+       less install.sh && sh install.sh
+
 2. **A phone call, five minutes.** We each read four pairs of words off our
    screens to each other. That's the bit that makes this work, and it's the
    one part that can't be automated — the words have to travel over a channel
@@ -63,9 +73,23 @@ Thanks —
 
 ---
 
-*Note for Owen, not for the tester: send the binary for their platform —
-`gage-0.3.0-linux-x86_64` or `gage-0.3.0-darwin-arm64`, both in the packet —
-with `first-tester.md` as the instructions. Send the matching checksum line
-from `SHA256SUMS` on a **different** channel; the instructions tell them to
-compare the two, which is the point. Mac testers are no longer blocked. See
-`HANDOFF.txt`.*
+*Note for Owen, not for the tester.*
+
+*Send `first-tester.md` as the instructions. The install step above is the
+`curl | sh` path on purpose, and the reason is specific to macOS: the
+quarantine attribute that produces the "cannot be opened because the
+developer cannot be verified" dialog is set by browsers, Mail and AirDrop —
+**not** by `curl`. So a binary you email or AirDrop to a Mac tester hits that
+wall, and the same binary fetched by the installer does not. Until the app is
+notarised, handing someone a file is the single most likely way to lose them,
+and it is avoidable for nothing.*
+
+*That applies to the CLI. `Gage.app` is quarantined however it arrives, so the
+viewer-as-an-app is still gated on notarisation; the CLI's own `gage ui` is
+not, and is what a first tester should use.*
+
+*The old packet path — send the binary plus the matching `SHA256SUMS` line on
+a different channel — still works and is still the better demonstration of
+the two-channel idea. Keep it for someone who asks how the checksum step
+works, or for a tester with no network access to gage.sh. The installer does
+the same check; it just does it for them.*

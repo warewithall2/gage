@@ -4,34 +4,63 @@ Everything here assumes the other person has never seen this project and does
 not want to install a compiler. Each step says what it is for, because every
 one of them is a place a person gives up.
 
-## 1. Send them a binary
+## 1. Get it onto their machine
 
-From `dist/`, pick the one for their machine:
+**The one line, which is what to send unless you have a reason not to:**
+
+    curl -fsSL https://gage.sh/install.sh | sh
+
+It works out their OS and architecture, downloads the matching binary and its
+`SHA256SUMS` from the latest release, verifies the checksum before installing
+anything, and puts one file in `~/.local/bin`. No sudo, no compiler.
+
+**On macOS this avoids the Gatekeeper dialog entirely**, and that is the
+reason to prefer it. The "cannot be opened because the developer cannot be
+verified" warning comes from the `com.apple.quarantine` attribute, which
+browsers, Mail and AirDrop attach to what they deliver and `curl` does not.
+A binary you email to a Mac tester hits that wall; the same binary fetched by
+the installer does not.
+
+(An earlier version of this page said macOS refuses the file "because it was
+not downloaded through a browser". That is backwards, and backwards in the
+direction that matters: being downloaded through a browser is what causes it.)
+
+`Gage.app` is a separate matter — it is quarantined however it arrives, and
+nothing here helps until it is notarised. See
+[notarize-checklist.md](notarize-checklist.md). A tester who only needs the
+viewer can run `gage ui`, which opens the same window from the CLI install.
+
+### Sending a file instead
+
+Still supported, and a better demonstration of the two-channel idea if
+someone asks how the checksum step works. From `dist/`, pick the one for
+their machine:
 
 | their machine | file |
 |---|---|
-| Mac, Apple silicon (M1–M4) | `gage-0.1.0-darwin-arm64` |
-| Linux, 64-bit Intel/AMD | `gage-0.1.0-linux-x86_64` |
+| Mac, Apple silicon (M1–M4) | `gage-0.3.0-darwin-arm64` |
+| Linux, 64-bit Intel/AMD | `gage-0.3.0-linux-x86_64` |
 
 Send the matching line from `dist/SHA256SUMS` too, over a *different* channel
 from the binary — a text message if you emailed the file. That is the same
 idea as the word-pairs below: one channel can be tampered with, two is harder.
 They check it with:
 
-    shasum -a 256 gage-0.1.0-darwin-arm64      # macOS
-    sha256sum gage-0.1.0-linux-x86_64          # Linux
+    shasum -a 256 gage-0.3.0-darwin-arm64      # macOS
+    sha256sum gage-0.3.0-linux-x86_64          # Linux
 
 Then:
 
-    chmod +x gage-0.1.0-*
-    mkdir -p ~/.local/bin && mv gage-0.1.0-* ~/.local/bin/gage
+    chmod +x gage-0.3.0-*
+    mkdir -p ~/.local/bin && mv gage-0.3.0-* ~/.local/bin/gage
     gage --version
 
-macOS will refuse to run it the first time, because it was not downloaded
-through a browser and is not notarised. Right-click it in Finder → **Open** →
-**Open**, once. (Or `xattr -d com.apple.quarantine ~/.local/bin/gage`.) This is
-worth saying up front: a colleague who hits a scary "cannot be opened" dialog
-with no explanation stops there.
+macOS will refuse to run it the first time, because it arrived over a channel
+that quarantines it. Right-click it in Finder → **Open** → **Open**, once.
+(Or `xattr -d com.apple.quarantine ~/.local/bin/gage`.) Worth saying up
+front: a colleague who hits a scary "cannot be opened" dialog with no
+explanation stops there — which is the whole reason the installer above is
+the default.
 
 ## 2. They run one command
 
@@ -150,8 +179,10 @@ identity that is already there.
 
 ## What to expect to go wrong
 
-- **The quarantine dialog on macOS** (step 1). The most likely place to lose
-  someone, and it looks like the software is broken.
+- **The quarantine dialog on macOS** (step 1), if you sent a file rather than
+  the installer. The most likely place to lose someone, and it looks like the
+  software is broken. The installer avoids it; `Gage.app` cannot until it is
+  notarised.
 - **Confirming word-pairs feels like a chore** (step 3), and people will want
   to skip it. If they skip it, they have added a key they never checked, and
   the verdict `SENDER VERIFIED` then means only "this is the key you were
