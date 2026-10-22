@@ -4054,6 +4054,125 @@ else
   printf '%s\n' "$MCPOUT" | grep -E '^  FAIL' | sed 's/^/    /'
 fi
 
+echo "--- an anchor catches the rewrite the chain cannot"
+
+# `journal --verify` is tamper-evident against a process that drops a line.
+# It is NOT evidence against one that rewrites the file and re-links it --
+# the suite pins that limit elsewhere, where a re-linked edit verifies clean.
+# This block is the other side of it: a head somebody else is holding.
+#
+# The case driven here is exactly the one --verify misses. The LAST entry is
+# edited in place; its own `prev` still points at the line before it and
+# nothing follows it, so the chain is intact by construction and the journal
+# verifies clean afterwards. Only the published head changes.
+AN=$T/anchor; AA=$AN/alice; AB=$AN/bob
+mkdir -p "$AN"
+CTX_HOME=$AA $CTX init alice >/dev/null 2>&1
+CTX_HOME=$AB $CTX init bob >/dev/null 2>&1
+AAK=$(CTX_HOME=$AA $CTX whoami 2>/dev/null | head -1 | cut -f2)
+ABK=$(CTX_HOME=$AB $CTX whoami 2>/dev/null | head -1 | cut -f2)
+CTX_HOME=$AA $CTX add bob "$ABK" >/dev/null 2>&1
+CTX_HOME=$AB $CTX add alice "$AAK" >/dev/null 2>&1
+CTX_HOME=$AA $CTX route bob "$AB" >/dev/null 2>&1
+CTX_HOME=$AB $CTX route alice "$AA" >/dev/null 2>&1
+echo body > "$T/anchorwork.md"
+
+echo "an unchained journal has nothing to anchor, and says so"
+CTX_HOME=$AA $CTX anchor send --to bob >/dev/null 2>&1
+code "anchor send with no journal" $? 1
+
+# Give alice a journal.
+for i in 1 2 3; do
+  CTX_HOME=$AB $CTX send --to alice --subject "anchormsg$i" \
+    --file "$T/anchorwork.md" >/dev/null 2>&1
+done
+CTX_HOME=$AA $CTX inbox >/dev/null 2>&1
+
+echo "alice publishes a head and bob records it"
+CTX_HOME=$AA $CTX anchor send --to bob > "$T/an-send1.txt" 2>&1
+code "anchor send" $? 0
+AID=$(idof "$AB" "journal head 3")
+CTX_HOME=$AB $CTX accept "$AID" >/dev/null 2>&1
+CTX_HOME=$AB $CTX anchor record > "$T/an-rec1.txt" 2>&1
+want "$T/an-rec1.txt" "entry 3 recorded"
+
+echo "recording twice reports nothing the second time"
+CTX_HOME=$AB $CTX anchor record > "$T/an-rec2.txt" 2>&1
+want "$T/an-rec2.txt" "nothing new to record"
+
+# The oscillation this guards against: `record` walks every accepted bundle
+# on each run, so once a contradicting anchor is stored, a re-scan sees the
+# original one beside it and reported the SAME divergence again with the two
+# digests the other way round. It happened on the first run of this feature.
+wantno "$T/an-rec2.txt" "does NOT match"
+
+echo "a re-linked rewrite still verifies, and the anchor still catches it"
+python3 - "$AA/journal.jsonl" <<'PY'
+import json, sys
+p = sys.argv[1]
+lines = [l for l in open(p).read().split("\n") if l.strip()]
+e = json.loads(lines[-1]); e["verdict"] = "SENDER UNVERIFIABLE"
+lines[-1] = json.dumps(e, separators=(',', ':'))
+open(p, "w").write("\n".join(lines) + "\n")
+PY
+CTX_HOME=$AA $CTX journal --verify > "$T/an-verify.txt" 2>&1
+code "a re-linked edit still verifies" $? 0
+want "$T/an-verify.txt" "all of them check out"
+
+CTX_HOME=$AA $CTX anchor send --to bob >/dev/null 2>&1
+AID2=$(idof "$AB" "journal head 3")
+CTX_HOME=$AB $CTX accept "$AID2" >/dev/null 2>&1
+CTX_HOME=$AB $CTX anchor record > "$T/an-rec3.txt" 2>&1
+want "$T/an-rec3.txt" "does NOT match what they published before"
+
+echo "the contradiction stays visible after the run that reported it"
+CTX_HOME=$AB $CTX anchor record >/dev/null 2>&1
+CTX_HOME=$AB $CTX anchor list > "$T/an-list.txt" 2>&1
+want "$T/an-list.txt" "held with 2 different digests"
+
+echo "the other half: alice checks an anchor bob reads back to her"
+D1=$(grep -oE '[0-9a-f]{64}' "$T/an-send1.txt" | head -1)
+CTX_HOME=$AA $CTX anchor check 3 "$D1" > "$T/an-check.txt" 2>&1
+code "check against a stale anchor" $? 1
+want "$T/an-check.txt" "DOES NOT MATCH"
+CTX_HOME=$AA $CTX anchor check 99 "$D1" >/dev/null 2>&1
+code "check a missing index" $? 1
+
+# An anchor is stored, which makes it the rare thing in this file tree
+# written by somebody else and kept. A key nobody confirmed must not be able
+# to put one on disk.
+#
+# The first version of this block could never fail. It gave the stranger
+# bundles with `--out`, which writes them outside the inbox, so the stranger
+# had no journal, `anchor send` refused for that reason, nothing was
+# delivered, and an `else` branch counted two passes for a property that was
+# never exercised. Written down because a test that cannot fail is worse
+# than no test: it reports a property as held.
+echo "an anchor from an unlisted key is not recorded"
+AC=$AN/stranger
+CTX_HOME=$AC $CTX init stranger >/dev/null 2>&1
+mkdir -p "$AC/inbox/pending"
+for i in 1 2; do
+  CTX_HOME=$AB $CTX send --to bob --subject "strangerseed$i" \
+    --file "$T/anchorwork.md" --out "$AC/inbox/pending/seed$i" >/dev/null 2>&1
+done
+CTX_HOME=$AC $CTX inbox >/dev/null 2>&1
+CTX_HOME=$AC $CTX add bob "$ABK" >/dev/null 2>&1
+CTX_HOME=$AC $CTX route bob "$AB" >/dev/null 2>&1
+CTX_HOME=$AC $CTX anchor send --to bob >/dev/null 2>&1
+code "the stranger could publish a head at all" $? 0
+SID=$(CTX_HOME=$AB $CTX inbox --json 2>/dev/null | python3 -c "
+import json,sys
+print(next((r['id'] for r in json.load(sys.stdin)
+            if 'journal head' in (r.get('subject') or '')), ''))")
+if [ -n "$SID" ]; then ok; else bad "the stranger's anchor never reached bob"; fi
+CTX_HOME=$AB $CTX accept "$SID" >/dev/null 2>&1
+CTX_HOME=$AB $CTX anchor record > "$T/an-stranger.txt" 2>&1
+want "$T/an-stranger.txt" "nothing new to record"
+# One directory, alice's. The stranger got none.
+if [ "$(nfiles "$AB/anchors")" = "1" ]; then ok
+else bad "an unlisted key got an anchor directory"; fi
+
 echo "--- removing an agent ends its future without rewriting its past"
 
 # The agents feature creates an identity you cannot get rid of: before this

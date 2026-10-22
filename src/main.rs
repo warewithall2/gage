@@ -6,6 +6,7 @@
 //! because agents are invoked rather than online -- presence is the part of
 //! the instant-messenger model that does not transfer.
 
+mod anchor;
 mod agentcfg;
 mod authority;
 mod autoaccept;
@@ -54,6 +55,24 @@ use std::process::ExitCode;
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
+}
+
+#[derive(Subcommand)]
+enum AnchorCmd {
+    /// Send this machine's journal head to a contact, so they hold a copy
+    Send {
+        #[arg(long)]
+        to: String,
+    },
+    /// Read anchors out of bundles you have accepted, and store them
+    Record,
+    /// What is held, and anything in it that contradicts itself
+    List,
+    /// Check an index and digest somebody holds for YOU against this journal
+    ///
+    /// The other half of anchoring. They read you an anchor they hold; this
+    /// says whether this machine's journal still says the same thing there.
+    Check { n: u64, digest: String },
 }
 
 #[derive(Subcommand)]
@@ -150,6 +169,12 @@ enum Cmd {
     /// Agent identities on this machine: one key each, so a grant can name one
     #[command(subcommand)]
     Agent(AgentCmd),
+    /// Publish your journal's head to contacts, and hold theirs
+    ///
+    /// A local chain cannot catch a process that rewrites the whole file and
+    /// re-links it. A head somebody else is holding can.
+    #[command(subcommand)]
+    Anchor(AnchorCmd),
     /// Get set up and get the one line you send to the other person.
     ///
     /// Does the three steps that have no decisions in them -- make an
@@ -1337,6 +1362,189 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             println!("  their old bundles stay verifiable, marked as signed with a retired key");
             println!("  anything NEW signed with the old key is now rejected");
         }
+        Cmd::Anchor(sub) => match sub {
+            AnchorCmd::Send { to } => {
+                let Some(a) = anchor::Anchor::mine() else {
+                    return Err("there is nothing to anchor yet: this journal has \
+                                no chained entries. Anchoring an unchained file \
+                                would publish a digest nothing commits to."
+                        .into());
+                };
+                // Staged inside the gage home, not /tmp. A predictable path
+                // in a world-writable directory can be pre-created by
+                // somebody else as a symlink, and this would then write
+                // through it. The content is only a public digest, so the
+                // stake is low -- but the home is already created 0700 and
+                // costs nothing to use, and "low stake" is how the habit of
+                // writing through /tmp gets established.
+                let dir = crate::identity::home().join(format!(".anchor-{}", std::process::id()));
+                std::fs::create_dir_all(&dir)?;
+                let f = dir.join(anchor::ITEM);
+                std::fs::write(&f, a.to_json())?;
+                let mut say = Vec::new();
+                let r = send_bundle(
+                    SendArgs {
+                        to: vec![to.clone()],
+                        subject: format!("journal head {}", a.n),
+                        out: None,
+                        file: vec![f],
+                        prompt: Vec::new(),
+                        decision: Vec::new(),
+                        memory: Vec::new(),
+                        dir: Vec::new(),
+                        // A sha256 is 64 hex characters, which is also the
+                        // shape of plenty of real secrets. The scanner is
+                        // right to look twice and wrong here, and this is
+                        // the one call site where the content is known to be
+                        // a digest this machine just computed.
+                        allow_secrets: true,
+                        reply_to: None,
+                        msg_type: "share".into(),
+                        allow_findings: false,
+                        lan: false,
+                        agent: None,
+                        model: None,
+                    },
+                    &mut say,
+                );
+                let _ = std::fs::remove_dir_all(&dir);
+                for l in say {
+                    println!("{l}");
+                }
+                r?;
+                println!("anchored entry {} with {to}", a.n);
+                println!("  digest : {}", a.digest);
+                println!("  Everything after entry {} is still rewritable without", a.n);
+                println!("  anybody noticing. Anchor again to move that line.");
+            }
+            AnchorCmd::Record => {
+                let me = identity::home();
+                let c = trust::Contacts::load();
+                let mut stored = 0usize;
+                let mut evidence = 0usize;
+                for (_id, b) in routes::list(&routes::accepted_dir(&me)) {
+                    let Some(item) = b
+                        .manifest
+                        .items
+                        .iter()
+                        .find(|i| i.path == format!("items/{}", anchor::ITEM))
+                    else {
+                        continue;
+                    };
+                    // Only from a key on the list. An anchor is a stored
+                    // claim, and storing claims from keys nobody confirmed
+                    // is how a directory of strangers accumulates.
+                    let key = &b.manifest.from.key;
+                    if !c.knows(key) {
+                        continue;
+                    }
+                    if !b.tampered.is_empty() {
+                        continue;
+                    }
+                    let Ok(txt) = std::fs::read_to_string(b.dir.join(&item.path)) else {
+                        continue;
+                    };
+                    let Ok(a) = anchor::Anchor::parse(&txt) else {
+                        continue;
+                    };
+                    let name = c.name_for(key).unwrap_or("?").to_string();
+                    let outcome = anchor::store(key, &a)?;
+                    if outcome.is_evidence() {
+                        evidence += 1;
+                    }
+                    match outcome {
+                        anchor::Held::Same => {}
+                        anchor::Held::Fresh => {
+                            stored += 1;
+                            println!("{name}: entry {} recorded", a.n);
+                        }
+                        anchor::Held::Diverged { was } => {
+                            println!("{name}: !! entry {} does NOT match what they published before", a.n);
+                            println!("   they said : {was}");
+                            println!("   now say   : {}", a.digest);
+                            println!("   Their journal changed under an entry they had already");
+                            println!("   published. Both copies are kept in your anchors/ directory.");
+                        }
+                        anchor::Held::WentBackwards { held } => {
+                            println!("{name}: !! head went backwards, {held} -> {}", a.n);
+                        }
+                    }
+                }
+                if stored == 0 && evidence == 0 {
+                    println!("nothing new to record");
+                }
+            }
+            AnchorCmd::Check { n, digest } => {
+                let digest = digest.trim().to_ascii_lowercase();
+                match journal::digest_at(n) {
+                    Some(d) if d == digest => {
+                        println!("entry {n} still matches the anchor they hold");
+                        println!("  {d}");
+                    }
+                    Some(d) => {
+                        println!("entry {n} DOES NOT MATCH the anchor they hold");
+                        println!("  they hold : {digest}");
+                        println!("  this file : {d}");
+                        println!();
+                        println!("This journal changed under an entry already published.");
+                        return Err("the journal does not match that anchor".into());
+                    }
+                    None => {
+                        println!("there is no entry {n} in this journal");
+                        println!("  An entry that was deleted outright and one that never");
+                        println!("  existed look the same from here. Neither is good news if");
+                        println!("  somebody holds an anchor for it.");
+                        return Err("no such entry".into());
+                    }
+                }
+            }
+            AnchorCmd::List => {
+                let c = trust::Contacts::load();
+                let peers = anchor::peers();
+                if peers.is_empty() {
+                    println!("no anchors held");
+                    println!("  Nobody has sent you a journal head, so there is nothing");
+                    println!("  here to check anything against. gage anchor send --to <name>");
+                    println!("  publishes yours; they run gage anchor record.");
+                }
+                for p in peers {
+                    // The directory is named by the SHAPED key, so the real
+                    // key is found by matching the shape rather than stored
+                    // a second time.
+                    let real = c
+                        .keys
+                        .keys()
+                        .find(|k| anchor::peer_dirname(k) == p)
+                        .cloned();
+                    let name = real
+                        .as_deref()
+                        .and_then(|k| c.name_for(k))
+                        .unwrap_or("(not on your list)");
+                    let anchors = real.as_deref().map(anchor::held).unwrap_or_default();
+                    let bad = real.as_deref().map(anchor::contradictions).unwrap_or_default();
+                    println!("{name}\t{} anchor(s)", anchors.len());
+                    for a in &anchors {
+                        println!("  entry {:<6} {} at {}", a.n, &a.digest[..16], a.at);
+                    }
+                    // Printed under the list rather than instead of it: the
+                    // contradicting anchors are both above, and this says
+                    // which pair to look at.
+                    for (n, digests) in &bad {
+                        println!("  !! entry {n} is held with {} different digests:", digests.len());
+                        for d in digests {
+                            println!("       {d}");
+                        }
+                        println!("     Their journal changed under an entry they had published.");
+                    }
+                }
+                // Said every time, because it is the bound that governs what
+                // any of this is worth.
+                if let Some(h) = journal::head() {
+                    println!();
+                    println!("your own head is entry {} ({}…)", h.n, &h.digest[..16]);
+                }
+            }
+        },
         Cmd::Agent(sub) => match sub {
             AgentCmd::List => {
                 let agents = agentcfg::list();

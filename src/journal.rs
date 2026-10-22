@@ -436,6 +436,71 @@ fn link_to_previous(p: &std::path::Path) -> String {
     }
 }
 
+/// The newest chained entry: its index, and the digest of its line **as
+/// written**.
+///
+/// "As written" is the whole of it. The chain's `prev` is the sha256 of the
+/// previous line's exact bytes, so a head computed any other way -- from a
+/// re-serialised entry, from a canonical form -- would be a different number
+/// that happens to look like the same kind of thing. This reads bytes.
+///
+/// `None` when there is nothing to anchor: an empty journal, or one where
+/// nothing is chained. The second case matters and is not an error: a head
+/// over an unchained file would be a digest of a line that no later line
+/// commits to, which anchors nothing while looking like it anchors
+/// something.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Head {
+    pub n: u64,
+    pub digest: String,
+    pub at: String,
+}
+
+pub fn head() -> Option<Head> {
+    let bytes = std::fs::read(path()).ok()?;
+    let mut last: Option<(Entry, &[u8])> = None;
+    let mut any_chained = false;
+    for line in bytes
+        .split(|b| *b == b'\n')
+        .filter(|l| !l.iter().all(|c| c.is_ascii_whitespace()))
+    {
+        if let Ok(e) = serde_json::from_slice::<Entry>(line) {
+            any_chained |= e.prev.is_some();
+            last = Some((e, line));
+        }
+    }
+    let (e, line) = last?;
+    if !any_chained {
+        return None;
+    }
+    Some(Head {
+        n: e.n,
+        digest: crate::bundle::sha256_hex(line),
+        at: e.at,
+    })
+}
+
+/// The digest of the line with this index, as written, if it is still there.
+///
+/// This is the other half of an anchor check: somebody holds `(n, digest)`
+/// and the question is whether this journal still says the same thing at
+/// that index. A missing index is `None` and is itself an answer -- an entry
+/// that was deleted outright cannot be distinguished from one that never
+/// existed by this function alone, which is why the caller reports "not
+/// found" rather than "fine".
+pub fn digest_at(n: u64) -> Option<String> {
+    let bytes = std::fs::read(path()).ok()?;
+    bytes
+        .split(|b| *b == b'\n')
+        .filter(|l| !l.iter().all(|c| c.is_ascii_whitespace()))
+        .find(|line| {
+            serde_json::from_slice::<Entry>(line)
+                .map(|e| e.n == n)
+                .unwrap_or(false)
+        })
+        .map(crate::bundle::sha256_hex)
+}
+
 /// What a verification pass found.
 ///
 /// `chained` is carried and not just the problems, because a pass over a file

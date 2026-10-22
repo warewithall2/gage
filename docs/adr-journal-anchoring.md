@@ -1,8 +1,9 @@
 # ADR: anchoring the journal
 
-**Status: proposed, not built.** The decision this rests on — *where an anchor
-goes* — is not a technical one, and is written up here rather than guessed at
-in code. `docs/thesis-and-plan.md` lists anchoring as the one unbuilt piece of
+**Status: option 3 built, 22 Oct.** `gage anchor send|record|list|check`.
+The decision this rests on — *where an anchor goes* — was not a technical one,
+so it was written up here first and settled by the owner, who chose mutual
+anchoring between contacts. `docs/thesis-and-plan.md` lists anchoring as the one unbuilt piece of
 decision 4 and says it is "the only one of the three that would survive the
 local-rewrite case, and therefore the one that matters most".
 
@@ -107,9 +108,37 @@ Cheap, third-party timestamped, auditable, and a commit history is already an
 append-only log. A plausible layer on top of (3) for someone who wants absolute
 time without running anything. Same metadata disclosure as (2).
 
-## Recommendation
+## Recommendation, and what was built
 
-**Build (3), then allow (4) and (2) as optional additions.** Do not build (1)
+**Build (3), then allow (4) and (2) as optional additions.** (3) is built;
+(2) and (4) are not, and nothing in the implementation assumes a service, so
+either could be added later without changing what an anchor is.
+
+### What (3) turned out to buy, which is narrower than first written
+
+The design below said `gage journal --verify --anchors` would check stored
+anchors against the chain. Writing it made the asymmetry obvious and the
+shipped command set is different: **holding an anchor for Bob does not let
+this machine audit Bob**, because checking `(n, digest)` against Bob's
+journal requires Bob's journal, which is his to send.
+
+What it does buy, with no extra protocol and no second round trip, is that a
+**new** anchor is checked against the anchors already held for the same peer.
+Two things are then evidence: the same index re-published with a different
+digest, and a head that goes backwards. The first is exactly the re-linked
+rewrite that `--verify` cannot catch, and the attack suite now drives that
+case end to end — edit the last entry in place, watch `--verify` still pass,
+watch the anchor catch it.
+
+`gage anchor check <n> <digest>` is the other half, for the direction that
+needs a human: somebody reads you an anchor they hold for you, and this says
+whether your journal still says the same thing there.
+
+**What is deliberately not done:** nothing refuses mail, drops a contact or
+changes a verdict on this evidence. A sender who can trigger local
+consequences by making a claim about his own journal is a lever, not a log.
+
+ Do not build (1)
 first: an anchor service operated by this project is the weakest version of the
 property and the easiest to mistake for the strongest, and committing to it
 early would make the honest options look like fallbacks.

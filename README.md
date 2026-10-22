@@ -1143,6 +1143,43 @@ Still unbuilt from `docs/open-decisions.md`: a retention policy, and anchoring
 a digest somewhere this machine does not control, which is the only thing that
 would survive the local-rewrite case.
 
+### Anchoring: the rewrite the chain cannot catch
+
+    gage anchor send --to bob      # publish your head to a contact
+    gage anchor record             # store the heads they published to you
+    gage anchor list               # what is held, and anything contradictory
+    gage anchor check <n> <digest> # they read you one; does yours still match
+
+A chain is evidence against a process that drops a line. It is not evidence
+against one that rewrites the file and recomputes every link, which anything
+running as you can do — and the suite pins that limit by asserting a
+re-linked edit verifies clean. No log a process can rewrite can do better, so
+the only way out is for a value derived from this journal to exist somewhere
+this machine cannot reach.
+
+An anchor is the digest of the newest chained entry, sent to a contact as an
+ordinary signed bundle. Ordinary on purpose: it goes through the accept gate
+and gets a verdict, so an anchor from a key nobody confirmed is refused by
+the same machinery that refuses anything else from that key. There is no
+service, no account, and nothing to run. [The argument for this over a hosted
+anchor service is in docs/adr-journal-anchoring.md](docs/adr-journal-anchoring.md).
+
+**What it buys is narrower than it first sounds.** Holding an anchor for Bob
+does not let your machine audit Bob — checking it against his journal needs
+his journal. What it gives, with no extra protocol, is that each *new* anchor
+is checked against the ones already held for him. Two things are then
+evidence: the same index re-published with a **different digest**, which
+means his journal changed under an entry he had already published; and a head
+that goes **backwards**. Both are recorded, never acted on. Nothing refuses
+mail or changes a verdict on this: a sender who could trigger local
+consequences by making a claim about his own journal would be a lever rather
+than a log.
+
+**And the bound that governs all of it:** an anchor covers nothing after
+itself. Everything written since the last one is still freely rewritable, so
+the anchor interval *is* the size of the rewritable window. `anchor send`
+prints that line every time rather than leaving it in a document.
+
 ## Key rotation
 
 A key gets replaced: a laptop dies, a secret leaks, a contact starts fresh.
