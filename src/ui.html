@@ -297,6 +297,13 @@ textarea:focus{outline:none;border-color:var(--accent)}
   border:1px solid var(--line2);background:transparent;color:var(--fg);
   transition:border-color var(--ease),color var(--ease)}
 .devbtn:hover{border-color:var(--accent);color:var(--accent)}
+/* The armed state of a destructive button. Colour is the only signal that
+   changes, and it changes on the button that does the thing rather than on
+   the row, so the Cancel beside it stays ordinary. */
+.devbtn.danger{border-color:var(--bad);color:var(--bad)}
+.devbtn.danger:hover{background:var(--bad);color:#fff;border-color:var(--bad)}
+.agkill{align-items:center}
+.agkill .lansub{margin-top:0;flex:1 1 220px;min-width:0}
 .lansub{font-size:var(--t2);color:var(--dim);margin-top:var(--s2);line-height:1.6}
 .lanempty{font-size:var(--t2);color:var(--dim);line-height:1.6;margin-left:var(--s2)}
 /* A panel that is switched off says so on one line and gets out of the way;
@@ -936,6 +943,11 @@ lanLoad();setInterval(lanLoad,2000);
 // asked becomes saying yes.
 let BUD={buddies:[],requests:[],refused:[]}, TAB='chats';
 let AGENTS=null, AGNAME='', AGBUSY=false, AGERR='', AGHOST='claude_code', AGNEW=null;
+// Which card has had Remove pressed once. Deleting an identity key is the
+// one act in gage that cannot be undone, so the first press arms and the
+// second does it -- no modal, which a WKWebView handles badly and which
+// blocks the whole page, and no window.confirm for the same reason.
+let AGKILL='';
 let ASK=null, ANAME='', ACONF='', AERR='', AOK='', ABUSY=false, SHOWREF=false;
 // The fingerprint, once the person has shown they read it somewhere else.
 // Held per key and dropped on cancel, so it never survives into a different
@@ -1207,6 +1219,14 @@ function agentRender(){
         <button class="devbtn" onclick="copyGrant('${esc(g.name)}')">Copy line</button>
         <span class="copied" id="copy-grant-${esc(g.name)}"></span>
       </div>
+      <div class="devrow agkill">${ AGKILL===g.name
+        ? `<button class="devbtn danger" onclick="agentRemove('${esc(g.name)}')"
+             ${AGBUSY?'disabled':''}>${AGBUSY?'Removing...':'Yes, remove '+esc(g.name)}</button>
+           <button class="devbtn" onclick="AGKILL='';agentRender()">Cancel</button>
+           <span class="lansub">Deletes its identity key. That cannot be undone.
+             Anything it already sent stays readable and keeps its verdict.</span>`
+        : `<button class="devbtn" onclick="AGKILL='${esc(g.name)}';agentRender()">Remove</button>`
+      }</div>
     </div>`;
   }
   h+=`</div>`;
@@ -1266,6 +1286,20 @@ async function agentLoad(){
   agentRender();
 }
 
+async function agentRemove(name){
+  AGBUSY=true;AGERR='';agentRender();
+  try{
+    const r=await fetch('/api/agent/remove',{method:'POST',
+      headers:{'Content-Type':'application/json','X-Gage':'1'},
+      body:JSON.stringify({name:name})});
+    const j=await r.json();
+    if(!r.ok||j.error)AGERR=j.error||('Could not remove '+name+'.');
+    else AGERR='Removed '+name+'. Its key is retired, not forgotten, so what it '
+      +'already sent keeps its verdict. If an MCP host still points at it, '
+      +'remove it there too.';
+  }catch(e){ AGERR='Could not remove '+name+': '+(e&&e.message?e.message:e); }
+  AGBUSY=false; AGKILL=''; await agentLoad();
+}
 async function agentCreate(){
   AGBUSY=true;AGERR='';AGNEW=null;agentRender();
   try{

@@ -313,7 +313,73 @@ async function nocreate([base]) {
      'the page offered a handle field over an identity that exists');
 }
 
-const SCENARIOS = { buddies, firstrun, receive, settled, nocreate };
+// Removing an agent from the page. The destructive button, which is the one
+// worth driving in a real browser: the copy button on this same page shipped
+// broken because it was screenshotted and never clicked, and a screenshot
+// proves a thing rendered, not that it works.
+//
+// Two properties, and the first is the one that makes the second safe:
+// a single press must NOT remove anything, and the second press must.
+async function agentrm([base, keep, kill]) {
+  await page.goto(base + '/');
+  if (!(await waitFor('#list', 'the console never loaded'))) return;
+  await page.locator('button.tab', { hasText: 'Agents' }).first().click();
+  if (!(await waitFor('#budpane .dev', 'the agents page showed no agent'))) return;
+  await settle();
+
+  const cards = () => page.locator('#budpane .dev');
+  ok(await cards().count() === 2, 'expected two agents to start with');
+
+  const card = page.locator('#budpane .dev').filter({ hasText: kill }).first();
+  const removeBtn = card.locator('button', { hasText: /^Remove$/ }).first();
+  ok(await removeBtn.count() === 1, 'no Remove button on the ' + kill + ' card');
+
+  // One press arms. If this alone removed the agent, the confirm would be
+  // decorative -- so it is asserted directly rather than assumed.
+  await removeBtn.click();
+  await settle();
+  ok(await cards().count() === 2, 'one press of Remove deleted an agent');
+  const armed = page.locator('#budpane .dev').filter({ hasText: kill }).first();
+  ok(await armed.locator('button', { hasText: 'Yes, remove' }).count() === 1,
+     'pressing Remove did not arm a confirmation');
+  ok(/cannot be undone/.test(await armed.textContent() || ''),
+     'the armed state does not say the key deletion is permanent');
+
+  // Cancel puts it back, so an accidental press is recoverable without
+  // reloading the page.
+  await armed.locator('button', { hasText: 'Cancel' }).first().click();
+  await settle();
+  ok(await page.locator('#budpane .dev').filter({ hasText: kill })
+       .first().locator('button', { hasText: 'Yes, remove' }).count() === 0,
+     'Cancel did not disarm the confirmation');
+  ok(await cards().count() === 2, 'Cancel removed an agent');
+
+  // Arm again and go through with it.
+  await page.locator('#budpane .dev').filter({ hasText: kill }).first()
+    .locator('button', { hasText: /^Remove$/ }).first().click();
+  await settle();
+  await page.locator('#budpane .dev').filter({ hasText: kill }).first()
+    .locator('button', { hasText: 'Yes, remove' }).first().click();
+  await page.waitForFunction(
+    n => document.querySelectorAll('#budpane .dev').length === n, 1,
+    { timeout: 10000 }).catch(() => {
+      failed++; console.log('  FAIL: the agent was still listed after removal');
+    });
+  await settle();
+
+  const left = (await page.locator('#budpane .dev').allTextContents()).join(' ');
+  ok(left.includes(keep), 'removing ' + kill + ' took ' + keep + ' with it');
+  ok(!left.includes(kill), kill + ' is still on the page after removal');
+
+  // The page has to say what happened to what the agent already sent, or a
+  // person cannot tell this from a delete that rewrote the past.
+  const said = (await page.locator('#budpane').textContent()) || '';
+  ok(/retired, not forgotten/.test(said),
+     'the page did not say the key was retired rather than forgotten: '
+     + JSON.stringify(said.slice(0, 200)));
+}
+
+const SCENARIOS = { buddies, firstrun, receive, settled, nocreate, agentrm };
 
 try {
   const run = SCENARIOS[mode];

@@ -16,6 +16,7 @@ RXPORT="${UI_E2E_RECEIVE_PORT:-7933}"
 LANPORT="${UI_E2E_LISTEN_PORT:-7934}"
 STPORT="${UI_E2E_SETTLED_PORT:-7935}"
 NCPORT="${UI_E2E_NOCREATE_PORT:-7936}"
+AGPORT="${UI_E2E_AGENTRM_PORT:-7937}"
 CHROME="${CHROME:-/usr/bin/chromium}"
 HERE=$(cd "$(dirname "$0")" && pwd)
 
@@ -178,6 +179,35 @@ scenario nocreate "http://127.0.0.1:$NCPORT"
 # And the page left it alone, which is the thing that cannot be undone.
 if [ "$(cat "$T/fd/identity.key")" = "$BROKEN" ]; then :; else
   fail=$((fail+1)); echo "  FAIL: the page wrote over an unreadable identity"; fi
+
+# ---------------------------------------------------------------------------
+# Scenario 6: removing an agent from the page. Creation lived in the viewer
+# while removal lived only in the CLI, which made the one-click act the
+# irreversible one. The button that fixes that deletes an identity key, so
+# what is driven here is the confirmation: one press must arm and not remove.
+#
+# Driven in a real browser rather than against the route, because the copy
+# button on this same page shipped broken for exactly the opposite reason --
+# the route was fine and the handler was a syntax error in an attribute.
+# ---------------------------------------------------------------------------
+CTX_HOME=$T/fe $CTX init agentowner >/dev/null 2>&1
+CTX_HOME=$T/fe $CTX agent new keeper >/dev/null 2>&1
+CTX_HOME=$T/fe $CTX agent new goner >/dev/null 2>&1
+CTX_HOME=$T/fe $CTX ui --port "$AGPORT" > "$T/fe-ui.log" 2>&1 &
+pids="$pids $!"
+sleep 2
+scenario agentrm "http://127.0.0.1:$AGPORT" keeper goner
+# The page is one door onto `agentcfg::remove`; this is the state behind it.
+if [ -d "$T/fe/agents/goner" ]; then
+  fail=$((fail+1)); echo "  FAIL: the page left the removed agent's home on disk"; fi
+if [ -d "$T/fe/agents/keeper" ]; then :; else
+  fail=$((fail+1)); echo "  FAIL: the page removed the wrong agent's home"; fi
+python3 - "$T/fe/contacts.json" <<'PY' || { fail=$((fail+1)); echo "  FAIL: goner was forgotten rather than retired"; }
+import json,sys
+d=json.load(open(sys.argv[1]))
+r=[v for v in d["retired"].values() if v["name"]=="goner"]
+sys.exit(0 if len(r)==1 and not r[0]["compromised"] and "goner" not in d["keys"].values() else 1)
+PY
 
 echo
 [ "$fail" -eq 0 ] && echo "ui-e2e: ok" || echo "ui-e2e: $fail scenario(s) failed"

@@ -495,6 +495,15 @@ fn handle(stream: TcpStream, port: u16) -> std::io::Result<()> {
         // the person still has to run the reveal-then-add ceremony on the
         // key, which is the same two steps a buddy request goes through.
         ("GET", "/api/agents") => respond(stream, "200 OK", "application/json", &agents_json()),
+        ("POST", "/api/agent/remove") => match agent_remove_from_ui(&req.body) {
+            Ok(j) => respond(stream, "200 OK", "application/json", &j),
+            Err(e) => respond(
+                stream,
+                "400 Bad Request",
+                "application/json",
+                &serde_json::json!({ "error": e }).to_string(),
+            ),
+        },
         ("POST", "/api/agent") => match agent_from_ui(&req.body) {
             Ok(j) => respond(stream, "200 OK", "application/json", &j),
             Err(e) => respond(
@@ -679,6 +688,43 @@ fn agent_from_ui(body: &str) -> Result<String, String> {
         "home": agent.home.to_string_lossy(),
         "configs": crate::agentcfg::configs(&agent),
         "grant": crate::agentcfg::grant_line(&agent),
+    })
+    .to_string())
+}
+
+/// Take an agent out of service from the page.
+///
+/// The destructive counterpart to `agent_from_ui`, and it exists because
+/// creation lived here while removal lived only in the CLI -- which made the
+/// one-click act the irreversible one. A grant you can give from a page and
+/// can only take back from a terminal is not really a grant you can take
+/// back.
+///
+/// The confirmation is the page's, not this route's. That is the same
+/// division the rest of the viewer uses: the guard decides whether this page
+/// may mutate at all, and the page decides whether the human meant it. There
+/// is no second confirmation token here, because a local process that can
+/// send `X-Gage` and the right `Origin` already has the home and the signing
+/// key, and `may_mutate` says so in as many words.
+fn agent_remove_from_ui(body: &str) -> Result<String, String> {
+    let v: serde_json::Value =
+        serde_json::from_str(body).map_err(|_| "could not read the request".to_string())?;
+    let name = v
+        .get("name")
+        .and_then(|n| n.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let r = crate::agentcfg::remove(&name)?;
+    Ok(serde_json::json!({
+        "ok": true,
+        "name": r.name,
+        // Said back so the page can show what happened rather than only that
+        // something did. "removed" with no detail is how a destructive button
+        // becomes one nobody trusts.
+        "key_retired": r.key,
+        "route_removed": r.route_removed,
+        "home": r.home.to_string_lossy(),
     })
     .to_string())
 }
