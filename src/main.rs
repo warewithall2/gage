@@ -57,6 +57,24 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
+enum AgentCmd {
+    /// What agent identities exist here, and the words each key says
+    List,
+    /// Give an agent its own identity and introduce it to yours
+    New { name: String },
+    /// Take an agent out of service and delete its identity
+    ///
+    /// Retires its key rather than forgetting it, so anything it already
+    /// sent keeps the verdict it was judged with.
+    Remove {
+        name: String,
+        /// Go ahead without asking. This deletes an identity key.
+        #[arg(long)]
+        yes: bool,
+    },
+}
+
+#[derive(Subcommand)]
 enum Cmd {
     /// Create your identity keypair. With no name, it is named after its own
     /// key -- two words nobody chose, like LocalSend's device names except
@@ -129,6 +147,9 @@ enum Cmd {
     },
     /// Add someone's key to your buddy list (the signpub.boxpub token)
     Add { name: String, key: String },
+    /// Agent identities on this machine: one key each, so a grant can name one
+    #[command(subcommand)]
+    Agent(AgentCmd),
     /// Get set up and get the one line you send to the other person.
     ///
     /// Does the three steps that have no decisions in them -- make an
@@ -1316,6 +1337,64 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             println!("  their old bundles stay verifiable, marked as signed with a retired key");
             println!("  anything NEW signed with the old key is now rejected");
         }
+        Cmd::Agent(sub) => match sub {
+            AgentCmd::List => {
+                let agents = agentcfg::list();
+                if agents.is_empty() {
+                    println!("no agent identities yet");
+                    println!("  gage agent new <name>   # or the Agents page in gage ui");
+                } else {
+                    for a in &agents {
+                        println!("{}\t{}", a.name, a.key);
+                        println!("  this key says : {}", a.fingerprint());
+                        println!("  home          : {}", a.home.display());
+                    }
+                }
+            }
+            AgentCmd::New { name } => {
+                let a = agentcfg::create(&name)?;
+                println!("{}\t{}", a.name, a.key);
+                println!("  this key says : {}", a.fingerprint());
+                println!("  home          : {}", a.home.display());
+                println!();
+                println!("Point an MCP host at it:");
+                println!("  {}", agentcfg::configs(&a)["claude_code"].as_str().unwrap_or(""));
+            }
+            AgentCmd::Remove { name, yes } => {
+                // Deleting an identity key is the one act in gage that cannot
+                // be undone, so the default is to ask. `--yes` exists because
+                // the viewer and any script need a path that does not read
+                // stdin, not because the question is a formality.
+                if !yes {
+                    print!(
+                        "Delete {name}'s identity key and retire it from your list? [y/N] "
+                    );
+                    use std::io::Write;
+                    std::io::stdout().flush()?;
+                    let mut ans = String::new();
+                    std::io::stdin().read_line(&mut ans)?;
+                    if !matches!(ans.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
+                        return Err("nothing was removed".into());
+                    }
+                }
+                let r = agentcfg::remove(&name)?;
+                println!("removed {}", r.name);
+                match &r.key {
+                    Some(k) => println!("  key retired   : {k}"),
+                    None => println!("  key retired   : none found to retire"),
+                }
+                if r.route_removed {
+                    println!("  route removed : {}", r.name);
+                }
+                println!("  home deleted  : {}", r.home.display());
+                println!();
+                // gage never writes another application's config, so it has
+                // nothing to un-write. Saying the line is the whole of what
+                // it can honestly do here.
+                println!("If an MCP host still points at it, remove it there too:");
+                println!("  claude mcp remove gage");
+            }
+        },
         Cmd::Retire {
             name,
             compromised,

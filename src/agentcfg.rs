@@ -202,6 +202,114 @@ pub fn create(name: &str) -> Result<Agent, String> {
     built
 }
 
+/// What `remove` took out of service, so the caller can say it precisely.
+#[derive(Debug)]
+pub struct Removed {
+    pub name: String,
+    /// The agent's signing key, retired rather than forgotten. `None` only
+    /// when the home was too broken to read one out of.
+    pub key: Option<String>,
+    pub route_removed: bool,
+    pub home: PathBuf,
+}
+
+/// Take an agent out of service: retire its key, drop its route, delete its
+/// home.
+///
+/// ## Retired, not forgotten
+///
+/// The contact entry is **retired**, not deleted. An agent that existed has
+/// signed things, and those bundles are still on disk. Deleting the key from
+/// `contacts.json` would turn every one of them from `SENDER VERIFIED` into
+/// `SENDER UNVERIFIABLE` -- rewriting the past rather than ending the
+/// present -- and it would let the same key be silently re-added later as if
+/// it had never been judged. `trust::Contacts::retire` is the operation that
+/// already means "this key stops counting from here", and it is the right
+/// one. The tombstone is the point of it.
+///
+/// ## Why the order is this order
+///
+/// Trust first, then the route, then the home. Each step is the fail-closed
+/// one: if removing the directory fails, an agent whose key is already
+/// retired is harmless, whereas a deleted home whose key is still trusted
+/// leaves a live grant naming an identity nobody can account for. It is the
+/// same reasoning as `keychange` -- a window in which the key is still
+/// trusted is a window opened by the act of revoking it.
+///
+/// ## What it does not touch
+///
+/// Nothing outside `<home>/agents/<name>/`, and no other application's
+/// configuration. gage shows an MCP host config and never writes one, so it
+/// cannot un-write one either; the caller prints the line to run instead.
+pub fn remove(name: &str) -> Result<Removed, String> {
+    if !name_ok(name) {
+        return Err("A name is 1 to 40 characters: letters, digits, - and _.".into());
+    }
+    let home = home_for(name);
+    if !home.is_dir() {
+        return Err(format!("No agent called {name} on this machine."));
+    }
+
+    // Prefer the key the home actually holds; fall back to the one the
+    // contact list has under this name. A home too broken to answer `whoami`
+    // must still be removable, or a half-made agent is permanent.
+    let key_from_home = whoami_in(&home).ok().map(|(_, k)| k);
+    let mut c = crate::trust::Contacts::load();
+    let sign = key_from_home
+        .as_deref()
+        .map(|k| crate::identity::split_key(k).0)
+        .or_else(|| c.key_for_name(name));
+
+    if let Some(sign) = &sign {
+        let now = crate::bundle::now_rfc3339();
+        // Two steps, exactly as `gage retire` and `gage keychange` do it, and
+        // for the reason spelled out in `state::observe_and_cut`.
+        //
+        // The first `retire` takes the cut at 0, which is fail-closed: until
+        // the real cut is known, EVERY bundle this key signed reads as
+        // rejected. Then the inbox is observed and the cut reserved above
+        // that batch in one locked step, and `retired_seq` is relaxed to it.
+        // The order matters because the window between the two is the only
+        // window in which an old-key arrival could land below the line, and
+        // closing it the other way round would open it.
+        //
+        // Getting this wrong is not subtle in its effect: with the cut left
+        // at 0, nothing can be `seq < retired_seq`, so every bundle the agent
+        // ever sent turns from SENDER VERIFIED into SENDER KEY REJECTED --
+        // which is the retroactive condemnation that plain retirement exists
+        // NOT to do. `--compromised` is the operation that condemns history.
+        //
+        // `retire` returns false when the key was not a live contact, which
+        // is not an error here: an agent whose contact entry was already
+        // retired by hand still has a home to remove.
+        if c.retire(sign, &now, 0, false, None) {
+            c.save().map_err(|e| format!("could not save contacts: {e}"))?;
+            let seq = crate::state::LocalState::observe_and_cut(crate::routes::scan_inbox_knowing)
+                .map_err(|e| format!("could not take the retirement cut: {e}"))?;
+            if let Some(r) = c.retired.get_mut(sign) {
+                r.retired_seq = seq;
+            }
+            c.save().map_err(|e| format!("could not save contacts: {e}"))?;
+        }
+    }
+
+    let mut r = crate::routes::Routes::load();
+    let route_removed = r.local.remove(name).is_some();
+    if route_removed {
+        r.save().map_err(|e| format!("could not save routes: {e}"))?;
+    }
+
+    std::fs::remove_dir_all(&home)
+        .map_err(|e| format!("could not remove {}: {e}", home.display()))?;
+
+    Ok(Removed {
+        name: name.to_string(),
+        key: sign,
+        route_removed,
+        home,
+    })
+}
+
 /// The MCP host configurations for an agent, ready to paste.
 ///
 /// Absolute paths throughout: an MCP host is started by a desktop
@@ -289,6 +397,21 @@ mod tests {
     fn ordinary_agent_names_are_accepted() {
         for good in ["codex", "grok", "claude-code", "bot_2", "a", &"a".repeat(40)] {
             assert!(name_ok(good), "refused an ordinary agent name: {good:?}");
+        }
+    }
+
+    // `remove` deletes a directory derived from this name, so the name check
+    // has to happen before anything touches the filesystem -- and it has to
+    // be the same check `create` uses, or the two doors disagree about what
+    // a name is.
+    #[test]
+    fn remove_refuses_a_dangerous_name_before_touching_anything() {
+        for bad in ["..", ".", "../escape", "a/b", "/abs", "", ".hidden", "nul\0byte"] {
+            let e = remove(bad).unwrap_err();
+            assert!(
+                e.contains("1 to 40 characters"),
+                "remove({bad:?}) refused for the wrong reason: {e}"
+            );
         }
     }
 

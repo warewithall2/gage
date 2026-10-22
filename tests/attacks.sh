@@ -4054,6 +4054,91 @@ else
   printf '%s\n' "$MCPOUT" | grep -E '^  FAIL' | sed 's/^/    /'
 fi
 
+echo "--- removing an agent ends its future without rewriting its past"
+
+# The agents feature creates an identity you cannot get rid of: before this
+# block there was no removal path at all, so an agent made from the viewer
+# was permanent, key and all. The checks that matter are not that the
+# directory disappears -- they are what happens to the TWO classes of bundle
+# either side of the cut.
+#
+# The bug these caught, in the first version of `agentcfg::remove`: it
+# retired the key with the cut left at 0, exactly as `retire` does on its
+# fail-closed first step, and then never took the real cut. Nothing can be
+# `seq < 0`, so every bundle the agent had ever sent flipped from SENDER
+# VERIFIED to SENDER KEY REJECTED. That is the retroactive condemnation that
+# plain retirement exists NOT to do -- `--compromised` is the operation for
+# that -- and it was invisible until a bundle sent BEFORE the removal was
+# opened AFTER it.
+AG=$T/agenthome
+CTX_HOME=$AG $CTX init owen >/dev/null 2>&1
+CTX_HOME=$AG $CTX agent new codex >/dev/null 2>&1
+echo "some work" > "$T/agentwork.md"
+
+# One bundle sent and seen while the agent is in service.
+CTX_HOME=$AG/agents/codex $CTX send --to owen --subject "before removal" \
+  --file "$T/agentwork.md" >/dev/null 2>&1
+BEFORE=$(idof "$AG" "before removal")
+CTX_HOME=$AG $CTX accept "$BEFORE" >/dev/null 2>&1
+CTX_HOME=$AG $CTX open "$BEFORE" > "$T/agent-before.txt" 2>&1
+want "$T/agent-before.txt" "SENDER VERIFIED"
+
+# An agent process that keeps running after it is removed still holds the
+# key. Copying the home is how that is simulated: removal cannot reach a
+# process that already started.
+cp -a "$AG/agents/codex" "$AG/rogue"
+
+echo "removing without --yes does not remove"
+CTX_HOME=$AG $CTX agent remove codex < /dev/null > "$T/agent-noyes.txt" 2>&1
+code "agent remove needs confirmation" $? 1
+[ -d "$AG/agents/codex" ] && ok || bad "a refused removal deleted the home anyway"
+
+echo "removing an agent that does not exist is refused"
+CTX_HOME=$AG $CTX agent remove nosuchagent --yes >/dev/null 2>&1
+code "agent remove unknown" $? 1
+
+# The name is the one piece of input that becomes a path. `name_ok` is unit
+# tested, but the CLI is a second door onto the same function and a door
+# nobody checked is a door that gets opened.
+echo "a traversing agent name is refused by the CLI too"
+CTX_HOME=$AG $CTX agent remove ../../etc --yes >/dev/null 2>&1
+code "agent remove traversal" $? 1
+
+echo "removing an agent takes the home, the route and the key out of service"
+CTX_HOME=$AG $CTX agent remove codex --yes > "$T/agent-rm.txt" 2>&1
+code "agent remove" $? 0
+[ -d "$AG/agents/codex" ] && bad "the agent home survived removal" || ok
+wantno "$AG/routes.json" "agents/codex"
+# Retired, not forgotten: the tombstone is what stops the key coming back
+# silently and what keeps old bundles attributable.
+python3 -c "
+import json,sys
+d=json.load(open('$AG/contacts.json'))
+sys.exit(0 if 'codex' not in d['keys'].values() else 1)" && ok || bad "removed agent still a live contact"
+python3 -c "
+import json,sys
+d=json.load(open('$AG/contacts.json'))
+r=[v for v in d['retired'].values() if v['name']=='codex']
+sys.exit(0 if len(r)==1 and r[0]['retired_seq']>0 and not r[0]['compromised'] else 1)" \
+  && ok || bad "removed agent has no retirement tombstone with a real cut"
+
+echo "a bundle seen BEFORE the removal keeps its attribution"
+CTX_HOME=$AG $CTX open "$BEFORE" > "$T/agent-after.txt" 2>&1
+want "$T/agent-after.txt" "SENDER KEY RETIRED"
+wantno "$T/agent-after.txt" "SENDER KEY REJECTED"
+
+echo "a bundle arriving AFTER the removal does not count"
+CTX_HOME=$AG/rogue $CTX send --to owen --subject "after removal" \
+  --file "$T/agentwork.md" >/dev/null 2>&1
+LATE=$(idof "$AG" "after removal")
+CTX_HOME=$AG $CTX accept "$LATE" >/dev/null 2>&1
+CTX_HOME=$AG $CTX open "$LATE" > "$T/agent-late.txt" 2>&1
+want "$T/agent-late.txt" "SENDER KEY REJECTED"
+
+# gage shows an MCP host config and never writes one, so removal cannot
+# un-write one either. Saying so is the whole of what it can honestly do.
+want "$T/agent-rm.txt" "claude mcp remove gage"
+
 echo "a good bundle exits 0"
 CTX_HOME=$T/b $CTX open "$T/b1" >/dev/null 2>&1; code good $? 0
 
