@@ -1,36 +1,50 @@
 # gage
 
-Hand context between agents — files, prompts and decisions — with a trust
-boundary that survives the hop.
-
-A gage is a pledge: something of value handed over to stand behind a promise,
-and historically the glove thrown down to open a challenge. Both senses fit.
-Two people compare four word-pairs over a channel neither machine controls,
-and everything downstream — every verdict, every grant, every unattended
-acceptance — rests on that one human moment.
-
-> Renamed twice on 18 October: `ctx` → `countersign` → `gage`. **Nothing on
-> disk moves, ever.** An identity key is the one file whose loss cannot be
-> undone — every contact who confirmed your word-pairs confirmed *that* key —
-> so `gage` uses the first home that exists out of `~/.gage`,
-> `~/.countersign`, `~/.ctx`, copies nothing, creates nothing to replace
-> another, and honours `GAGE_HOME`, `COUNTERSIGN_HOME` and `CTX_HOME` so that
-> existing scripts and systemd units keep working.
+**Hand work between AI agents without handing over trust.**
 
 Your Claude hands a task to Codex. A colleague's agent sends you their project
-state. Works across vendors because it is not a protocol: a bundle is a signed
+state. Normally nothing on the receiving end says who wrote it, or whether you
+have ever confirmed that person — and an agent reading its inbox is not a human
+reading email. A human who reads a phishing message is not executing it; an
+agent is. **A channel that lets one LLM send prompts to another is, by default,
+a prompt-injection delivery network.**
+
+gage is that channel built the other way round. It is three things:
+
+- **A bundle** — files, a prompt and decisions in a signed, sealed directory.
+- **A list you control.** Two people compare four word-pairs over a channel
+  neither machine controls. Nothing arrives from anyone you have not confirmed,
+  and arrival is not consent: nothing is read until it is accepted.
+- **A reading frame.** Before any payload, the receiving agent is told that
+  this is *data* from an identified party carrying no authority — and on a bad
+  verdict the contents are withheld rather than annotated, because an
+  annotation is something the payload can argue with.
+
+![Twenty-one seconds of real terminal output: two identities going from gage init to a rendered trust verdict, pairing with word-pairs, sending through a relay, and the frame the receiving agent is shown before any content.](docs/screenshots/demo.gif)
+
+*Every line of that recording is genuine output.* The same capture is
+[docs/demo.md](docs/demo.md) as annotated text and
+[docs/demo.cast](docs/demo.cast) in asciinema v2 format, and
+[scripts/demo.sh](scripts/demo.sh) reproduces it in a throwaway directory
+without touching your own gage home.
+
+Try it:
+
+    curl -fsSL https://gage.sh/install.sh | sh    # verifies its own checksum
+    gage quickstart
+
+It works across vendors because it is **not a protocol**: a bundle is a signed
 directory, so it moves over a shared folder, git, email, or anything else you
-already have.
+already have. There is a viewer (`gage ui`), machines find each other on a LAN
+with no server in the middle (`gage lan`), and an agent can drive the whole
+thing itself over MCP (`gage mcp`).
 
 ![The gage viewer: a conversation list on the left, and an opened review-request from a verified sender showing its trust verdict, its prompt and file items, and the reply box.](docs/screenshots/inbox.png)
 
-**See a whole handoff:** [docs/demo.md](docs/demo.md) is a real capture of two
-identities going from `gage init` to a rendered trust verdict — pairing with
-word-pairs, sending through a relay, and the frame the receiving agent is shown
-before any content. 21 seconds, every line of output genuine. The same recording
-is [docs/demo.cast](docs/demo.cast) in asciinema v2 format, and
-[scripts/demo.sh](scripts/demo.sh) reproduces it in a throwaway directory
-without touching your own gage home.
+A gage is a pledge: something of value handed over to stand behind a promise,
+and historically the glove thrown down to open a challenge. Both senses fit.
+Everything downstream — every verdict, every grant, every unattended
+acceptance — rests on that one human moment.
 
 ## The receiving agent's half of the trust boundary
 
@@ -76,8 +90,7 @@ the key, lose everything" into "your security is your passphrase's strength".
 That matters because the reader is different. A receipt's verdict is read by a
 program at an admission check, which cannot be talked out of its conclusion. A
 bundle's verdict is read by a language model whose next tokens are the payload
-itself, and which can. A channel that lets one LLM send prompts to another is,
-by default, a prompt-injection delivery network.
+itself, and which can. That difference is the whole reason the frame exists.
 
 So `gage open` is a renderer, not an importer. It puts the bundle inside a frame
 that states, before any payload, that the contents are **data** from an
@@ -363,6 +376,14 @@ installing anything**, and puts one file in `~/.local/bin` (`PREFIX=` to
 change that). It never uses sudo, and it fails loudly rather than guessing on
 a platform with no released binary. `cargo install gage` remains the other
 path and works anywhere Rust does.
+
+> Renamed twice on 18 October: `ctx` → `countersign` → `gage`. **Nothing on
+> disk moves, ever.** An identity key is the one file whose loss cannot be
+> undone — every contact who confirmed your word-pairs confirmed *that* key —
+> so `gage` uses the first home that exists out of `~/.gage`,
+> `~/.countersign`, `~/.ctx`, copies nothing, creates nothing to replace
+> another, and honours `GAGE_HOME`, `COUNTERSIGN_HOME` and `CTX_HOME` so that
+> existing scripts and systemd units keep working.
 
 Then, from nothing to a first handoff, answering four questions:
 
