@@ -292,8 +292,10 @@ async function settled([base]) {
   }
 
   await page.locator('button.tab', { hasText: 'Buddies' }).first().click();
-  if (await waitFor('#buddies .lansub', 'an empty buddy list showed no empty state')) {
-    const b = (await page.locator('#buddies .lansub').allTextContents()).join(' ');
+  // The buddies page moved out of the rail and into the wide pane, so the
+  // empty state lives in #budpane now. Same assertion, new home.
+  if (await waitFor('#budpane .lansub', 'an empty buddy list showed no empty state')) {
+    const b = (await page.locator('#budpane .lansub').allTextContents()).join(' ');
     ok(/Nobody yet/.test(b), 'the buddy empty state reads: ' + JSON.stringify(b));
     ok(/[Pp]air/.test(b), 'the buddy empty state names no next action: ' + JSON.stringify(b));
   }

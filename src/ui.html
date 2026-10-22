@@ -2,6 +2,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>gage</title>
+<link rel="icon" href="/favicon.svg">
 <style>
 /* ---------------------------------------------------------------------------
    Design system.
@@ -85,7 +86,19 @@ button{background:none;border:0;cursor:pointer}
 .state,.ty,.tag,.verdict,.bsec,.lanhead{font-size:var(--t1);letter-spacing:.07em;
   text-transform:uppercase;font-weight:var(--w3)}
 
-.app{display:grid;grid-template-columns:minmax(300px,348px) 1fr;height:100dvh}
+/* The rail holds the one thing that truncates -- subject lines -- so it is
+   allowed to grow with the window instead of staying at 348px while the
+   message column keeps its reading measure and the surplus goes to margin. */
+.app{display:grid;grid-template-columns:minmax(348px,clamp(348px,26vw,440px)) 1fr;
+  height:100dvh}
+/* Buddies is a page, not a sidebar. Every card in it asks a question and
+   shows a word-pair that a person compares character by character, and the
+   rail was the one column that could not grow -- so the cards were wrapping
+   to six lines in 348px while the prose explaining them had the wide pane.
+   The tab takes the whole width and lays the cards out in as many columns
+   as the window affords. */
+.app.buds{grid-template-columns:1fr}
+.app.buds .left{display:none}
 @media (max-width:880px){
   .app{grid-template-columns:1fr}
   .right{display:none}
@@ -97,12 +110,12 @@ button{background:none;border:0;cursor:pointer}
 .left{border-right:1px solid var(--line);background:var(--sheet);
   display:flex;flex-direction:column;min-height:0}
 .brand{display:flex;align-items:center;gap:var(--s3);padding:var(--s5) var(--s5) var(--s4)}
-/* Auto width, not a fixed square: the wordmark changed length when the
-   project was renamed and a 28px box clipped it. A badge should fit its
-   content rather than its first content. */
-.logo{min-width:28px;height:26px;padding:0 var(--s2);border-radius:var(--r1);flex:none;
-  display:grid;place-items:center;background:var(--accent);color:var(--accent-ink);
-  font-weight:var(--w3);font-size:var(--t2);letter-spacing:.01em}
+/* The mark, on the same tile the app icon uses, so the thing in the dock and
+   the thing at the top of the rail are recognisably one product. Square now
+   that it holds a glyph rather than the word. */
+.logo{width:28px;height:28px;border-radius:8px;flex:none;
+  display:grid;place-items:center;background:var(--accent);color:var(--accent-ink)}
+.logo svg{width:20px;height:20px;display:block}
 .wordmark{font-weight:var(--w3);font-size:var(--t4);letter-spacing:-.01em}
 .whoami{margin-left:auto;text-align:right;min-width:0}
 .whoami .h{font-size:var(--t2);font-weight:var(--w2);color:var(--dim)}
@@ -136,8 +149,11 @@ button{background:none;border:0;cursor:pointer}
   place-items:center;font-size:var(--t2);font-weight:var(--w3);margin-top:1px}
 .tbody{min-width:0}
 .trow{display:flex;gap:var(--s2);align-items:baseline}
-.subj{font-weight:var(--w2);font-size:var(--t3);overflow:hidden;text-overflow:ellipsis;
-  white-space:nowrap;flex:1;letter-spacing:-.005em}
+/* Two lines, not one with an ellipsis. Subjects are written by the sender
+   and are routinely longer than any rail width, so a single line meant every
+   row in the list ended in "..." and the list stopped distinguishing threads. */
+.subj{font-weight:var(--w2);font-size:var(--t3);flex:1;letter-spacing:-.005em;
+  display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
 .when{font-family:var(--mono);font-size:var(--t1);color:var(--faint);flex:none}
 .tmeta{display:flex;gap:var(--s2);align-items:center;margin-top:3px;font-size:var(--t2);
   color:var(--dim);min-width:0}
@@ -166,7 +182,10 @@ button{background:none;border:0;cursor:pointer}
 
 .msgs{overflow-y:auto;flex:1;min-height:0;padding:var(--s5) var(--s5) var(--s3);
   display:flex;flex-direction:column;gap:var(--s5)}
-.m{max-width:720px;min-width:0}
+/* Centred, not left-aligned against the rail: past about 1200px the column
+   kept its measure but all the surplus piled up on the right, which read as
+   a broken layout rather than a deliberate one. */
+.m{max-width:760px;min-width:0;width:100%;margin-inline:auto}
 .m.mine{margin-left:auto}
 .mhead{display:flex;gap:var(--s2);align-items:center;margin-bottom:var(--s2);
   flex-wrap:wrap;padding-inline:2px}
@@ -284,6 +303,13 @@ textarea:focus{outline:none;border-color:var(--accent)}
 .drop.has{border-style:solid;color:var(--fg)}
 
 .buddies{padding:0 var(--s3) var(--s5);overflow-y:auto;flex:1}
+/* The buddies page. One readable column of prose, and a card grid that fills
+   whatever width is left -- a card never narrower than a word-pair needs. */
+.budwrap{max-width:1180px;margin-inline:auto;width:100%;padding-bottom:var(--s7)}
+.budgrid{display:grid;gap:var(--s3);
+  grid-template-columns:repeat(auto-fill,minmax(336px,1fr));align-items:start}
+.budgrid .dev{margin-bottom:0}
+.budnote{max-width:62ch}
 .bsec{color:var(--dim);margin:var(--s5) 0 var(--s3) var(--s2);display:flex;
   align-items:baseline;gap:var(--s2)}
 .bsec:first-child{margin-top:var(--s3)}
@@ -307,8 +333,13 @@ textarea:focus{outline:none;border-color:var(--accent)}
    A centred column in a wide empty pane reads as a landing page; aligning it
    with the title above gives the pane a single spine, which is what makes an
    app feel like one surface rather than two. */
-.hint{max-width:58ch;margin:var(--s6) 0 0;padding:0 var(--s5);color:var(--dim);
+/* Centred for the same reason as .m: the empty state is the first thing a
+   new person sees, and it was sitting against the rail with the rest of the
+   window empty beside it. Inside the buddies page it stays left, under the
+   cards it explains. */
+.hint{max-width:58ch;margin:var(--s6) auto 0;padding:0 var(--s5);color:var(--dim);
   font-size:var(--t3);line-height:1.7}
+.budwrap .hint{margin-inline:0}
 .hint h2{font-size:var(--t5);font-weight:var(--w3);color:var(--fg);
   letter-spacing:-.022em;margin-bottom:var(--s4)}
 .hint p{margin-bottom:var(--s4)}
@@ -343,8 +374,12 @@ textarea:focus{outline:none;border-color:var(--accent)}
 <div class="app" id="app">
   <div class="left">
     <div class="brand">
-      <span class="logo">gage</span>
-      <span class="wordmark" id="wordmark">Conversations</span>
+      <span class="logo"><svg viewBox="0 0 512 512" aria-hidden="true">
+        <g fill="none" stroke="currentColor" stroke-linecap="round">
+          <path d="M 340.85 374.85 A 120 120 0 1 0 171.15 374.85" stroke-width="46"/>
+          <path d="M 256 290 L 310.5 212.2" stroke-width="40"/>
+        </g><circle cx="256" cy="290" r="23" fill="currentColor"/></svg></span>
+      <span class="wordmark" id="wordmark">gage</span>
       <span class="whoami" id="me"></span>
     </div>
     <div class="stale" id="stale" hidden></div>
@@ -357,7 +392,12 @@ textarea:focus{outline:none;border-color:var(--accent)}
   <div class="right">
     <div class="head">
       <button class="back" onclick="back()" title="Back">&larr;</button>
-      <h1 id="title">gage</h1><span class="sp"></span>
+      <!-- Buddies takes the whole width, which hides the rail -- and the rail
+           is where the tabs live. Without this there is no way back to the
+           conversations from the page you just opened. -->
+      <button class="headbtn budback" id="budback" hidden
+        onclick="setTab('chats')">&larr; Conversations</button>
+      <h1 id="title">Conversations</h1><span class="sp"></span>
       <span id="hstate"></span>
       <button class="headbtn" id="settle" hidden onclick="act('close',SEL)">Mark settled</button>
     </div>
@@ -539,7 +579,7 @@ function render(){
   // header two and a half seconds after `setTab` set the other one.
   if(TAB!=='chats') return;
   const t=th.find(x=>x.id===SEL);
-  document.getElementById('title').textContent = t ? t.subject : 'gage';
+  document.getElementById('title').textContent = t ? t.subject : 'Conversations';
   document.getElementById('hstate').innerHTML = t
     ? `<span class="state ${sClass(t.state)}">${esc(sShort(t.state))}</span>` : '';
   document.getElementById('settle').hidden = !t || t.state==='closed';
@@ -909,8 +949,7 @@ async function pasteInvite(){
     const j=await r.json().catch(()=>({}));if(!r.ok)throw Error(j.error||('HTTP '+r.status));
     PKEY=j.key;PNAME=j.suggested_name||'';PPAIR=j.ask_pair;PCONF='';ASK=PKEY;ANAME=PNAME;ACONF='';REVEAL=null;
   }catch(e){AERR=e&&e.message?e.message:String(e)}
-  if(TAB==='buddies')document.getElementById('budpane').innerHTML=budpaneHtml();
-  budRender();
+  if(TAB==='buddies')budRender();
 }
 function setTab(t){
   TAB=t;
@@ -927,19 +966,22 @@ function setTab(t){
                           ['msgs',t==='chats'],['budpane',t==='buddies']]){
     const el=document.getElementById(id); if(el)el.hidden=!show;
   }
-  const wm=document.getElementById('wordmark');
-  if(wm)wm.textContent = t==='buddies' ? 'Buddies' : 'Conversations';
+  // The rail says the product name and keeps saying it; which section you
+  // are in is the heading of the section, where a heading belongs.
+  const appEl=document.getElementById('app');
+  if(appEl)appEl.classList.toggle('buds',t==='buddies');
+  const bb=document.getElementById('budback'); if(bb)bb.hidden=(t!=='buddies');
   if(t==='buddies'){
     document.getElementById('title').textContent='Buddies';
     const c=document.getElementById('composer'); if(c)c.hidden=true;
     const se=document.getElementById('settle'); if(se)se.hidden=true;
     document.getElementById('hstate').textContent='';
-    document.getElementById('budpane').innerHTML=budpaneHtml();
+    budRender();
     if(INVITE===null)inviteLoad(false).then(()=>{if(TAB==='buddies'){
-      document.getElementById('budpane').innerHTML=budpaneHtml();
+      budRender();
     }});
   }else{
-    document.getElementById('title').textContent='gage';
+    document.getElementById('title').textContent='Conversations';
   }
   tabsRender(); budRender();
 }
@@ -1008,7 +1050,10 @@ function reachRow(r){
 }
 
 function budRender(){
-  const box=document.getElementById('buddies');
+  // The whole buddies page is rendered here, into the wide pane. It used to
+  // be split: cards in the rail, the prose explaining them in the pane. That
+  // put the thing you act on in the narrowest column on the screen.
+  const box=document.getElementById('budpane');
   if(!box||TAB!=='buddies')return;
   let h='';
   const requests=(BUD.requests||[]).map(q=>q.key===PKEY?{...q,label:PNAME||q.label,
@@ -1017,7 +1062,8 @@ function budRender(){
     bundles:0,verdict:'SENDER NOT ON YOUR LIST',first_observed:null,ask_pair:PPAIR,pasted:true});
   if(requests.length){
     h+=`<div class="bsec">Not on your list<span class="bnum">${requests.length}</span></div>`
-     +`<div class="lansub" style="margin-bottom:8px">${requests.some(q=>q.pasted)?'Pasted invites and keys that have sent you something are not on your list. ':''}A message is not a request for anything &mdash; deciding is yours, and doing nothing is a decision the list will keep offering.</div>`;
+     +`<div class="lansub budnote" style="margin-bottom:8px">${requests.some(q=>q.pasted)?'Pasted invites and keys that have sent you something are not on your list. ':''}A message is not a request for anything &mdash; deciding is yours, and doing nothing is a decision the list will keep offering.</div>`
+     +`<div class="budgrid">`;
     for(const q of requests){
       const open=ASK===q.key;
       const shown=(REVEAL&&REVEAL.key===q.key)?REVEAL.fp:null;
@@ -1066,11 +1112,13 @@ function budRender(){
       }
       h+=`</div>`;
     }
+    h+=`</div>`;
   }
   h+=`<div class="bsec">Your list<span class="bnum">${BUD.buddies.length}</span></div>`;
   if(!BUD.buddies.length){
-    h+=`<div class="lansub">Nobody yet. Pair with a buddy on this network to add their key.</div>`;
+    h+=`<div class="lansub budnote">Nobody yet. Pair with a buddy on this network to add their key.</div>`;
   }
+  h+=`<div class="budgrid">`;
   for(const b of BUD.buddies){
     h+=`<div class="dev">
       <div class="devtop"><span class="devname">${esc(b.name)}</span>
@@ -1081,6 +1129,7 @@ function budRender(){
       ${reachRow(b.reach)}
     </div>`;
   }
+  h+=`</div>`;
   if(BUD.refused.length){
     h+=`<div class="bsec"><a href="#" onclick="SHOWREF=!SHOWREF;budRender();return false"
       style="color:inherit">Refused (${BUD.refused.length}) ${SHOWREF?'&#9662;':'&#9656;'}</a></div>`;
@@ -1089,7 +1138,8 @@ function budRender(){
         not block anything &mdash; nothing in gage can stop a bundle being delivered, and
         mail from these keys still arrives and still waits for you to accept it. What it
         buys is that you are not asked about these again. Their word-pairs are not shown
-        here, so that un-refusing one puts you back in front of the same check.</div>`;
+        here, so that un-refusing one puts you back in front of the same check.</div>
+        <div class="budgrid">`;
       for(const r of BUD.refused){
         h+=`<div class="dev">
           <div class="devtop"><span class="devname">${esc(r.label)}</span>
@@ -1100,11 +1150,14 @@ function budRender(){
               Un-refuse</button>
           </div></div>`;
       }
+      h+=`</div>`;
     }
   }
   if(AERR)h+=`<div class="berr">${esc(AERR)}</div>`;
   if(AOK)h+=`<div class="bok">${esc(AOK)}</div>`;
-  box.innerHTML=h;
+  // Paste, then the standing explanation, below the cards rather than beside
+  // them: a person opens this tab to decide about somebody, not to read.
+  box.innerHTML=`<div class="budwrap">${h}${budpaneHtml()}</div>`;
 }
 
 async function budPost(path,body){
