@@ -259,11 +259,40 @@ fn may_mutate(r: &Req, port: u16) -> bool {
     ok.iter().any(|x| x == o)
 }
 
+/// Collect relay mail while the viewer is open, so the inbox fills without
+/// anybody typing `gage pull`.
+///
+/// It defers to `gage watch`. When the watcher is running for this home it
+/// is already polling the same mailbox, and two pollers racing on one
+/// mailbox is not a thing to find out about in production -- so this thread
+/// checks each time round rather than once at startup, because the watcher
+/// can be started or stopped while the viewer stays open. The macOS app
+/// starts both, which is exactly the case this would otherwise double up.
+///
+/// Errors are swallowed on purpose. A relay that is down, a laptop on a
+/// train, an address that stopped resolving: none of that should put an
+/// error in front of somebody reading their inbox, and the state the page
+/// already shows says whether a relay is configured at all.
+fn background_pull() {
+    std::thread::spawn(|| loop {
+        std::thread::sleep(std::time::Duration::from_secs(60));
+        if crate::remote::relay_addr().is_none() {
+            continue;
+        }
+        if crate::runfile::running("watch") {
+            continue;
+        }
+        let mut said = Vec::new();
+        let _ = crate::pull_for_mcp(&mut said);
+    });
+}
+
 pub fn serve(port: u16) -> std::io::Result<()> {
     // Loopback only, never 0.0.0.0. An inbox viewer on a laptop has no
     // business being reachable from the network it happens to be on.
     let listener = TcpListener::bind(("127.0.0.1", port))?;
     println!("gage ui on http://127.0.0.1:{port}  (ctrl-c to stop)");
+    background_pull();
     for stream in listener.incoming() {
         match stream {
             Ok(s) => {
@@ -464,6 +493,20 @@ fn handle(stream: TcpStream, port: u16) -> std::io::Result<()> {
         // Pasted text in, a key and a suggested name out. It adds NOTHING:
         // the person still has to run the reveal-then-add ceremony on the
         // key, which is the same two steps a buddy request goes through.
+        ("POST", "/api/relay") => match relay_from_ui(&req.body) {
+            Ok(lines) => respond(
+                stream,
+                "200 OK",
+                "application/json",
+                &serde_json::json!({ "lines": lines }).to_string(),
+            ),
+            Err(e) => respond(
+                stream,
+                "400 Bad Request",
+                "application/json",
+                &serde_json::json!({ "error": e }).to_string(),
+            ),
+        },
         ("POST", "/api/parse-invite") => match parse_invite(&req.body) {
             Ok(v) => respond(stream, "200 OK", "application/json", &v),
             Err((code, msg)) => respond(
@@ -570,6 +613,75 @@ fn handle(stream: TcpStream, port: u16) -> std::io::Result<()> {
 /// controlled: the page shows it in a field the person edits, and
 /// `connect_from_ui` applies the same character rules it applies to anything
 /// else before it is filed.
+/// Turn being reachable over the internet on or off.
+///
+/// On is exactly what `gage join` does: register the mailbox, proving it is
+/// yours by opening a sealed nonce, then save the address. Off forgets the
+/// address and nothing else -- see `remote::clear_relay`.
+///
+/// **`https://` is required here even though the CLI accepts other forms.**
+/// The CLI is also used against a relay on a tailnet or on localhost, where
+/// plain HTTP is a deliberate choice by somebody who can see the whole path.
+/// This switch says "available over the internet", and an address typed into
+/// it crosses networks nobody in this conversation controls: without TLS the
+/// relay's identity is whatever answered, and a mailbox registration is worth
+/// intercepting. A bare host is refused for the same reason rather than being
+/// silently upgraded, because guessing at a scheme is how an address that
+/// looks checked turns out not to be.
+fn relay_from_ui(body: &str) -> Result<Vec<String>, String> {
+    let v: serde_json::Value =
+        serde_json::from_str(body).map_err(|_| "could not read the request".to_string())?;
+
+    if v.get("off").and_then(|b| b.as_bool()) == Some(true) {
+        crate::remote::clear_relay().map_err(|e| e.to_string())?;
+        return Ok(vec![
+            "This machine no longer uses a relay.".into(),
+            "Anything already in your mailbox stays there until you turn this back on."
+                .into(),
+        ]);
+    }
+
+    let addr = v
+        .get("addr")
+        .and_then(|a| a.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if addr.is_empty() {
+        return Err("No relay address given.".into());
+    }
+    if addr.len() > 200 {
+        return Err("That address is too long to be a relay address.".into());
+    }
+    // Checked before anything is dialled, so a hostile or mistyped string
+    // never reaches the HTTP client at all.
+    if addr.chars().any(|c| c.is_control() || c.is_whitespace()) {
+        return Err("A relay address cannot contain spaces or control characters.".into());
+    }
+    let Some(host) = addr.strip_prefix("https://") else {
+        return Err(format!(
+            "The address must start with https:// -- {addr} would not verify who answered."
+        ));
+    };
+    let host = host.trim_end_matches('/');
+    if host.is_empty() || host.starts_with(':') {
+        return Err("That address has no host in it.".into());
+    }
+
+    let id = crate::identity::Identity::load()
+        .map_err(|_| "This machine has no identity yet.".to_string())?;
+    let reg = serde_json::json!({
+        "sign_key": id.public_b64(), "box_key": id.box_public_b64() })
+    .to_string();
+    crate::register_with_proof(&addr, &id, &reg).map_err(|e| e.to_string())?;
+    crate::remote::set_relay(&addr).map_err(|e| e.to_string())?;
+    Ok(vec![
+        format!("Registered with {addr}."),
+        "The relay holds sealed envelopes and cannot read them.".into(),
+        "Mail left for you arrives on its own while gage is running.".into(),
+    ])
+}
+
 fn parse_invite(body: &str) -> Result<String, (&'static str, String)> {
     let v: serde_json::Value =
         serde_json::from_str(body).map_err(|e| ("400 Bad Request", format!("bad body: {e}")))?;
@@ -1582,6 +1694,12 @@ fn state_json() -> String {
         // not clobber), but the state should not need the refusal to be
         // understood.
         "has_identity": me.join("identity.key").exists(),
+        // The relay this machine uses, and the one the switch suggests when
+        // it has none. The suggestion lives here rather than in the page so
+        // that ui.html stays free of URLs -- a test asserts it contains none,
+        // because a viewer that can point somewhere else is a browser.
+        "relay": crate::remote::relay_addr(),
+        "relay_default": RELAY_DEFAULT,
         "me": id.map(|i| serde_json::json!({ "handle": i.handle, "key": i.public_b64() })),
         // The page shows a banner on this and stops presenting verdicts as
         // though they were current.
@@ -1747,6 +1865,11 @@ fn threads_json() -> String {
 const INDEX: &str = include_str!("ui.html");
 const FAVICON: &str = include_str!("../packaging/icon/gage-icon.svg");
 
+/// The relay the "available over the internet" switch offers by default.
+/// Only a suggestion: it is editable, and nothing contacts it until somebody
+/// presses the button.
+const RELAY_DEFAULT: &str = "https://relay.gage.sh";
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1899,6 +2022,55 @@ mod tests {
                 "the asked pair equals the label for {k}"
             );
         }
+    }
+
+    // The toggle says "available over the internet", so the one thing it must
+    // not do is accept an address that cannot say who answered. These run
+    // without a network: every case here is refused before anything is
+    // dialled, which is also why they can be tested at all.
+    #[test]
+    fn the_relay_switch_refuses_an_address_it_cannot_verify() {
+        for bad in [
+            "relay.gage.sh",
+            "http://relay.gage.sh",
+            "HTTPS://relay.gage.sh",
+            "ftp://relay.gage.sh",
+            "//relay.gage.sh",
+            "https://",
+            "https://:443",
+            "",
+            "   ",
+        ] {
+            let body = serde_json::json!({ "addr": bad }).to_string();
+            assert!(
+                relay_from_ui(&body).is_err(),
+                "accepted an unverifiable relay address: {bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_relay_switch_refuses_an_address_with_room_to_hide_something() {
+        // Interior only. A trailing newline is what a paste from a terminal
+        // carries, it is trimmed before anything looks at the address, and
+        // refusing it would reject the most ordinary way of entering one.
+        // What must not survive is a control byte with something after it.
+        for bad in [
+            "https://relay.gage.sh evil",
+            "https://relay.gage.sh\nHost: evil",
+            "https://relay.gage.sh\r\nHost: evil",
+            "https://relay.gage.sh\tx",
+            "https://relay\u{0000}.gage.sh",
+        ] {
+            let body = serde_json::json!({ "addr": bad }).to_string();
+            assert!(
+                relay_from_ui(&body).is_err(),
+                "accepted a relay address containing whitespace or control bytes: {bad:?}"
+            );
+        }
+        let long = format!("https://{}.example.com", "a".repeat(250));
+        let body = serde_json::json!({ "addr": long }).to_string();
+        assert!(relay_from_ui(&body).is_err(), "accepted an over-long address");
     }
 
     #[test]

@@ -290,6 +290,12 @@ textarea:focus{outline:none;border-color:var(--accent)}
 .devbtn:hover{border-color:var(--accent);color:var(--accent)}
 .lansub{font-size:var(--t2);color:var(--dim);margin-top:var(--s2);line-height:1.6}
 .lanempty{font-size:var(--t2);color:var(--dim);line-height:1.6;margin-left:var(--s2)}
+/* A panel that is switched off says so on one line and gets out of the way;
+   the rail's job is the thread list. */
+.lanrow{display:flex;align-items:center;gap:var(--s3);margin-left:var(--s2)}
+.lanrow .lanempty{margin-left:0;flex:1;min-width:0;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.netbox{max-height:none}
 .lanin{font:inherit;font-size:var(--t2);padding:var(--s2);border-radius:var(--r1);
   border:1px solid var(--line2);background:var(--bg);color:var(--fg);margin-top:var(--s2);
   transition:border-color var(--ease)}
@@ -387,6 +393,7 @@ textarea:focus{outline:none;border-color:var(--accent)}
     <div class="filters" id="filters"></div>
     <div class="list" id="list"></div>
     <div class="lanbox" id="lanbox"></div>
+    <div class="lanbox netbox" id="netbox"></div>
     <div class="buddies" id="buddies" hidden></div>
   </div>
   <div class="right">
@@ -674,10 +681,60 @@ async function load(){
 // visible -- which would be the one thing a button here must not be able to
 // do.
 let LAN={lan_running:false,devices:[]}, LSEL=null, FILES=[], LERR2='', LOK='', LBUSY=false;
+// The relay the machine is joined to, or null. Polled with the device list.
+let RELAY=null, RADDR='', RBUSY=false, RERR='', ROK='', RSHOW=false;
 let LPAIR=null, LNAME='';
 
 const PAIRHINT='Check all four pairs against what the other machine shows. They come '
   +'from its key, so nobody picks their own. If one word differs, it is not that key.';
+
+function netRender(){
+  const box=document.getElementById('netbox');
+  if(!box)return;
+  const on=!!RELAY;
+  let h=`<div class="lanhead"><span class="dot${on?' on':''}"></span>Over the internet</div>`;
+  if(on){
+    h+=`<div class="lanrow"><span class="lanempty">${esc(RELAY)}</span>
+        <button class="devbtn" onclick="relayOff()" ${RBUSY?'disabled':''}>
+          ${RBUSY?'Working...':'Turn off'}</button></div>`;
+  }else if(!RSHOW){
+    // One line when it is off. Two panels in the rail, each explaining
+    // itself at length, left three threads visible in a 760px-tall window.
+    // The explanation belongs on the screen where you switch it on.
+    h+=`<div class="lanrow"><span class="lanempty">Off</span>
+        <button class="devbtn" onclick="RSHOW=true;netRender()">Turn on</button></div>`;
+  }else{
+    h+=`<div class="lansub">The address of the relay to use. It has to be an
+        <b>https</b> address: this crosses networks nobody here controls, and
+        without that there is nothing to say the relay is the relay.</div>
+      <input class="lanin" style="width:100%" aria-label="Relay address"
+        value="${esc(RADDR)}" oninput="RADDR=this.value"
+        onkeydown="if(event.key==='Enter')relayOn()">
+      <div class="devrow">
+        <button class="devbtn" onclick="relayOn()" ${RBUSY?'disabled':''}>
+          ${RBUSY?'Registering...':'Register'}</button>
+        <button class="devbtn" onclick="RSHOW=false;RERR='';netRender()">Cancel</button>
+      </div>`;
+  }
+  if(RERR)h+=`<div class="lanerr">${esc(RERR)}</div>`;
+  if(ROK)h+=`<div class="lanok">${esc(ROK)}</div>`;
+  box.innerHTML=h;
+}
+
+async function relayPost(body){
+  RBUSY=true;RERR='';ROK='';netRender();
+  try{
+    const r=await fetch('/api/relay',{method:'POST',
+      headers:{'X-Gage':'1','Content-Type':'application/json'},body:JSON.stringify(body)});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok)throw new Error(j.error||('HTTP '+r.status));
+    ROK=(j.lines||[]).join(' ');
+    RSHOW=false;
+  }catch(e){ RERR=(e&&e.message)?e.message:String(e); }
+  RBUSY=false; await lanLoad();
+}
+function relayOn(){ return relayPost({addr:RADDR}); }
+function relayOff(){ return relayPost({off:true}); }
 
 function lanRender(){
   const box=document.getElementById('lanbox');
@@ -685,12 +742,12 @@ function lanRender(){
   const on=LAN.lan_running;
   let h=`<div class="lanhead"><span class="dot${on?' on':''}"></span>On this network</div>`;
   if(!LAN.devices.length){
+    // One line, for the same reason as the panel below it: the rail is for
+    // the thread list, and two panels each writing a paragraph about an
+    // empty state left four threads visible in the window the app opens at.
     h+=`<div class="lanempty">${on
-      ? 'Nobody else here yet.'
-      : 'Not on the network. Run <b>gage lan</b> in a terminal.'}</div>`
-      +`<div class="lansub">${on
-        ? 'Run <b>gage lan</b> on the other machine too.'
-        : 'It announces while it runs and goes silent when you stop it.'}</div>`;
+      ? 'Nobody else here yet. Run <b>gage lan</b> on the other machine too.'
+      : 'Off. Run <b>gage lan</b> in a terminal.'}</div>`;
     box.innerHTML=h; return;
   }
   for(const d of LAN.devices){
@@ -830,11 +887,20 @@ async function lanLoad(){
     if(!r.ok)throw new Error('HTTP '+r.status);
     LAN=await r.json();
     if(LSEL&&!LAN.devices.some(d=>d.label===LSEL))LSEL=null;
+    // The relay address lives in the same poll rather than a timer of its
+    // own: it changes only when somebody presses the switch below it.
+    const sr=await fetch('/api/state');
+    if(sr.ok){const st=await sr.json();RELAY=st.relay||null;
+      // The suggested address comes from the binary. The page deliberately
+      // contains no URL of any kind -- a test asserts it -- so that nothing
+      // in the viewer can point a reader anywhere but this machine.
+      if(!RADDR)RADDR=st.relay_default||'';}
   }catch(e){
     // Same rule as the inbox loader: never fail invisibly.
     LERR2='Could not read the network list: '+(e&&e.message?e.message:e);
   }
   lanRender();
+  netRender();
 }
 lanLoad();setInterval(lanLoad,2000);
 
@@ -958,7 +1024,7 @@ function setTab(t){
   // kind of small thing that makes a tool feel untrustworthy.
   hashSync();
   for(const [id,show] of [['filters',t==='chats'],['list',t==='chats'],
-                          ['lanbox',t==='chats'],['buddies',t==='buddies'],
+                          ['lanbox',t==='chats'],['netbox',t==='chats'],['buddies',t==='buddies'],
                           // The right-hand pane belongs to whichever tab is
                           // showing. It used to keep the Chats empty state --
                           // "Pick a conversation" -- next to the buddy list,

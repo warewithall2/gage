@@ -51,6 +51,19 @@ pub fn set_relay(addr: &str) -> std::io::Result<()> {
     std::fs::write(dir.join("relay"), addr.trim())
 }
 
+/// Stop using a relay. The mailbox on the relay is untouched: there is no
+/// command that deletes one, and inventing a local "leave" that only forgets
+/// the address would be a worse lie than saying what this does. Anything
+/// already waiting there waits until the address comes back.
+pub fn clear_relay() -> std::io::Result<()> {
+    let p = crate::identity::home().join("relay");
+    match std::fs::remove_file(p) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
 /// How a relay address is to be reached: the host:port to dial, the `Host`
 /// header to send, and the TLS name to verify, or `None` for plain HTTP.
 ///
