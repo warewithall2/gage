@@ -39,6 +39,24 @@ Compare that output to the line they sent. It must match exactly. Then:
 opened. That is macOS, not a problem with the file. Right-click it in Finder,
 choose **Open**, then **Open** again. Once only.
 
+### If you were sent Gage.app instead
+
+Drag it to **Applications** and double-click it. It starts everything it
+needs and opens its own window; there is no terminal step, and section 2
+below happens in that window instead.
+
+**The first open will be refused the same way**, and for the same reason:
+anything downloaded carries a quarantine flag until a human overrides it
+once. Right-click **Gage** in Applications, choose **Open**, then **Open**
+again.
+
+Worth saying because it has already misled us once: an app *built* on the
+machine it runs on has no quarantine flag and opens without any of this. So
+the person who sent you the app may tell you in good faith that there is no
+such dialog. There is, for you, because yours arrived over the network.
+Until the app is notarized, that is expected rather than a fault — see
+[notarize-checklist.md](notarize-checklist.md).
+
 ## 2. Make your identity (about 1 minute)
 
     gage connect
