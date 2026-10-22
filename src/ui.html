@@ -331,6 +331,8 @@ textarea:focus{outline:none;border-color:var(--accent)}
 .budgrid .dev{margin-bottom:0}
 .budnote{max-width:62ch}
 .hostpick{display:flex;gap:var(--s2);flex-wrap:wrap;margin-bottom:var(--s4)}
+.copied{font-size:var(--t2);color:var(--ok)}
+.copied.bad{color:var(--warn)}
 /* A config block is copied, not read: it keeps its line breaks and scrolls
    rather than wrapping, because a wrapped JSON block invites a bad paste. */
 .cfg{font-family:var(--mono);font-size:var(--t2);line-height:1.55;
@@ -1191,17 +1193,19 @@ function agentRender(){
       <div class="devfp">${esc(g.fingerprint)}</div>
       <div class="lansub">Identity in <code>${esc(g.home)}</code></div>
       <div class="lansub" style="margin-top:8px">Point the host at it:</div>
-      <pre class="cfg">${esc(cfg)}</pre>
+      <pre class="cfg" id="cfg-${esc(g.name)}">${esc(cfg)}</pre>
       <div class="devrow">
-        <button class="devbtn" onclick="copyText(${JSON.stringify(cfg)})">Copy config</button>
+        <button class="devbtn" onclick="copyCfg('${esc(g.name)}')">Copy config</button>
+        <span class="copied" id="copy-cfg-${esc(g.name)}"></span>
       </div>
       <div class="lansub" style="margin-top:10px">To let its messages be accepted
         without you, put this line in your <code>authority</code> file yourself.
         Nothing in gage writes that file: a path that grants authority by being
         asked is one an agent can be talked into asking for.</div>
-      <pre class="cfg">${esc(g.grant)}</pre>
+      <pre class="cfg" id="grant-${esc(g.name)}">${esc(g.grant)}</pre>
       <div class="devrow">
-        <button class="devbtn" onclick="copyText(${JSON.stringify(g.grant)})">Copy line</button>
+        <button class="devbtn" onclick="copyGrant('${esc(g.name)}')">Copy line</button>
+        <span class="copied" id="copy-grant-${esc(g.name)}"></span>
       </div>
     </div>`;
   }
@@ -1210,9 +1214,47 @@ function agentRender(){
 }
 
 // Clipboard writes stay behind a press, like the paste button does.
-async function copyText(t){
-  try{ if(navigator.clipboard&&navigator.clipboard.writeText) await navigator.clipboard.writeText(t); }
-  catch(e){ /* The text is on screen and selectable either way. */ }
+//
+// Two things were wrong with the first version and both were invisible.
+// The text was interpolated into the onclick attribute with JSON.stringify,
+// which emits a double-quoted string into a double-quoted attribute: the
+// attribute ended at the first quote and the handler was a syntax error, so
+// the button did nothing at all. And the failure was swallowed, so a button
+// that could not work looked exactly like a button that had worked.
+//
+// Now the text is looked up by name at click time -- nothing user-visible
+// goes through an attribute -- and every outcome says what happened. The
+// fallback selects the block so Cmd-C or Ctrl-C finishes the job, because
+// a WKWebView without clipboard access is a real case and "nothing
+// happened" is the worst possible answer in it.
+function copyCfg(name){
+  const g=(AGENTS||[]).find(x=>x.name===name); if(!g)return;
+  doCopy((g.configs&&g.configs[AGHOST])||'', 'copy-cfg-'+name, 'cfg-'+name);
+}
+function copyGrant(name){
+  const g=(AGENTS||[]).find(x=>x.name===name); if(!g)return;
+  doCopy(g.grant||'', 'copy-grant-'+name, 'grant-'+name);
+}
+async function doCopy(text, tagId, blockId){
+  const tag=document.getElementById(tagId);
+  const say=(m,bad)=>{ if(!tag)return; tag.textContent=m;
+    tag.className='copied'+(bad?' bad':''); };
+  if(!text){ say('nothing to copy', true); return; }
+  try{
+    if(!navigator.clipboard||!navigator.clipboard.writeText)throw new Error('no clipboard');
+    await navigator.clipboard.writeText(text);
+    say('Copied');
+    setTimeout(()=>{ if(tag&&tag.textContent==='Copied')tag.textContent=''; },2500);
+  }catch(e){
+    // Select it instead, and say which key finishes the job.
+    const el=document.getElementById(blockId);
+    try{
+      const r=document.createRange(); r.selectNodeContents(el);
+      const sel=window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+      say(navigator.platform.indexOf('Mac')>=0 ? 'Selected -- press Cmd-C'
+                                               : 'Selected -- press Ctrl-C', true);
+    }catch(e2){ say('Could not copy; select the text above', true); }
+  }
 }
 
 async function agentLoad(){
