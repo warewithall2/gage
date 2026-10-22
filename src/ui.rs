@@ -322,7 +322,8 @@ fn respond(mut s: TcpStream, status: &str, ctype: &str, body: &str) -> std::io::
         "HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\n\
          X-Content-Type-Options: nosniff\r\n\
          Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; \
-         script-src 'unsafe-inline'; connect-src 'self'; form-action 'none'; base-uri 'none'\r\n\
+         script-src 'unsafe-inline'; connect-src 'self'; img-src 'self'; \
+         form-action 'none'; base-uri 'none'\r\n\
          Connection: close\r\n\r\n",
         body.len()
     );

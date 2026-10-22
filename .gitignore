@@ -5,7 +5,6 @@ handle
 *.key
 .env
 
-# Derived icon renders. The SVGs in packaging/icon are the source; Gage.icns
+# Derived icon render. The SVGs in packaging/icon are the source; Gage.icns
 # is committed because the Mac that builds the app has no rsvg-convert.
-packaging/macos/favicon.svg
 packaging/macos/gage-icon-512.png

@@ -831,26 +831,42 @@ fn fetch_mailbox(
     Ok((n, !items.is_empty()))
 }
 
-/// Refuse to start a service this home is already running.
+/// Say so when a run record claims this home is already serving `service`.
 ///
-/// Without this the second copy gets as far as binding and fails with
-/// "address already in use", which names a port and sends the reader to look
-/// at the network -- when the answer is that gage is already up. It is also
-/// what makes `runfile::running` load-bearing rather than only tested: the
-/// macOS launcher asks the same question from the shell, and the two answers
-/// should come from the same rule.
+/// **This warns; it does not refuse.** The first version refused, and a
+/// cross-family audit was right that refusing is unsafe. A run record holds
+/// a pid, and a pid is not an identity: a container restarted on the same
+/// volume comes back as pid 1 with the same argv and matches its own stale
+/// record, and nothing in `running_in` compares start time, namespace or
+/// home. Refusing on that evidence makes gage unstartable with no way out
+/// but deleting a file nobody has been told about. It also refused
+/// `gage ui --port 8080` alongside a server on 7777, which would have bound
+/// perfectly well, because the check knows nothing about ports.
 ///
-/// `running` is deliberately false whenever the answer is uncertain, so this
-/// never blocks a start it should have allowed.
-fn already_serving(service: &str) -> Result<(), Box<dyn std::error::Error>> {
-    if runfile::running(service) {
-        return Err(format!(
-            "gage {service} is already serving this home. Stop that one first, \
-             or use a different CTX_HOME."
-        )
-        .into());
+/// Warning keeps what the check was for. A genuine duplicate still fails on
+/// bind, but now with the sentence that explains it printed first instead of
+/// an "address already in use" that sends the reader to look at the network.
+/// A false positive costs one line of output.
+///
+/// The record's own pid is excluded: a process cannot be the thing that is
+/// already running instead of itself.
+fn note_if_already_serving(service: &str) {
+    if !runfile::running(service) {
+        return;
     }
-    Ok(())
+    // Named explicitly, because "stop the other one" is useless advice when
+    // there is no other one. The record is the thing to delete.
+    let record = runfile::path_for(service);
+    eprintln!(
+        "gage: a run record says `gage {service}` is already serving this home \
+         ({}).",
+        record.display()
+    );
+    eprintln!(
+        "  If that is wrong -- a stale record from a process that was killed, \
+         or a reused pid -- delete that file."
+    );
+    eprintln!("  Starting anyway.");
 }
 
 fn main() -> ExitCode {
@@ -2158,7 +2174,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             let _run = if once {
                 None
             } else {
-                already_serving("watch")?;
+                note_if_already_serving("watch");
                 runfile::RunFile::claim("watch")
             };
             // Latched for the life of the process, not reset each poll: a
@@ -2391,12 +2407,12 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             // Held for as long as the service runs, so something outside gage
             // can tell this home is already served. See src/runfile.rs for why
             // the record lives in the home and not in the process table.
-            already_serving("ui")?;
+            note_if_already_serving("ui");
             let _run = runfile::RunFile::claim("ui");
             ui::serve(port)?;
         }
         Cmd::Lan { port } => {
-            already_serving("lan")?;
+            note_if_already_serving("lan");
             let _run = runfile::RunFile::claim("lan");
             lan::run(port)?;
         }

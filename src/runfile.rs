@@ -58,6 +58,12 @@ fn path_for_in(home: &Path, service: &str) -> PathBuf {
     run_dir_in(home).join(format!("{service}.pid"))
 }
 
+/// Where this home's record for `service` lives, so a message about a stale
+/// one can name the file to delete rather than leaving the reader to find it.
+pub fn path_for(service: &str) -> PathBuf {
+    path_for_in(&crate::identity::home(), service)
+}
+
 /// The argv of a live process, or `None` if it is gone.
 ///
 /// Linux first, because `/proc` costs nothing and needs no child process. The
@@ -127,6 +133,13 @@ fn running_in(home: &Path, service: &str) -> bool {
     if pid == 0 {
         return false;
     }
+    // A process is not the thing already running instead of itself. Without
+    // this, a record holding our own pid -- which a container restarted on
+    // the same volume produces, since it comes back as pid 1 and writes 1 --
+    // reports the starting process as the one already serving.
+    if pid == std::process::id() {
+        return false;
+    }
     match argv_of(pid) {
         Some(argv) => argv_is_service(&argv, service),
         None => false,
@@ -155,6 +168,17 @@ impl RunFile {
     }
 
     fn claim_in(home: &Path, service: &str) -> Option<RunFile> {
+        // Never take a record that belongs to a live process of this
+        // service. A start that is about to fail -- a second `gage ui` on a
+        // port already bound -- used to overwrite the running server's
+        // record on the way past, and then delete it on the way out. The
+        // server kept serving with no record, so the macOS launcher's
+        // adoption check and the viewer's background-pull check both went on
+        // believing nothing was running. Measured, not theorised: it is what
+        // happened the first time the warning below was tested.
+        if running_in(home, service) {
+            return None;
+        }
         let dir = run_dir_in(home);
         std::fs::create_dir_all(&dir).ok()?;
         let path = dir.join(format!("{service}.pid"));
@@ -165,7 +189,16 @@ impl RunFile {
 
 impl Drop for RunFile {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.path);
+        // Only if it is still ours. Belt to `claim_in`'s braces: whatever
+        // else has happened to the file in between, this process removes a
+        // record only while that record names this process.
+        let mine = std::fs::read_to_string(&self.path)
+            .ok()
+            .and_then(|t| t.trim().parse::<u32>().ok())
+            == Some(std::process::id());
+        if mine {
+            let _ = std::fs::remove_file(&self.path);
+        }
     }
 }
 
@@ -181,6 +214,27 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    // A record holding the pid of the process doing the asking must not be
+    // read as "something else is already running". A container restarted on
+    // the same volume comes back as pid 1, writes 1, and then matches its
+    // own stale record. While the caller refused a start rather than warning
+    // about one, that made gage unstartable with no way out but deleting a
+    // file nobody had been told about.
+    #[test]
+    fn a_record_holding_our_own_pid_is_not_something_else_running() {
+        let home = fixture_home("own-pid");
+        std::fs::create_dir_all(home.join("run")).unwrap();
+        std::fs::write(
+            home.join("run").join("ui.pid"),
+            format!("{}\n", std::process::id()),
+        )
+        .unwrap();
+        assert!(
+            !running_in(&home, "ui"),
+            "a process reported itself as the one already serving"
+        );
     }
 
     #[test]

@@ -104,6 +104,11 @@ button{background:none;border:0;cursor:pointer}
   .right{display:none}
   .app.detail .left{display:none}
   .app.detail .right{display:flex}
+  /* Buddies hides the rail at every width, and under 880px the pane is
+     hidden too unless a thread is open -- which showed an empty window with
+     no control to leave it, because the tabs are in the rail and the back
+     button is in the pane. Buddies is one pane here, like a thread is. */
+  .app.buds .right{display:flex}
 }
 
 /* ---------- rail ---------- */
@@ -1006,7 +1011,7 @@ function pasteHtml(){
   return h;
 }
 async function pasteClipboard(){
-  try{if(navigator.clipboard&&navigator.clipboard.readText){const t=await navigator.clipboard.readText();if(t){PASTED=t;budRender();}}}catch(e){/* Keep the editable paste field as the fallback. */}
+  try{if(navigator.clipboard&&navigator.clipboard.readText){const t=await navigator.clipboard.readText();if(t){PASTED=t;budRender(true);}}}catch(e){/* Keep the editable paste field as the fallback. */}
 }
 async function pasteInvite(){
   AERR='';AOK='';PREVEAL=null;PKEY='';
@@ -1015,7 +1020,7 @@ async function pasteInvite(){
     const j=await r.json().catch(()=>({}));if(!r.ok)throw Error(j.error||('HTTP '+r.status));
     PKEY=j.key;PNAME=j.suggested_name||'';PPAIR=j.ask_pair;PCONF='';ASK=PKEY;ANAME=PNAME;ACONF='';REVEAL=null;
   }catch(e){AERR=e&&e.message?e.message:String(e)}
-  if(TAB==='buddies')budRender();
+  if(TAB==='buddies')budRender(true);
 }
 function setTab(t){
   TAB=t;
@@ -1042,14 +1047,14 @@ function setTab(t){
     const c=document.getElementById('composer'); if(c)c.hidden=true;
     const se=document.getElementById('settle'); if(se)se.hidden=true;
     document.getElementById('hstate').textContent='';
-    budRender();
+    budRender(true);
     if(INVITE===null)inviteLoad(false).then(()=>{if(TAB==='buddies'){
-      budRender();
+      budRender(true);
     }});
   }else{
     document.getElementById('title').textContent='Conversations';
   }
-  tabsRender(); budRender();
+  tabsRender(); budRender(true);
 }
 // The tab, and which decision is open, live in the URL. This page polls and
 // re-renders constantly; losing your place on a refresh is the kind of small
@@ -1070,11 +1075,11 @@ function hashRead(){
 function askOpen(k){
   ASK=(ASK===k?null:k); ANAME='';ACONF='';AERR='';AOK='';
   if(!ASK||(REVEAL&&REVEAL.key!==ASK))REVEAL=null;
-  hashSync(); budRender();
+  hashSync(); budRender(true);
 }
 
 async function budReveal(k){
-  ABUSY=true;AERR='';AOK='';budRender();
+  ABUSY=true;AERR='';AOK='';budRender(true);
   try{
     const r=await fetch('/api/connect',{method:'POST',
       headers:{'X-Gage':'1','Content-Type':'application/json'},
@@ -1089,7 +1094,7 @@ async function budReveal(k){
     REVEAL={key:k,fp:(j.lines||[])[1]||'',pair:ACONF};
     ACONF='';
   }catch(e){ AERR=(e&&e.message)?e.message:String(e); }
-  ABUSY=false; budRender();
+  ABUSY=false; budRender(true);
 }
 
 function reachRow(r){
@@ -1115,7 +1120,7 @@ function reachRow(r){
     `<span class="breach${on?' on':''}" title="${esc(title)}"><i></i>${t}</span>`).join('')+`</div>`;
 }
 
-function budRender(){
+function budRender(force){
   // The whole buddies page is rendered here, into the wide pane. It used to
   // be split: cards in the rail, the prose explaining them in the pane. That
   // put the thing you act on in the narrowest column on the screen.
@@ -1197,7 +1202,7 @@ function budRender(){
   }
   h+=`</div>`;
   if(BUD.refused.length){
-    h+=`<div class="bsec"><a href="#" onclick="SHOWREF=!SHOWREF;budRender();return false"
+    h+=`<div class="bsec"><a href="#" onclick="SHOWREF=!SHOWREF;budRender(true);return false"
       style="color:inherit">Refused (${BUD.refused.length}) ${SHOWREF?'&#9662;':'&#9656;'}</a></div>`;
     if(SHOWREF){
       h+=`<div class="lansub" style="margin-bottom:8px">Refusing records a decision. It does
@@ -1219,15 +1224,31 @@ function budRender(){
       h+=`</div>`;
     }
   }
-  if(AERR)h+=`<div class="berr">${esc(AERR)}</div>`;
-  if(AOK)h+=`<div class="bok">${esc(AOK)}</div>`;
+  // AERR and AOK are printed by pasteHtml, which is concatenated below.
+  // Printing them here as well put the same failure on the screen twice.
+
+  // This page polls every 2.5 seconds, and replacing innerHTML destroys the
+  // focused node. That was survivable while the only inputs here were the
+  // pairing fields, whose text is held in ANAME and ACONF and restored on
+  // the next render -- the caret moved, which was already wrong. Since the
+  // paste textarea moved into this subtree it is not survivable at all:
+  // typing an invite line lost focus mid-word every 2.5 seconds.
+  //
+  // So a poll that would clobber a field somebody is typing in does not
+  // render. An action the person takes always calls budRender directly, and
+  // those paths pass force, because the whole point of them is that the
+  // answer changed.
+  const box2 = box;
+  const active = document.activeElement;
+  if (!force && active && box2.contains(active)
+      && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
   // Paste, then the standing explanation, below the cards rather than beside
   // them: a person opens this tab to decide about somebody, not to read.
   box.innerHTML=`<div class="budwrap">${h}${budpaneHtml()}</div>`;
 }
 
 async function budPost(path,body){
-  ABUSY=true;AERR='';AOK='';budRender();
+  ABUSY=true;AERR='';AOK='';budRender(true);
   try{
     const r=await fetch(path,{method:'POST',headers:{'X-Gage':'1','Content-Type':'application/json'},
       body:JSON.stringify(body)});

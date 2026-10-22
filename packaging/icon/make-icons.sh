@@ -8,7 +8,10 @@
 # than keeping a second toolchain alive.
 set -eu
 HERE=$(cd "$(dirname "$0")" && pwd)
-OUT="${1:-$HERE}"
+# Defaults to the directory make-app.sh copies the icon FROM. It used to
+# default to this script's own directory, so the documented "just run it"
+# wrote an icns that nothing ever bundled.
+OUT="${1:-$HERE/../macos}"
 command -v rsvg-convert >/dev/null || { echo "need rsvg-convert" >&2; exit 2; }
 mkdir -p "$OUT"
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
@@ -35,8 +38,10 @@ with open(dest, "wb") as f:
 print("%s (%d bytes, %d sizes)" % (dest, len(chunks) + 8, len(types)))
 PY
 
-# The viewer's tab icon. One file, no raster fallback: every browser that can
-# run the viewer at all has supported SVG favicons for years.
-cp "$HERE/gage-mark.svg" "$OUT/favicon.svg"
+# The viewer's tab icon needs no step here: the binary serves
+# packaging/icon/gage-icon.svg directly, so the artwork and the favicon are
+# the same file by construction. This used to copy gage-mark.svg to
+# favicon.svg, which nothing read and which was not even the file being
+# served -- two ways of being wrong about one icon.
 rsvg-convert -w 512 -h 512 "$HERE/gage-icon.svg" -o "$OUT/gage-icon-512.png"
-echo "wrote $OUT/favicon.svg and $OUT/gage-icon-512.png"
+echo "wrote $OUT/gage-icon-512.png (for docs and listings)"
