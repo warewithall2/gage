@@ -173,7 +173,11 @@ button{background:none;border:0;cursor:pointer}
   font-size:var(--t2);line-height:1.75}
 
 /* ---------- conversation ---------- */
-.right{display:flex;flex-direction:column;min-height:0;background:var(--bg)}
+/* min-width:0 for the same reason as .budwrap: a grid item's automatic
+   minimum is its content, so a wide config block widened the column rather
+   than scrolling inside it, and the whole page gained a horizontal
+   scrollbar. */
+.right{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(--bg)}
 .head{padding:var(--s4) var(--s5);border-bottom:1px solid var(--line);background:var(--sheet);
   display:flex;gap:var(--s3);align-items:center;flex:none}
 .back{display:none;font-size:var(--t4);color:var(--dim);padding:2px var(--s2)}
@@ -316,11 +320,23 @@ textarea:focus{outline:none;border-color:var(--accent)}
 .buddies{padding:0 var(--s3) var(--s5);overflow-y:auto;flex:1}
 /* The buddies page. One readable column of prose, and a card grid that fills
    whatever width is left -- a card never narrower than a word-pair needs. */
-.budwrap{max-width:1180px;margin-inline:auto;width:100%;padding-bottom:var(--s7)}
+/* min-width:0 because this is a flex item: without it the item's automatic
+   minimum is its content, so one wide <pre> stops scrolling and widens the
+   whole page instead. */
+.budwrap{max-width:1180px;margin-inline:auto;width:100%;min-width:0;
+  padding-bottom:var(--s7)}
+.budwrap .dev{min-width:0}
 .budgrid{display:grid;gap:var(--s3);
   grid-template-columns:repeat(auto-fill,minmax(336px,1fr));align-items:start}
 .budgrid .dev{margin-bottom:0}
 .budnote{max-width:62ch}
+.hostpick{display:flex;gap:var(--s2);flex-wrap:wrap;margin-bottom:var(--s4)}
+/* A config block is copied, not read: it keeps its line breaks and scrolls
+   rather than wrapping, because a wrapped JSON block invites a bad paste. */
+.cfg{font-family:var(--mono);font-size:var(--t2);line-height:1.55;
+  background:var(--sunk);border:1px solid var(--line);border-radius:var(--r1);
+  padding:var(--s3);margin-top:var(--s2);overflow-x:auto;white-space:pre;
+  color:var(--fg)}
 .bsec{color:var(--dim);margin:var(--s5) 0 var(--s3) var(--s2);display:flex;
   align-items:baseline;gap:var(--s2)}
 .bsec:first-child{margin-top:var(--s3)}
@@ -917,6 +933,7 @@ lanLoad();setInterval(lanLoad,2000);
 // "not yet" makes refusing feel like ignoring, and the way to stop being
 // asked becomes saying yes.
 let BUD={buddies:[],requests:[],refused:[]}, TAB='chats';
+let AGENTS=null, AGNAME='', AGBUSY=false, AGERR='', AGHOST='claude_code', AGNEW=null;
 let ASK=null, ANAME='', ACONF='', AERR='', AOK='', ABUSY=false, SHOWREF=false;
 // The fingerprint, once the person has shown they read it somewhere else.
 // Held per key and dropped on cancel, so it never survives into a different
@@ -954,7 +971,8 @@ function tabsRender(){
   el.innerHTML=
     `<button class="tab${TAB==='chats'?' on':''}" onclick="setTab('chats')">Chats</button>`
    +`<button class="tab${TAB==='buddies'?' on':''}" onclick="setTab('buddies')">Buddies`
-   +(n?`<span class="bdg">${n}</span>`:'')+`</button>`;
+   +(n?`<span class="bdg">${n}</span>`:'')+`</button>`
+   +`<button class="tab${TAB==='agents'?' on':''}" onclick="setTab('agents')">Agents</button>`;
 }
 // The add-line QR. Fetched once: it does not change while this page is
 // open, and it must not ride the 2.5s poll. Inserted as markup. An image
@@ -1028,21 +1046,29 @@ function setTab(t){
   // re-renders constantly, and losing your place on every refresh is the
   // kind of small thing that makes a tool feel untrustworthy.
   hashSync();
+  const wide = (t==='buddies'||t==='agents');
   for(const [id,show] of [['filters',t==='chats'],['list',t==='chats'],
                           ['lanbox',t==='chats'],['netbox',t==='chats'],['buddies',t==='buddies'],
                           // The right-hand pane belongs to whichever tab is
                           // showing. It used to keep the Chats empty state --
                           // "Pick a conversation" -- next to the buddy list,
                           // which reads as a page that half-loaded.
-                          ['msgs',t==='chats'],['budpane',t==='buddies']]){
+                          ['msgs',t==='chats'],['budpane',wide]]){
     const el=document.getElementById(id); if(el)el.hidden=!show;
   }
   // The rail says the product name and keeps saying it; which section you
   // are in is the heading of the section, where a heading belongs.
   const appEl=document.getElementById('app');
-  if(appEl)appEl.classList.toggle('buds',t==='buddies');
-  const bb=document.getElementById('budback'); if(bb)bb.hidden=(t!=='buddies');
-  if(t==='buddies'){
+  if(appEl)appEl.classList.toggle('buds',wide);
+  const bb=document.getElementById('budback'); if(bb)bb.hidden=!wide;
+  if(t==='agents'){
+    document.getElementById('title').textContent='Agents';
+    const c=document.getElementById('composer'); if(c)c.hidden=true;
+    const se=document.getElementById('settle'); if(se)se.hidden=true;
+    document.getElementById('hstate').textContent='';
+    agentRender();
+    if(AGENTS===null)agentLoad();
+  }else if(t==='buddies'){
     document.getElementById('title').textContent='Buddies';
     const c=document.getElementById('composer'); if(c)c.hidden=true;
     const se=document.getElementById('settle'); if(se)se.hidden=true;
@@ -1063,10 +1089,12 @@ function setTab(t){
 function hashSync(){
   let h='';
   if(TAB==='buddies')h = ASK ? '#buddies='+encodeURIComponent(ASK) : '#buddies';
+  if(TAB==='agents')h = '#agents';
   try{ history.replaceState(null,'',h||location.pathname); }catch(e){}
 }
 function hashRead(){
   const h=decodeURIComponent(location.hash||'');
+  if(h==='#agents'){ TAB='agents'; return; }
   if(!h.startsWith('#buddies'))return;
   TAB='buddies';
   const i=h.indexOf('=');
@@ -1118,6 +1146,95 @@ function reachRow(r){
   ];
   return `<div class="bdots">`+bits.map(([t,on,title])=>
     `<span class="breach${on?' on':''}" title="${esc(title)}"><i></i>${t}</span>`).join('')+`</div>`;
+}
+
+const AGHOSTS=[['claude_code','Claude Code'],['claude_desktop','Claude Desktop'],
+               ['codex','Codex'],['generic','Other host']];
+
+function agentRender(){
+  const box=document.getElementById('budpane');
+  if(!box||TAB!=='agents')return;
+  // Same focus rule as the buddies page: this pane holds a text field, and
+  // a render underneath somebody's typing loses the caret.
+  const a=document.activeElement;
+  if(a&&box.contains(a)&&(a.tagName==='INPUT'||a.tagName==='TEXTAREA')&&!AGNEW)return;
+  let h=`<div class="budwrap">`;
+  h+=`<div class="bsec">Connect an agent</div>
+    <div class="lansub budnote">Each agent gets its own identity, so a verdict
+      can say <i>which</i> agent sent something and a grant can name one of
+      them. They are added to your list here without a word-pair compare:
+      this page generated the key a moment ago, so there is no other party
+      it could belong to. A key from anywhere else still goes through the
+      compare on the Buddies tab.</div>
+    <div class="devrow" style="margin-top:10px">
+      <input class="lanin" style="min-width:16em" placeholder="Name, e.g. codex"
+        value="${esc(AGNAME)}" oninput="AGNAME=this.value"
+        onkeydown="if(event.key==='Enter')agentCreate()">
+      <button class="devbtn" onclick="agentCreate()" ${AGBUSY?'disabled':''}>
+        ${AGBUSY?'Creating...':'Create agent'}</button>
+    </div>`;
+  if(AGERR)h+=`<div class="lanerr">${esc(AGERR)}</div>`;
+
+  const list=AGENTS||[];
+  h+=`<div class="bsec">Agents on this machine<span class="bnum">${list.length}</span></div>`;
+  if(!list.length){
+    h+=`<div class="lansub budnote">None yet.</div>`;
+  }
+  h+=`<div class="hostpick">`+AGHOSTS.map(([k,label])=>
+      `<button class="chip${AGHOST===k?' on':''}" onclick="AGHOST='${k}';agentRender()">${label}</button>`
+    ).join('')+`</div>`;
+  for(const g of list){
+    const cfg=(g.configs&&g.configs[AGHOST])||'';
+    h+=`<div class="dev">
+      <div class="devtop"><span class="devname">${esc(g.name)}</span>
+        <span class="devtag">${esc(g.handle)}</span></div>
+      <div class="devfp">${esc(g.fingerprint)}</div>
+      <div class="lansub">Identity in <code>${esc(g.home)}</code></div>
+      <div class="lansub" style="margin-top:8px">Point the host at it:</div>
+      <pre class="cfg">${esc(cfg)}</pre>
+      <div class="devrow">
+        <button class="devbtn" onclick="copyText(${JSON.stringify(cfg)})">Copy config</button>
+      </div>
+      <div class="lansub" style="margin-top:10px">To let its messages be accepted
+        without you, put this line in your <code>authority</code> file yourself.
+        Nothing in gage writes that file: a path that grants authority by being
+        asked is one an agent can be talked into asking for.</div>
+      <pre class="cfg">${esc(g.grant)}</pre>
+      <div class="devrow">
+        <button class="devbtn" onclick="copyText(${JSON.stringify(g.grant)})">Copy line</button>
+      </div>
+    </div>`;
+  }
+  h+=`</div>`;
+  box.innerHTML=h;
+}
+
+// Clipboard writes stay behind a press, like the paste button does.
+async function copyText(t){
+  try{ if(navigator.clipboard&&navigator.clipboard.writeText) await navigator.clipboard.writeText(t); }
+  catch(e){ /* The text is on screen and selectable either way. */ }
+}
+
+async function agentLoad(){
+  try{
+    const r=await fetch('/api/agents');
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    AGENTS=(await r.json()).agents||[];
+  }catch(e){ AGERR='Could not read the agent list: '+(e&&e.message?e.message:e); }
+  agentRender();
+}
+
+async function agentCreate(){
+  AGBUSY=true;AGERR='';AGNEW=null;agentRender();
+  try{
+    const r=await fetch('/api/agent',{method:'POST',
+      headers:{'X-Gage':'1','Content-Type':'application/json'},
+      body:JSON.stringify({name:AGNAME.trim()})});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok)throw new Error(j.error||('HTTP '+r.status));
+    AGNAME='';AGNEW=j.name;
+  }catch(e){ AGERR=(e&&e.message)?e.message:String(e); }
+  AGBUSY=false; await agentLoad(); AGNEW=null;
 }
 
 function budRender(force){

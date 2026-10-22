@@ -6,6 +6,7 @@
 //! because agents are invoked rather than online -- presence is the part of
 //! the instant-messenger model that does not transfer.
 
+mod agentcfg;
 mod authority;
 mod autoaccept;
 mod backup;

@@ -494,6 +494,16 @@ fn handle(stream: TcpStream, port: u16) -> std::io::Result<()> {
         // Pasted text in, a key and a suggested name out. It adds NOTHING:
         // the person still has to run the reveal-then-add ceremony on the
         // key, which is the same two steps a buddy request goes through.
+        ("GET", "/api/agents") => respond(stream, "200 OK", "application/json", &agents_json()),
+        ("POST", "/api/agent") => match agent_from_ui(&req.body) {
+            Ok(j) => respond(stream, "200 OK", "application/json", &j),
+            Err(e) => respond(
+                stream,
+                "400 Bad Request",
+                "application/json",
+                &serde_json::json!({ "error": e }).to_string(),
+            ),
+        },
         ("POST", "/api/relay") => match relay_from_ui(&req.body) {
             Ok(lines) => respond(
                 stream,
@@ -629,6 +639,50 @@ fn handle(stream: TcpStream, port: u16) -> std::io::Result<()> {
 /// intercepting. A bare host is refused for the same reason rather than being
 /// silently upgraded, because guessing at a scheme is how an address that
 /// looks checked turns out not to be.
+/// Every agent identity this machine has made, with the text needed to
+/// point a host at it. No private key material: `whoami` returns the public
+/// halves, which the page already shows for the main identity.
+fn agents_json() -> String {
+    let agents: Vec<serde_json::Value> = crate::agentcfg::list()
+        .iter()
+        .map(|a| {
+            serde_json::json!({
+                "name": a.name,
+                "handle": a.handle,
+                "fingerprint": a.fingerprint(),
+                "home": a.home.to_string_lossy(),
+                "configs": crate::agentcfg::configs(a),
+                "grant": crate::agentcfg::grant_line(a),
+            })
+        })
+        .collect();
+    serde_json::json!({ "agents": agents }).to_string()
+}
+
+/// Make an agent identity. The name is the only untrusted thing here and it
+/// becomes a directory, so `agentcfg::name_ok` refuses rather than sanitises.
+fn agent_from_ui(body: &str) -> Result<String, String> {
+    let v: serde_json::Value =
+        serde_json::from_str(body).map_err(|_| "could not read the request".to_string())?;
+    let name = v
+        .get("name")
+        .and_then(|n| n.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let agent = crate::agentcfg::create(&name)?;
+    Ok(serde_json::json!({
+        "ok": true,
+        "name": agent.name,
+        "handle": agent.handle,
+        "fingerprint": agent.fingerprint(),
+        "home": agent.home.to_string_lossy(),
+        "configs": crate::agentcfg::configs(&agent),
+        "grant": crate::agentcfg::grant_line(&agent),
+    })
+    .to_string())
+}
+
 fn relay_from_ui(body: &str) -> Result<Vec<String>, String> {
     let v: serde_json::Value =
         serde_json::from_str(body).map_err(|_| "could not read the request".to_string())?;
