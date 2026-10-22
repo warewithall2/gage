@@ -115,6 +115,66 @@ one. What actually informs the reader is the verdict printed beside it —
 is open and not taken: grade the display budget by trust, so an unconfirmed
 sender gets far less room than a confirmed one.
 
+## "Memory-safe because Rust" would be an overclaim
+
+Added 22 October 2026, the day PHP2Shell was patched — two use-after-frees
+and an OPcache type confusion in PHP's core engine (CVE-2026-109618,
+CVE-2026-109619, CVSS 9.2), pre-authentication RCE on WordPress, Drupal and
+Joomla, affecting every PHP release back to 5.4. Found by three
+model-assisted research teams, not by an attacker.
+
+**Nothing about that class touches gage**, which is not an interpreter and
+does not parse multipart requests. The relevance is the other direction: the
+same tooling that found decade-old memory corruption in the most deployed
+runtime on earth will be pointed at everything else, and gage is not
+exempt.
+
+So, the honest inventory rather than the comfortable sentence:
+
+    76 unique crates in the dependency tree
+    ring v0.17.14   -- C and hand-written assembly
+    cc, libc        -- present
+    aws-lc-sys      -- absent, deliberately (see Cargo.toml)
+    openssl-sys     -- absent
+
+gage's own code is Rust, and its TLS and crypto primitives bottom out in C
+and assembly through `ring`. That is a reasonable choice and the manifest
+explains it. It is not the same as "memory-safe", and a security tool should
+not let a reader round it up to that.
+
+The related discipline already in the manifest — five new crates rather than
+seventeen, no primitive at two versions — is the thing that actually bounds
+this, and it reads better in October than it did when it was written.
+
+### What the first dependency audit found
+
+`cargo audit` was run against the tree for the first time on 22 October 2026,
+in the same hour as the above. It found two advisories, **both published that
+week**, and both in the one area where this project's dependencies do
+security-relevant work:
+
+| Advisory | Crate | What |
+|---|---|---|
+| RUSTSEC-2026-0382 (20 Oct) | `rustls-webpki` 0.103.15 | certificate verification may accept distrusted intermediates |
+| RUSTSEC-2026-0381 (19 Oct) | `webpki-roots` 1.0.9 | bundled roots allow trust in distrusted emSign intermediates |
+
+Fixed by moving to `rustls-webpki` 0.103.16 and `webpki-roots` 1.0.10, which
+is a lockfile change and nothing else.
+
+**What was actually at risk, stated honestly.** Bundle payloads are sealed to
+the recipient's box key, so TLS here is defence in depth rather than the thing
+keeping contents private — `docs/spec.md` and the README's relay section both
+say TLS is present *despite* the payload being sealed. What a bad certificate
+chain would have exposed is the relay protocol and its metadata: which
+mailbox, how often, how large. That is worth protecting and is not the same
+as "the payload was at risk".
+
+**The lesson is the cadence, not the bugs.** Both advisories were days old.
+Nobody had run an audit before because the dependency list is short and
+hand-justified, which is exactly the reasoning that makes a tree feel safe
+without being checked. `cargo audit` is cheap and this project does not
+currently run it anywhere.
+
 ## Known gaps, named
 
 - **Send-side restraint does not exist.** The authority file governs what an
