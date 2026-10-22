@@ -39,10 +39,13 @@ Worth stating first, because most of the confusion lives here.
   stick, a LAN handoff or the relay. "Not a protocol" is the reason it works
   across vendors at all. If A2A is the transport, good — that is one more way a
   bundle can move.
-- **Not a registry or a discovery mechanism.** gage has no directory of agents,
-  no capability advertisement, no `/.well-known/` anything. Its buddy list is
-  deliberately local, small, and populated by a human act. A2A's Agent Cards
-  are discovery, which gage has no story for and wants none.
+- **Not a trusted registry, and not a CA.** gage has no capability
+  advertisement and no `/.well-known/` anything, and no directory anywhere may
+  confer trust: the buddy list is local, small, and populated by a human act.
+  A directory that is *untrusted by construction* is a different object and is
+  not ruled out — see [A directory, and the line it may not
+  cross](#a-directory-and-the-line-it-may-not-cross) below, which revises an
+  earlier flat "wants none".
 - **Not an identity provider or a CA.** No issuance, no attestation, no
   revocation service. A fingerprint binds a key to a human *you already know by
   other means*, confirmed out of band.
@@ -93,6 +96,57 @@ So: an Agent Card could usefully *carry* a gage public key, the way it carries
 other metadata. It could not replace the confirmation step, and a gage
 implementation that trusted a key because it arrived in a card would have
 thrown away the only thing gage does.
+
+### A directory, and the line it may not cross
+
+An earlier version of this document said gage wanted no directory at all. That
+was too flat, and it conflated two things that need separating, because one of
+them is fatal to the model and the other is an address book.
+
+**What a directory may not do:** confer trust. A service that answers "this key
+is really Alice" is an identity provider, and taking its word for it is exactly
+the step the word-pair ceremony exists to replace. No amount of signing by the
+directory fixes this, because the question the ceremony answers — *is the key
+on your screen the key on mine* — is one the directory is not a party to.
+
+**What a directory may do:** answer *where*, and carry an unconfirmed *claim*.
+
+- **Where.** "The handle `owen` has a mailbox at this relay." Delivery routing,
+  nothing more. A compromised directory sends an envelope to the wrong place,
+  and the envelope is sealed to a key it does not hold, so it learns nothing.
+- **A claim to be confirmed.** "Somebody publishing as `owen` offers this key."
+  That is the same status as a key pasted into a chat window: a candidate for
+  the ceremony, never a result of one. The compare still happens, the
+  word-pairs still have to match on both screens, and a key that arrives from a
+  directory gets no shortcut that a key arriving any other way would not.
+
+The test for any directory feature is a single question: **if the directory
+were wholly hostile, what changes?** The answers that are acceptable are
+"delivery fails", "delivery goes somewhere it cannot be read", and "a human is
+offered a key that fails the compare". The answer that is not acceptable is
+"a key is trusted that should not have been". Anything that produces the last
+answer is an identity provider wearing a directory's clothes.
+
+This is a real narrowing of what the project is, and it is written down here
+rather than discovered later in an implementation: a namespace is the one piece
+of a system like this that genuinely cannot be self-hosted, since a name is only
+useful if others resolve it the same way. That makes it the natural place for a
+service to exist, which is a commercial fact as much as a technical one, and
+saying so plainly is better than letting the architecture drift toward it
+unannounced.
+
+The properties any gage directory has to keep, stated so a future
+implementation can be held to them:
+
+1. The word-pair compare remains the only thing that moves a key onto a list.
+2. A key from the directory is marked as unconfirmed and renders as such.
+3. Nothing the directory publishes is an input to `Contacts::verdict`.
+4. The directory can be run by someone else, or not used at all, and everything
+   except discovery still works.
+
+Property 4 is the one that keeps the rest honest. A feature that only works
+against one operator's directory has made that operator a trusted party no
+matter what the other three say.
 
 ### Receiver-computed trust versus transport authentication
 
