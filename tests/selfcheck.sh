@@ -103,6 +103,55 @@ case "$E2E" in
   *)                   fail "viewer end-to-end: $E2E" ;;
 esac
 
-say "OK: $NC checks, $NU unit tests, $ND restore-drill checks, viewer $E2ESTATE, at $HEAD"
-printf 'ok\t%s\t%s\t%s checks, %s unit tests, %s restore-drill checks, viewer %s\n' \
-  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$HEAD" "$NC" "$NU" "$ND" "$E2ESTATE" > "$STATUS"
+# Dependency advisories. LAST on purpose: `fail` exits on the first stage
+# that breaks, so an advisory published this morning must not be allowed to
+# mask a real test regression. By the time this runs, everything this machine
+# can prove about its own code has already been proved.
+#
+# Added 22 October 2026, after the first `cargo audit` this project ever ran
+# found two advisories that were three and four days old -- both in
+# certificate verification. Nobody had audited because the dependency list is
+# short and hand-justified in the manifest, which is exactly the reasoning
+# that makes a tree feel safe without anybody checking it. A short list
+# bounds exposure; it does not tell you when one of them is announced
+# vulnerable.
+#
+# Skipping is not failing, and a skip is SAID -- the same rule the four
+# certificate checks in the attack suite follow. Silently passing a security
+# check that did not run is the shape of mistake this file exists to prevent.
+say "dependency advisories..."
+AUDIT=""
+if command -v cargo-audit >/dev/null 2>&1; then
+  AUDIT=cargo-audit
+elif [ -x "$HOME/.cargo/bin/cargo-audit" ]; then
+  AUDIT="$HOME/.cargo/bin/cargo-audit"
+fi
+if [ -z "$AUDIT" ]; then
+  DEPSTATE="skipped"
+  say "  SKIP: cargo-audit is not installed, so dependencies were NOT checked"
+  say "        cargo install cargo-audit"
+else
+  AOUT=$("$AUDIT" audit 2>&1); ARC=$?
+  printf '%s\n' "$AOUT" >> "$LOG"
+  if [ "$ARC" -eq 0 ]; then
+    DEPSTATE="ok"
+  elif printf '%s\n' "$AOUT" | grep -qiE 'vulnerabilit(y|ies) found'; then
+    # A real finding fails the run, which is the whole point: it is how you
+    # hear about it within a day instead of never. If an advisory has no fix
+    # available yet and this would otherwise stay red, that is what
+    # `.cargo/audit.toml`'s ignore list is for -- a deliberate, recorded
+    # decision rather than a check nobody runs.
+    say "$(printf '%s\n' "$AOUT" | grep -E '^(Crate|ID|Title|Solution):' | head -20)"
+    fail "dependency advisories: $(printf '%s\n' "$AOUT" | grep -iE 'vulnerabilit(y|ies) found' | tail -1)"
+  else
+    # Non-zero for a reason that is not a finding -- almost always that the
+    # advisory database could not be fetched. Reported as a skip with its
+    # reason, never as a pass.
+    DEPSTATE="skipped"
+    say "  SKIP: could not check dependencies: $(printf '%s\n' "$AOUT" | tail -1)"
+  fi
+fi
+
+say "OK: $NC checks, $NU unit tests, $ND restore-drill checks, viewer $E2ESTATE, deps $DEPSTATE, at $HEAD"
+printf 'ok\t%s\t%s\t%s checks, %s unit tests, %s restore-drill checks, viewer %s, deps %s\n' \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$HEAD" "$NC" "$NU" "$ND" "$E2ESTATE" "$DEPSTATE" > "$STATUS"

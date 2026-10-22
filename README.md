@@ -1391,6 +1391,26 @@ It preflights the ports the suite binds, because a stray `gage ui` once caused
 28 failures that looked like real defects. Both failure paths were verified by
 causing them: an occupied port, and a deliberately broken verdict label.
 
+**It also checks the dependency tree for published advisories**, as its last
+stage, with `cargo audit`. Last on purpose: the script exits on the first
+stage that breaks, and an advisory published this morning must not be allowed
+to mask a real test regression. A finding fails the run, which is how you hear
+about one within a day instead of never; if an advisory has no fix yet,
+`.cargo/audit.toml`'s ignore list is the place to record that decision rather
+than leaving the check switched off.
+
+Without `cargo-audit` installed, or with the advisory database unreachable, it
+**says it skipped** and the status line reads `deps skipped` — the same rule
+the certificate checks follow, because silently passing a security check that
+did not run is the shape of mistake this file exists to prevent.
+
+This stage exists because the first audit this project ever ran, on 22
+October 2026, found two advisories that were three and four days old, both in
+certificate verification. Nobody had checked, because the dependency list is
+short and hand-justified in the manifest — which is exactly the reasoning
+that makes a tree feel safe without anybody looking. A short list bounds
+exposure; it does not tell you when one of them is announced vulnerable.
+
 To stop it:
 
     systemctl --user disable --now ctx-selfcheck.timer         # Linux
