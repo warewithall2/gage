@@ -1,0 +1,25 @@
+<!-- The app icon: the mark on a tile.
+     The rounded rect is drawn here rather than left to the OS, because macOS
+     does not round a supplied icon. An unrounded square is the giveaway of an
+     app that was packaged without anybody looking at the dock.
+     Corner radius is 22.37% of the side, the squircle proportion Apple's own
+     icons use closely enough that it does not read as wrong beside them.
+     The mark is scaled and nudged so its visual centre, not its bounding
+     box, sits in the middle of the tile. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1D6E47"/>
+      <stop offset="1" stop-color="#0E3A28"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="114.5" ry="114.5" fill="url(#tile)"/>
+  <g transform="translate(256,256) scale(1.25) translate(-256,-272.5)"
+     color="#F4F1E8">
+    <g fill="none" stroke="currentColor" stroke-linecap="round">
+      <path d="M 340.85 374.85 A 120 120 0 1 0 171.15 374.85" stroke-width="34"/>
+      <path d="M 256 290 L 310.5 212.2" stroke-width="30"/>
+    </g>
+    <circle cx="256" cy="290" r="17" fill="currentColor"/>
+  </g>
+</svg>

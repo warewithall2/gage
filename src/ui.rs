@@ -351,6 +351,9 @@ fn handle(stream: TcpStream, port: u16) -> std::io::Result<()> {
     // filesystem lookup, so there is no path to traverse.
     match (method, target) {
         ("GET", "/") => respond(stream, "200 OK", "text/html; charset=utf-8", INDEX),
+        // The tab icon. Served rather than inlined as a data URI so the
+        // artwork stays one file that the icon script and the page share.
+        ("GET", "/favicon.svg") => respond(stream, "200 OK", "image/svg+xml", FAVICON),
         ("GET", "/api/state") => respond(stream, "200 OK", "application/json", &state_json()),
         ("GET", "/api/threads") => respond(stream, "200 OK", "application/json", &threads_json()),
         ("POST", t) if t.starts_with("/api/read/") => {
@@ -1742,6 +1745,7 @@ fn threads_json() -> String {
 }
 
 const INDEX: &str = include_str!("ui.html");
+const FAVICON: &str = include_str!("../packaging/icon/gage-icon.svg");
 
 #[cfg(test)]
 mod tests {

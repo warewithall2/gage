@@ -1,0 +1,12 @@
+<!-- The gage mark: a dial open at the bottom, with a needle.
+     Drawn from one circle and one line so that it survives being 16px wide
+     in a browser tab, which is the size it will most often be seen at.
+     `currentColor` so the same file serves the dark tile, the light tile and
+     the viewer's own text colour without a second copy. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="gage">
+  <g fill="none" stroke="currentColor" stroke-linecap="round">
+    <path d="M 340.85 374.85 A 120 120 0 1 0 171.15 374.85" stroke-width="34"/>
+    <path d="M 256 290 L 310.5 212.2" stroke-width="30"/>
+  </g>
+  <circle cx="256" cy="290" r="17" fill="currentColor"/>
+</svg>
