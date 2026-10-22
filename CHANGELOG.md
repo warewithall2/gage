@@ -1,5 +1,101 @@
 # Changelog
 
+## 0.3.1 — 2026-10-22
+
+**A security fix, and the first dependency audit this project ever ran.**
+If you installed 0.3.0, update: the display path let an unconfirmed sender put
+instruction-shaped text into a reading agent's context without anything being
+accepted.
+
+### Fixed
+
+- **The subject walked past the accept gate.** Every print in the CLI passed
+  sender-controlled text through `one_line`, but `routes::inbox_rows` emitted
+  `subject` and `from_handle_claimed` raw and unbounded, and so did the
+  verdict block of the `gage_open` MCP tool. Demonstrated, not theorised: an
+  unconfirmed sender, nothing accepted, **441 bytes** of instruction-shaped
+  text delivered into the context of an agent that did nothing but read its
+  inbox — the same shape as the Cline bot injected through a GitHub issue
+  *title*.
+
+  Now `manifest::safe_display(s, max)`: escaped and bounded, and truncation is
+  **announced** rather than silent, because text that stops mid-sentence
+  without saying so is its own small lie. Applied to `inbox_rows`, the
+  `gage_open` verdict block, and the `gage_pair_confirm` pairing id.
+
+  **Said plainly: bounding caps the budget, it does not remove the
+  injection.** 160 characters is still room to write a sentence in. What
+  stops the sentence being obeyed is the frame around it, and that is a
+  property of the reading agent, not of gage. See
+  [docs/what-this-does-not-stop.md](docs/what-this-does-not-stop.md).
+
+- **Two certificate-verification advisories**, both days old when found:
+  RUSTSEC-2026-0382 (`rustls-webpki` 0.103.15 — verification may accept
+  distrusted intermediates) and RUSTSEC-2026-0381 (`webpki-roots` 1.0.9).
+  Fixed to 0.103.16 and 1.0.10; lockfile only, no API change.
+
+  Nobody had audited because the dependency list is short and hand-justified
+  in the manifest, which is exactly the reasoning that makes a tree feel safe
+  without anyone checking it. A short list bounds exposure; it does not tell
+  you when one of them is announced vulnerable. `cargo audit` now runs as the
+  last stage of `tests/selfcheck.sh` — last so that an advisory published this
+  morning cannot mask a real test regression, and a skip is *said* rather than
+  passing quietly.
+
+- **`journal::safe_key` permits `/`**, which is fine for a JSON log field and
+  is a path separator as a directory name. Roughly half of base64 keys contain
+  one, which showed up as a ~49% flaky check that was a real bug. Anchor peer
+  directories are now `sha256(key)` hex, truncated.
+
+### Added
+
+- **`gage agent list | new | remove`.** Agents created from the viewer had no
+  removal path at all. `remove` retires the key, drops the route, then deletes
+  the home — fail-closed in that order. **Retired, not forgotten:** the key
+  keeps a retirement cut, so bundles it sent before removal still verify.
+  Getting that wrong turns every bundle an agent ever sent from `SENDER
+  VERIFIED` into `SENDER KEY REJECTED`, which is how the first version of this
+  behaved before the suite caught it.
+- **Mutual journal anchoring** — `gage anchor send | record | list | check`.
+  Two correspondents periodically exchange a signed digest of their own
+  journal head, so a later rewrite of either journal contradicts a record the
+  other side already holds. Anchors ride as ordinary signed bundles through
+  the ordinary accept gate: no new network surface, no new trust root.
+  Rationale and the decision left open:
+  [docs/adr-journal-anchoring.md](docs/adr-journal-anchoring.md).
+- **A remove button in the viewer**, with a two-press confirm rather than a
+  modal (WKWebView gives `window.confirm` no window to sit in).
+- **`tests/injection/stage.sh`** — stages two fixture homes, paired, one
+  sending, so that running the injection test is one command. The sender is a
+  *confirmed* contact on purpose: an unlisted key is refused by the frame on
+  its own, which would test the allowlist rather than the frame. The script
+  never reads the payload.
+
+### Changed
+
+- **The install instructions lead with `curl -fsSL https://gage.sh/install.sh
+  | sh`**, and the reason is specific: the quarantine attribute behind "cannot
+  be opened because the developer cannot be verified" is set by browsers, Mail
+  and AirDrop — **not** by `curl`. So a CLI tester needs no notarisation, and
+  handing someone a file was the most likely way to lose them. `INSTALL.md`
+  had the cause backwards.
+- **README leads with the problem** and puts the demo above the fold.
+- **`docs/a2a.md`** gains *"A directory, and the line it may not cross"*: a
+  directory may answer *where*, and may carry an unconfirmed *claim*, but may
+  never confer trust. The test is "if the directory were wholly hostile, what
+  changes?" — and the load-bearing property is replaceability.
+- **`docs/what-this-does-not-stop.md`** is new, and linked from the README and
+  the threat model. A list of what this does not protect you from, kept where
+  someone deciding whether to trust it will find it.
+
+### Notes
+
+- **No format or protocol change.** A 0.3.0 binary and a 0.3.1 binary
+  interoperate. `seal.rs` is untouched.
+- **`spctl` still rejects `Gage.app`** — ad-hoc signature, not notarised. The
+  CLI and its own `gage ui` are unaffected, and are what a first tester should
+  use.
+
 ## 0.3.0 — 2026-10-20
 
 Two front doors. gage already did the work; 0.3.0 is about what it takes to

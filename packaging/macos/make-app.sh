@@ -34,7 +34,7 @@ cat > "$CONTENTS/Info.plist" <<'PLIST'
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
   <key>CFBundleVersion</key><string>1</string>
-  <key>CFBundleShortVersionString</key><string>0.3.0</string>
+  <key>CFBundleShortVersionString</key><string>0.3.1</string>
   <!-- Without this key the dock ignores Resources/Gage.icns entirely, which
        is how the app shipped with artwork that was never going to appear.
        No extension: the value names the file, and macOS adds .icns. -->

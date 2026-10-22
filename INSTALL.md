@@ -38,21 +38,21 @@ their machine:
 
 | their machine | file |
 |---|---|
-| Mac, Apple silicon (M1–M4) | `gage-0.3.0-darwin-arm64` |
-| Linux, 64-bit Intel/AMD | `gage-0.3.0-linux-x86_64` |
+| Mac, Apple silicon (M1–M4) | `gage-0.3.1-darwin-arm64` |
+| Linux, 64-bit Intel/AMD | `gage-0.3.1-linux-x86_64` |
 
 Send the matching line from `dist/SHA256SUMS` too, over a *different* channel
 from the binary — a text message if you emailed the file. That is the same
 idea as the word-pairs below: one channel can be tampered with, two is harder.
 They check it with:
 
-    shasum -a 256 gage-0.3.0-darwin-arm64      # macOS
-    sha256sum gage-0.3.0-linux-x86_64          # Linux
+    shasum -a 256 gage-0.3.1-darwin-arm64      # macOS
+    sha256sum gage-0.3.1-linux-x86_64          # Linux
 
 Then:
 
-    chmod +x gage-0.3.0-*
-    mkdir -p ~/.local/bin && mv gage-0.3.0-* ~/.local/bin/gage
+    chmod +x gage-0.3.1-*
+    mkdir -p ~/.local/bin && mv gage-0.3.1-* ~/.local/bin/gage
     gage --version
 
 macOS will refuse to run it the first time, because it arrived over a channel
