@@ -328,5 +328,17 @@ want "$T/bundle/Gage.app/Contents/Info.plist" "sh.gage.app"
 want "$T/bundle/Gage.app/Contents/Info.plist" "13.0"
 [ -x "$T/bundle/Gage.app/Contents/MacOS/gage-launcher" ] && ok || bad "launcher missing executable bit in bundle"
 
+# The app shipped for three days with a zero-byte Gage.icns and no
+# CFBundleIconFile key, so the dock showed a generic document and nothing
+# said why. Both halves are checked: an icon the plist does not name is
+# invisible, and a named icon that is empty is worse than none, because the
+# bundle looks finished.
+echo "the bundle declares an icon and the icon is a real icns"
+want "$T/bundle/Gage.app/Contents/Info.plist" "CFBundleIconFile"
+if [ -s "$T/bundle/Gage.app/Contents/Resources/Gage.icns" ]; then ok
+else bad "Gage.icns is missing or empty, so the dock falls back to a generic icon"; fi
+if head -c 4 "$T/bundle/Gage.app/Contents/Resources/Gage.icns" 2>/dev/null | grep -q '^icns$'
+then ok; else bad "Gage.icns does not start with the icns magic"; fi
+
 echo "$pass checks, $fail failed"
 [ "$fail" -eq 0 ]
