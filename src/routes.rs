@@ -312,9 +312,17 @@ pub fn inbox_rows(all: bool) -> Vec<serde_json::Value> {
         .map(|(_, l)| {
             serde_json::json!({
                 "stage": "pending",
-                "id": l.manifest.id,
-                "subject": l.manifest.subject,
-                "from_handle_claimed": l.manifest.from.handle,
+                "id": crate::manifest::safe_display(&l.manifest.id, 80),
+                // Escaped and bounded, because these three are the ONLY
+                // sender-chosen strings in this row and this row is read by
+                // an agent. See `manifest::safe_display`: an unlisted sender
+                // whose bundle nobody has accepted still reaches a reading
+                // agent here, since listing an inbox is not accepting
+                // anything. The payload stays behind the accept gate; the
+                // subject was walking past it.
+                "subject": crate::manifest::safe_display(&l.manifest.subject, 160),
+                "from_handle_claimed":
+                    crate::manifest::safe_display(&l.manifest.from.handle, 80),
                 "from_key": l.manifest.from.key,
                 "trust": l.trust.label(),
                 "forwarded": l.manifest.is_forwarded(),
@@ -326,8 +334,8 @@ pub fn inbox_rows(all: bool) -> Vec<serde_json::Value> {
         .chain(accepted.iter().map(|(_, l)| {
             serde_json::json!({
                 "stage": "accepted",
-                "id": l.manifest.id,
-                "subject": l.manifest.subject,
+                "id": crate::manifest::safe_display(&l.manifest.id, 80),
+                "subject": crate::manifest::safe_display(&l.manifest.subject, 160),
                 "from_key": l.manifest.from.key,
                 "trust": l.trust.label(),
             })

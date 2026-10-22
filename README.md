@@ -54,6 +54,16 @@ tool calls, verified at the server that executes them. See
 *reading* a message is told about it, in the seconds before it decides what to
 do.
 
+**What it does NOT stop:**
+[docs/what-this-does-not-stop.md](docs/what-this-does-not-stop.md) answers the
+2026 agent-security incidents one at a time — Cursor's sandbox escape, the
+coding agents that leaked their own keys to a PR title, the Cline bot that
+shipped a backdoored release off a GitHub issue title — and the answer for
+every one of them is **no, gage would not have prevented that**. They arrived
+over the web, a pull request, an issue tracker, an email, a package registry.
+gage is one channel between two parties who confirmed each other's keys. The
+same file carries the MCP server audit and the one hole it found.
+
 **The wire reality and the limits:** [docs/spec.md](docs/spec.md) is what is
 actually on disk and on the network — the bundle layout, what is signed, how a
 receiver computes trust, the relay protocol — derived from the code rather than

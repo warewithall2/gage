@@ -1,5 +1,10 @@
 # gage — threat model
 
+> **Companion file:** [what-this-does-not-stop.md](what-this-does-not-stop.md)
+> does this concretely — the public agent-security incidents of 2026, named,
+> with an honest answer for each, plus the MCP server audit. This file is the
+> abstract version; that one is the one a sceptic should read first.
+
 For **v0.1.0**. Written to be argued with: if a mitigation below does not hold,
 that is a bug report, and the non-goals are there so nobody has to discover
 them the hard way.
