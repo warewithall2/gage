@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.3.2 — unreleased
+## 0.3.2 — 2026-10-23
 
 **The send journal.** `gage sent` answers "what has this machine sent, and to
 whom?" — after the fact, which is the only thing a local log can honestly do
