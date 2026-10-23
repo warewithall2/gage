@@ -335,6 +335,22 @@ want "$T/bundle/Gage.app/Contents/Info.plist" "13.0"
 # bundle looks finished.
 echo "the bundle declares an icon and the icon is a real icns"
 want "$T/bundle/Gage.app/Contents/Info.plist" "CFBundleIconFile"
+
+# The bundle shipped as 0.3.1 with a 0.3.2 binary inside it, because the
+# version was written into make-app.sh by hand and a release bumped
+# Cargo.toml without it. Asserted against what the BINARY says rather than
+# against a literal, so this check cannot drift the same way the thing it
+# guards did.
+echo "the bundle advertises the version its own binary reports"
+PKG_V=$("$T/bundle/Gage.app/Contents/MacOS/gage" --version 2>/dev/null \
+        | sed -n 's/^gage \([0-9][0-9.]*\).*/\1/p')
+if [ -n "$PKG_V" ]; then
+  want "$T/bundle/Gage.app/Contents/Info.plist" "<string>$PKG_V</string>"
+else
+  # Not a pass: on a machine that cannot run the bundled binary the check did
+  # not happen, and saying nothing would look like it had.
+  echo "  SKIP: the bundled binary would not run here, so the version was NOT checked"
+fi
 if [ -s "$T/bundle/Gage.app/Contents/Resources/Gage.icns" ]; then ok
 else bad "Gage.icns is missing or empty, so the dock falls back to a generic icon"; fi
 if head -c 4 "$T/bundle/Gage.app/Contents/Resources/Gage.icns" 2>/dev/null | grep -q '^icns$'
