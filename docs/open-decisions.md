@@ -293,7 +293,12 @@ Two things remain the owner's, and both are smaller than the decision was:
   safe at all. Hiding it needs a shared secret per contact, which is a
   different design.
 
-## 9. Restraint on the sending side
+## 9. Restraint on the sending side — DECIDED 22 Oct
+
+**Pairing stays end-to-end; build the send journal; no rate ceiling.** The
+consequence, written down so nobody rebuilds on it: *no recipient-side
+restraint will be built at all*, because every one of them is enforced against
+a contact list the agent can write itself. Detection, not prevention.
 
 Everything gage does governs what an agent *accepts*. Nothing governs *who* it
 sends to, or *how much* — and the control anyone would reach for first, "only

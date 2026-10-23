@@ -1,8 +1,25 @@
 # ADR: restraint on the sending side
 
-**Status: open. Nothing built.** Written because the gap was named in
-conversation as the largest one left, and because the first thing an ADR
-should do is find out whether the gap is the shape people assume.
+**Status: decided 22 Oct. Owner answered all three questions.**
+
+1. **The MCP pairing flow stays end-to-end.** The contact list remains
+   agent-writable, knowingly.
+2. **Build the send journal.** Detection is accepted where prevention is not
+   available locally.
+3. **Keep refusing to overclaim.** No rate ceiling for the README.
+
+The consequence of (1) is the important one and is stated here rather than
+left to be rediscovered: **no recipient-side restraint will be built, because
+none of them can mean anything.** An allowlist, a first-contact gate or a
+"confirmed contacts only" rule is enforced against `trust::Contacts`, and an
+agent can write that file itself in two tool calls. Shipping one would be
+security theatre, and this project's whole claim is that it does not do that.
+What the send journal buys is therefore the honest thing and the only thing:
+**what left is answerable afterwards.** Nothing here stops it leaving.
+
+Written because the gap was named in conversation as the largest one left, and
+because the first thing an ADR should do is find out whether the gap is the
+shape people assume.
 
 It is not. The outbound path already refuses things. What it does not have is
 any notion of *who* or *how much* — and underneath that sits a structural
@@ -181,6 +198,10 @@ as a control, which is the overclaim this project keeps refusing to make.
 
 ## What I would do, and why
 
+*(Recorded as written before the decision above, which went the other way on
+option 0. Left unedited: an ADR that quietly rewrites its recommendation to
+match the outcome is a record of nothing.)*
+
 **Option 0, then option 4, and nothing else yet.**
 
 0 because every other option on this list is enforced against a value the
@@ -211,4 +232,18 @@ Three questions, and none of them is technical:
    project keeps refusing to overclaim. A ceiling that catches loops would
    look better in a README than a send journal does, and would protect less.
 
-Written 22 October 2026. No code.
+## What the decision means in practice
+
+- **Option 0 — not taken.** `gage_pair_confirm` keeps writing to the contact
+  list. The threat model already says why that echo is a checkpoint and not a
+  proof; what is new is that this ADR now also says what it *costs*, so nobody
+  later builds a recipient control on top of it believing it holds.
+- **Options 1, 2 and 3 — not taken, and not deferred.** They are ruled out by
+  (1), not merely unscheduled. Reopening any of them requires reopening the
+  pairing decision first.
+- **Option 4 — build it.** A `Sent` event in the journal and a way to read it
+  back. The journal is locally rewritable like every other local file, so this
+  inherits the limit the anchoring ADR states, and anchoring is what covers
+  it.
+
+Written 22 October 2026. Decided the same day.
