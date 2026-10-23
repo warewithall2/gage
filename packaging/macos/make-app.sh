@@ -22,14 +22,22 @@ cp "$SOURCE" "$MACOS/gage"
 cp "$(dirname "$0")/gage-launcher" "$MACOS/gage-launcher"
 chmod 755 "$MACOS/gage" "$MACOS/gage-launcher"
 
-# The version the bundle advertises is ASKED OF THE BINARY, never written
+# The version the bundle advertises is READ FROM Cargo.toml, never written
 # here. It was written here, and on 23 October the app shipped as 0.3.1 with a
 # 0.3.2 binary inside it, because a release bumped Cargo.toml and nobody
 # remembered this file. A version string kept in two places is a version
 # string that is wrong in one of them, and the half that is wrong is always
 # the one a person reads in Finder.
-VERSION=$("$SOURCE" --version 2>/dev/null | sed -n 's/^gage \([0-9][0-9.]*\).*/\1/p')
-[ -n "$VERSION" ] || { echo "the binary did not report a version: $SOURCE" >&2; exit 1; }
+#
+# Read, not executed. The first version of this fix ran `"$SOURCE" --version`,
+# which is the obvious way to ask and the wrong one twice over: a packaging
+# script should not execute the thing it is packaging, and the packaging
+# suite hands this script a stub whose catch-all branch is `exec sleep 600`.
+# The build hung for ten minutes, failed the version check, never reached the
+# icon step, and six checks went red on both machines.
+MANIFEST="$(dirname "$0")/../../Cargo.toml"
+VERSION=$(sed -n 's/^version *= *"\(.*\)"/\1/p' "$MANIFEST" 2>/dev/null | head -1)
+[ -n "$VERSION" ] || { echo "no version in $MANIFEST" >&2; exit 1; }
 
 cat > "$CONTENTS/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
