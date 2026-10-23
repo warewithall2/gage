@@ -30,9 +30,16 @@
   --w1:400; --w2:550; --w3:680;
   /* Space: a 4px base. */
   --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:24px; --s6:32px; --s7:48px;
-  /* Radius: small controls, cards, pills. */
+  /* Radius: small controls, cards, pills. Three, and a circle is the pill
+     taken to its limit rather than a fourth value spelled `50%`. */
   --r1:6px; --r2:10px; --r3:999px;
   --r:var(--r2);
+  /* One rail width, fixed. It used to be minmax(348px,clamp(348px,26vw,440px))
+     -- three numbers for one column, and the column that grew was the one
+     holding the narrowest content on the page. */
+  --rail:320px;
+  /* One reading measure. There were three: 58ch, 62ch and a 760px column. */
+  --measure:62ch;
 
   --bg:#fbfaf8; --sheet:#ffffff; --sunk:#f3f1ec; --line:#e7e3dc; --line2:#d6d1c7;
   --fg:#191815; --dim:#5b5751; --faint:#8b867d;
@@ -86,57 +93,63 @@ button{background:none;border:0;cursor:pointer}
 .state,.ty,.tag,.verdict,.bsec,.lanhead{font-size:var(--t1);letter-spacing:.07em;
   text-transform:uppercase;font-weight:var(--w3)}
 
-/* The rail holds the one thing that truncates -- subject lines -- so it is
-   allowed to grow with the window instead of staying at 348px while the
-   message column keeps its reading measure and the surplus goes to margin. */
-.app{display:grid;grid-template-columns:minmax(348px,clamp(348px,26vw,440px)) 1fr;
-  height:100dvh}
-/* Buddies is a page, not a sidebar. Every card in it asks a question and
-   shows a word-pair that a person compares character by character, and the
-   rail was the one column that could not grow -- so the cards were wrapping
-   to six lines in 348px while the prose explaining them had the wide pane.
-   The tab takes the whole width and lays the cards out in as many columns
-   as the window affords. */
-.app.buds{grid-template-columns:1fr}
-.app.buds .left{display:none}
+/* One shell, three tabs. The tab bar is a strip across the top rather than a
+   block inside the rail, so no tab can take the whole window and leave the
+   person with a "<- Conversations" button where the navigation used to be.
+   Under it the window is always the same two columns: a narrow rail that
+   holds whatever this tab needs kept in view, and a pane that gets every
+   remaining pixel.
+
+   Rows: bar, the stale banner (zero-height until there is one), content. */
+.app{display:grid;grid-template-columns:var(--rail) 1fr;
+  grid-template-rows:auto auto 1fr;height:100dvh}
+.topbar{grid-column:1/-1;grid-row:1;display:flex;align-items:center;gap:var(--s3);
+  padding:var(--s3) var(--s4);border-bottom:1px solid var(--line);background:var(--sheet)}
+.stale{grid-column:1/-1;grid-row:2}
+.left{grid-column:1;grid-row:3}
+.right{grid-column:2;grid-row:3}
 @media (max-width:880px){
   .app{grid-template-columns:1fr}
+  .left,.right{grid-column:1;grid-row:3}
   .right{display:none}
   .app.detail .left{display:none}
   .app.detail .right{display:flex}
-  /* Buddies hides the rail at every width, and under 880px the pane is
-     hidden too unless a thread is open -- which showed an empty window with
-     no control to leave it, because the tabs are in the rail and the back
-     button is in the pane. Buddies is one pane here, like a thread is. */
-  .app.buds .right{display:flex}
+  /* Under 880px the window is one column, so the rail and the pane stack
+     instead of sitting side by side. The rail is capped rather than hidden:
+     on Buddies it holds the QR, which is the thing this screen exists to
+     hand to somebody else. */
+  .app.buds{grid-template-rows:auto auto minmax(0,auto) minmax(0,1fr)}
+  .app.buds .left{grid-row:3;max-height:48dvh;border-right:0;
+    border-bottom:1px solid var(--line)}
+  .app.buds .right{grid-row:4;display:flex}
 }
 
 /* ---------- rail ---------- */
 .left{border-right:1px solid var(--line);background:var(--sheet);
-  display:flex;flex-direction:column;min-height:0}
-.brand{display:flex;align-items:center;gap:var(--s3);padding:var(--s5) var(--s5) var(--s4)}
+  display:flex;flex-direction:column;min-height:0;min-width:0}
 /* The mark, on the same tile the app icon uses, so the thing in the dock and
    the thing at the top of the rail are recognisably one product. Square now
    that it holds a glyph rather than the word. */
-.logo{width:28px;height:28px;border-radius:8px;flex:none;
+.logo{width:var(--s6);height:var(--s6);border-radius:var(--r1);flex:none;
   display:grid;place-items:center;background:var(--accent);color:var(--accent-ink)}
-.logo svg{width:20px;height:20px;display:block}
+.logo svg{width:var(--s5);height:var(--s5);display:block}
 .wordmark{font-weight:var(--w3);font-size:var(--t4);letter-spacing:-.01em}
 .whoami{margin-left:auto;text-align:right;min-width:0}
 .whoami .h{font-size:var(--t2);font-weight:var(--w2);color:var(--dim)}
 .whoami .k{font-family:var(--mono);font-size:var(--t1);color:var(--faint)}
 
-.tabs{display:flex;gap:var(--s1);padding:0 var(--s5) var(--s3)}
+.tabs{display:flex;gap:var(--s1);margin-left:var(--s4)}
 .tab{font-size:var(--t2);padding:var(--s1) var(--s3);border-radius:var(--r3);cursor:pointer;
   border:1px solid transparent;background:transparent;color:var(--dim);display:flex;
   align-items:center;gap:var(--s2);transition:background var(--ease),color var(--ease)}
 .tab:hover{background:var(--sunk);color:var(--fg)}
 .tab.on{background:var(--accent-soft);border-color:transparent;color:var(--accent);
   font-weight:var(--w2)}
-.tab .bdg{font-size:var(--t1);min-width:17px;height:17px;border-radius:var(--r3);padding:0 5px;
+.tab .bdg{font-size:var(--t1);min-width:var(--s4);height:var(--s4);border-radius:var(--r3);
+  padding:0 var(--s1);
   display:grid;place-items:center;background:var(--bad);color:#fff;font-weight:var(--w3)}
 
-.filters{display:flex;gap:var(--s1);padding:0 var(--s5) var(--s3)}
+.filters{display:flex;gap:var(--s1);padding:var(--s4) var(--s4) var(--s3)}
 .chip{font-size:var(--t2);padding:var(--s1) var(--s3);border-radius:var(--r3);color:var(--dim);
   border:1px solid transparent;transition:background var(--ease),color var(--ease)}
 .chip:hover{background:var(--sunk);color:var(--fg)}
@@ -149,9 +162,9 @@ button{background:none;border:0;cursor:pointer}
   transition:background var(--ease)}
 .t:hover{background:var(--sunk)}
 .t.sel{background:var(--accent-soft)}
-.t + .t{margin-top:2px}
-.avatar{width:30px;height:30px;border-radius:var(--r1);flex:none;display:grid;
-  place-items:center;font-size:var(--t2);font-weight:var(--w3);margin-top:1px}
+.t + .t{margin-top:var(--s1)}
+.avatar{width:var(--s6);height:var(--s6);border-radius:var(--r1);flex:none;display:grid;
+  place-items:center;font-size:var(--t2);font-weight:var(--w3)}
 .tbody{min-width:0}
 .trow{display:flex;gap:var(--s2);align-items:baseline}
 /* Two lines, not one with an ellipsis. Subjects are written by the sender
@@ -160,11 +173,11 @@ button{background:none;border:0;cursor:pointer}
 .subj{font-weight:var(--w2);font-size:var(--t3);flex:1;letter-spacing:-.005em;
   display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
 .when{font-family:var(--mono);font-size:var(--t1);color:var(--faint);flex:none}
-.tmeta{display:flex;gap:var(--s2);align-items:center;margin-top:3px;font-size:var(--t2);
+.tmeta{display:flex;gap:var(--s2);align-items:center;margin-top:var(--s1);font-size:var(--t2);
   color:var(--dim);min-width:0}
 .tmeta .peers{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.pip{width:6px;height:6px;border-radius:50%;background:var(--accent);flex:none}
-.state{padding:2px var(--s2);border-radius:var(--r1);flex:none;white-space:nowrap}
+.pip{width:var(--s2);height:var(--s2);border-radius:var(--r3);background:var(--accent);flex:none}
+.state{padding:var(--s1) var(--s2);border-radius:var(--r1);flex:none;white-space:nowrap}
 .s-you{color:var(--warn);background:color-mix(in srgb,var(--warn) 13%,transparent)}
 .s-them{color:var(--dim);background:var(--sunk)}
 .s-settled{color:var(--ok);background:color-mix(in srgb,var(--ok) 13%,transparent)}
@@ -180,7 +193,7 @@ button{background:none;border:0;cursor:pointer}
 .right{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(--bg)}
 .head{padding:var(--s4) var(--s5);border-bottom:1px solid var(--line);background:var(--sheet);
   display:flex;gap:var(--s3);align-items:center;flex:none}
-.back{display:none;font-size:var(--t4);color:var(--dim);padding:2px var(--s2)}
+.back{display:none;font-size:var(--t4);color:var(--dim);padding:var(--s1) var(--s2)}
 @media (max-width:880px){.back{display:block}}
 .head h1{font-size:var(--t4);font-weight:var(--w3);overflow:hidden;text-overflow:ellipsis;
   white-space:nowrap;letter-spacing:-.012em}
@@ -197,14 +210,14 @@ button{background:none;border:0;cursor:pointer}
 .m{max-width:760px;min-width:0;width:100%;margin-inline:auto}
 .m.mine{margin-left:auto}
 .mhead{display:flex;gap:var(--s2);align-items:center;margin-bottom:var(--s2);
-  flex-wrap:wrap;padding-inline:2px}
+  flex-wrap:wrap}
 .m.mine .mhead{justify-content:flex-end}
 .who{font-weight:var(--w3);font-size:var(--t2)}
-.ty{padding:2px var(--s2);border-radius:var(--r1);background:var(--sunk);color:var(--dim)}
+.ty{padding:var(--s1) var(--s2);border-radius:var(--r1);background:var(--sunk);color:var(--dim)}
 .ty.question,.ty.review-request{color:var(--warn)}
 .ty.answer{color:var(--ok)}
 .at{font-family:var(--mono);font-size:var(--t1);color:var(--faint)}
-.dot{width:6px;height:6px;border-radius:50%;background:var(--accent)}
+.dot{width:var(--s2);height:var(--s2);border-radius:var(--r3);background:var(--accent)}
 
 .sheet{background:var(--sheet);border:1px solid var(--line);border-radius:var(--r2);
   overflow:hidden;box-shadow:var(--shadow)}
@@ -214,7 +227,7 @@ button{background:none;border:0;cursor:pointer}
    So it is the one place the micro-label rule is overridden UPWARD. */
 .verdict{display:flex;gap:var(--s2);align-items:center;padding:var(--s3) var(--s4);
   font-size:var(--t2);letter-spacing:.06em}
-.verdict .vdot{width:7px;height:7px;border-radius:50%;background:currentColor;flex:none}
+.verdict .vdot{width:var(--s2);height:var(--s2);border-radius:var(--r3);background:currentColor;flex:none}
 .v-ok{color:var(--ok);background:color-mix(in srgb,var(--ok) 10%,transparent)}
 .v-warn{color:var(--warn);background:color-mix(in srgb,var(--warn) 10%,transparent)}
 .v-bad{color:var(--bad);background:color-mix(in srgb,var(--bad) 12%,transparent)}
@@ -230,7 +243,7 @@ button{background:none;border:0;cursor:pointer}
 .files{border-top:1px solid var(--line);padding:var(--s1) 0}
 .f{display:flex;gap:var(--s3);align-items:center;padding:var(--s1) var(--s4);
   font-family:var(--mono);font-size:var(--t1)}
-.tag{padding:2px 0;border-radius:var(--r1);width:64px;text-align:center;flex:none;
+.tag{padding:var(--s1) 0;border-radius:var(--r1);width:calc(var(--s7) + var(--s4));text-align:center;flex:none;
   font-family:var(--sans);background:var(--sunk);letter-spacing:.06em}
 .m.mine .tag{background:var(--sheet)}
 .t-file{color:var(--file)} .t-prompt{color:var(--prompt)}
@@ -258,7 +271,7 @@ button{background:none;border:0;cursor:pointer}
 .cto{font-size:var(--t2);color:var(--dim);display:flex;gap:var(--s2);align-items:center;
   flex-wrap:wrap}
 .cto b{font-weight:var(--w3);color:var(--fg)}
-.cto select{font-size:var(--t2);padding:2px var(--s2);border-radius:var(--r1);
+.cto select{font-size:var(--t2);padding:var(--s1) var(--s2);border-radius:var(--r1);
   border:1px solid var(--line2);background:var(--bg)}
 textarea{width:100%;min-height:64px;max-height:40vh;resize:vertical;
   background:var(--bg);border:1px solid var(--line2);border-radius:var(--r2);
@@ -275,8 +288,8 @@ textarea:focus{outline:none;border-color:var(--accent)}
   max-height:46dvh;overflow-y:auto}
 .lanhead{display:flex;align-items:center;gap:var(--s2);color:var(--dim);
   margin:0 0 var(--s3) var(--s2)}
-.lanhead .dot{width:7px;height:7px;border-radius:50%;background:var(--faint);flex:none}
-.lanhead .dot.on{background:var(--ok);box-shadow:0 0 0 3px color-mix(in srgb,var(--ok) 20%,transparent)}
+.lanhead .dot{width:var(--s2);height:var(--s2);border-radius:var(--r3);background:var(--faint);flex:none}
+.lanhead .dot.on{background:var(--ok);box-shadow:0 0 0 var(--s1) color-mix(in srgb,var(--ok) 20%,transparent)}
 .dev{border:1px solid var(--line);border-radius:var(--r2);padding:var(--s3);
   margin-bottom:var(--s2);background:var(--bg);transition:border-color var(--ease)}
 .dev.sel{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-soft)}
@@ -285,7 +298,7 @@ textarea:focus{outline:none;border-color:var(--accent)}
 .dev.ask{border-color:color-mix(in srgb,var(--warn) 45%,var(--line));background:var(--sunk)}
 .devtop{display:flex;align-items:baseline;gap:var(--s2);flex-wrap:wrap}
 .devname{font-weight:var(--w3);font-size:var(--t3);letter-spacing:-.005em}
-.devtag{font-size:var(--t1);padding:1px var(--s2);border-radius:var(--r3);
+.devtag{font-size:var(--t1);padding:var(--s1) var(--s2);border-radius:var(--r3);
   border:1px solid var(--line2);color:var(--dim);white-space:nowrap}
 .devtag.ok{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 45%,transparent)}
 /* Word-pairs are the thing a person compares character by character, so they
@@ -297,6 +310,17 @@ textarea:focus{outline:none;border-color:var(--accent)}
   border:1px solid var(--line2);background:transparent;color:var(--fg);
   transition:border-color var(--ease),color var(--ease)}
 .devbtn:hover{border-color:var(--accent);color:var(--accent)}
+/* A trust decision is not two identical grey boxes. The act that extends
+   trust is filled; the one that records a refusal -- which is reversible,
+   and withholds nothing that doing nothing does not already withhold -- is
+   a quiet button. Neither borrows a verdict colour: the fill is the same
+   accent the tabs and the Send button already use, and the refusal is
+   neutral rather than red, because red here means a verdict. */
+.devbtn.go{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);
+  font-weight:var(--w2)}
+.devbtn.go:hover{opacity:.88;color:var(--accent-ink);border-color:var(--accent)}
+.devbtn.quiet{border-color:transparent;color:var(--dim)}
+.devbtn.quiet:hover{border-color:transparent;color:var(--fg);background:var(--sunk)}
 /* The armed state of a destructive button. Colour is the only signal that
    changes, and it changes on the button that does the thing rather than on
    the row, so the Cancel beside it stays ordinary. */
@@ -318,25 +342,50 @@ textarea:focus{outline:none;border-color:var(--accent)}
 .lanin:focus{outline:none;border-color:var(--accent)}
 .lanerr{font-size:var(--t2);color:var(--bad);margin-top:var(--s2);line-height:1.55}
 .lanok{font-size:var(--t2);color:var(--ok);margin-top:var(--s2);line-height:1.55}
-.drop{border:1.5px dashed var(--line2);border-radius:var(--r2);padding:var(--s4) var(--s3);
+.drop{border:1px dashed var(--line2);border-radius:var(--r2);padding:var(--s4) var(--s3);
   text-align:center;font-size:var(--t2);color:var(--dim);cursor:pointer;margin-top:var(--s2);
   transition:border-color var(--ease),background var(--ease)}
 .drop:hover,.drop.over{border-color:var(--accent);background:var(--accent-soft)}
 .drop.has{border-style:solid;color:var(--fg)}
 
-.buddies{padding:0 var(--s3) var(--s5);overflow-y:auto;flex:1}
-/* The buddies page. One readable column of prose, and a card grid that fills
-   whatever width is left -- a card never narrower than a word-pair needs. */
+/* The rail's tab-dependent half. On Buddies it holds this machine's own
+   identity -- the QR and the line that goes with it -- and on Agents the
+   form that makes one. Both are the thing you came to the tab to hand to
+   somebody; neither is ever below anything. */
+.side{padding:var(--s4) var(--s4) var(--s6);overflow-y:auto;flex:1;min-height:0;
+  min-width:0}
+.side .hint{max-width:none;margin:0 0 var(--s5);padding:0;font-size:var(--t2)}
+.side .hint h2{font-size:var(--t3);margin-bottom:var(--s2)}
+.side .hint p{margin-bottom:var(--s3)}
+.side .invite{margin-top:0}
+.side .invite h2{font-size:var(--t3);margin-bottom:var(--s2)}
+.side .invite p{font-size:var(--t2);margin-bottom:var(--s3);max-width:none}
+.side .bsec:first-child{margin-top:0}
+.side .budnote{max-width:none}
+/* A disclosure, closed. The sentences are the ones that were always here;
+   what changed is that they are no longer standing between a person and the
+   decision the page exists for. */
+.disc{border-top:1px solid var(--line);margin-top:var(--s4);padding-top:var(--s3)}
+.disc > summary{font-size:var(--t2);color:var(--dim);cursor:pointer;
+  font-weight:var(--w2);list-style:none}
+.disc > summary::-webkit-details-marker{display:none}
+.disc > summary::before{content:"\25B8\00a0"}
+.disc[open] > summary::before{content:"\25BE\00a0"}
+.disc > summary:hover{color:var(--fg)}
+.disc .hint{margin-top:var(--s3)}
+
 /* min-width:0 because this is a flex item: without it the item's automatic
    minimum is its content, so one wide <pre> stops scrolling and widens the
    whole page instead. */
-.budwrap{max-width:1180px;margin-inline:auto;width:100%;min-width:0;
-  padding-bottom:var(--s7)}
+.budwrap{width:100%;min-width:0}
 .budwrap .dev{min-width:0}
 .budgrid{display:grid;gap:var(--s3);
   grid-template-columns:repeat(auto-fill,minmax(336px,1fr));align-items:start}
 .budgrid .dev{margin-bottom:0}
-.budnote{max-width:62ch}
+/* Agent cards carry a config block that is copied, not read, so they are
+   given a wider minimum than a buddy card and still fill the pane. */
+.aggrid{grid-template-columns:repeat(auto-fill,minmax(440px,1fr))}
+.budnote{max-width:var(--measure)}
 .hostpick{display:flex;gap:var(--s2);flex-wrap:wrap;margin-bottom:var(--s4)}
 .copied{font-size:var(--t2);color:var(--ok)}
 .copied.bad{color:var(--warn)}
@@ -349,17 +398,19 @@ textarea:focus{outline:none;border-color:var(--accent)}
 .bsec{color:var(--dim);margin:var(--s5) 0 var(--s3) var(--s2);display:flex;
   align-items:baseline;gap:var(--s2)}
 .bsec:first-child{margin-top:var(--s3)}
+.bsect{color:inherit;font:inherit;letter-spacing:inherit;text-transform:inherit}
+.bsect:hover{color:var(--fg)}
 .bgate{margin-top:var(--s3);padding-top:var(--s3);border-top:1px dashed var(--line2)}
 .bwhy{font-size:var(--t2);color:var(--dim);line-height:1.65;margin-bottom:var(--s2)}
 .bpair{font-family:var(--mono);font-size:var(--t2);color:var(--fg);background:var(--sunk);
-  border:1px solid var(--line);border-radius:var(--r1);padding:1px var(--s2)}
+  border:1px solid var(--line);border-radius:var(--r1);padding:var(--s1) var(--s2)}
 .bdots{display:flex;gap:var(--s3);margin-top:var(--s2);flex-wrap:wrap}
-.breach{font-size:var(--t1);color:var(--faint);display:flex;align-items:center;gap:5px}
+.breach{font-size:var(--t1);color:var(--faint);display:flex;align-items:center;gap:var(--s1)}
 .breach.on{color:var(--ok)}
-.breach i{width:6px;height:6px;border-radius:50%;background:currentColor;
+.breach i{width:var(--s1);height:var(--s1);border-radius:var(--r3);background:currentColor;
   display:inline-block;opacity:.5}
 .breach.on i{opacity:1}
-.bnum{font-size:var(--t1);padding:1px var(--s2);border-radius:var(--r3);
+.bnum{font-size:var(--t1);padding:var(--s1) var(--s2);border-radius:var(--r3);
   background:var(--accent);color:var(--accent-ink);font-weight:var(--w3)}
 .berr{font-size:var(--t2);color:var(--bad);margin-top:var(--s3);line-height:1.6}
 .bok{font-size:var(--t2);color:var(--ok);margin-top:var(--s3);line-height:1.6}
@@ -373,7 +424,7 @@ textarea:focus{outline:none;border-color:var(--accent)}
    new person sees, and it was sitting against the rail with the rest of the
    window empty beside it. Inside the buddies page it stays left, under the
    cards it explains. */
-.hint{max-width:58ch;margin:var(--s6) auto 0;padding:0 var(--s5);color:var(--dim);
+.hint{max-width:var(--measure);margin:var(--s6) auto 0;padding:0 var(--s5);color:var(--dim);
   font-size:var(--t3);line-height:1.7}
 .budwrap .hint{margin-inline:0}
 .hint h2{font-size:var(--t5);font-weight:var(--w3);color:var(--fg);
@@ -383,57 +434,63 @@ textarea:focus{outline:none;border-color:var(--accent)}
    on each line instead of one box torn in half -- which is what a long
    `gage send ...` example did at this column width. */
 .hint code{font-family:var(--mono);font-size:var(--t2);background:var(--sunk);
-  border:1px solid var(--line);border-radius:var(--r1);padding:2px 6px;
+  border:1px solid var(--line);border-radius:var(--r1);padding:var(--s1) var(--s2);
   -webkit-box-decoration-break:clone;box-decoration-break:clone}
 /* The QR is black modules on a white field, including in the dark theme.
    `fill` on the element is explicit too; this is the quiet zone around it. */
 .invite{margin-top:var(--s5)}
 .invite h2{font-size:var(--t4);font-weight:var(--w3);color:var(--fg);margin-bottom:var(--s3)}
-.invite p{color:var(--dim);margin-bottom:var(--s4);max-width:58ch}
+.invite p{color:var(--dim);margin-bottom:var(--s4);max-width:var(--measure)}
 .invite svg{display:block;width:min(260px,100%);height:auto;background:#fff;
   border:1px solid var(--line);border-radius:var(--r1)}
 .wizard{position:fixed;inset:0;z-index:20;background:var(--bg);display:grid;place-items:center;
   padding:var(--s5);overflow:auto}
 .wcard{width:min(680px,100%);background:var(--sheet);border:1px solid var(--line);
-  border-radius:var(--r2);padding:clamp(20px,5vw,40px);box-shadow:var(--shadow)}
+  border-radius:var(--r2);padding:var(--s6);box-shadow:var(--shadow)}
 .wcard h1{font-size:var(--t5);margin-bottom:var(--s4)}
-.wcard p{color:var(--dim);margin:0 0 var(--s4);max-width:62ch}
+.wcard p{color:var(--dim);margin:0 0 var(--s4);max-width:var(--measure)}
 .winput{width:100%;padding:var(--s3);border:1px solid var(--line2);border-radius:var(--r1);
   background:var(--bg);margin:0 0 var(--s3)}
 .wwords{font-family:var(--mono);font-size:var(--t3);line-height:1.9;white-space:pre-wrap;
   background:var(--sunk);border-radius:var(--r1);padding:var(--s4);margin:var(--s3) 0}
 .werror{color:var(--bad);margin:var(--s3) 0}
 .wcheck{display:flex;gap:var(--s2);align-items:flex-start;color:var(--dim);margin:var(--s4) 0}
-.wcheck input{margin-top:5px}
+.wcheck input{margin-top:var(--s1)}
+
+/* Four utilities, last so they win, in place of the inline `style="..."`
+   attributes that carried widths and margins off every scale this file
+   declares. The two that remain compute a colour from a key. */
+.wide{width:100%}
+.gap{margin-top:var(--s3)}
+.note{min-height:var(--s7)}
+.bwarn{color:var(--warn)}
 </style>
 
 <div class="app" id="app">
+  <!-- The tab bar spans the window and belongs to no tab, so no section can
+       take the screen and leave the person with a back button where the
+       navigation used to be. -->
+  <header class="topbar">
+    <span class="logo"><svg viewBox="0 0 512 512" aria-hidden="true">
+      <g fill="none" stroke="currentColor" stroke-linecap="round">
+        <path d="M 340.85 374.85 A 120 120 0 1 0 171.15 374.85" stroke-width="46"/>
+        <path d="M 256 290 L 310.5 212.2" stroke-width="40"/>
+      </g><circle cx="256" cy="290" r="23" fill="currentColor"/></svg></span>
+    <span class="wordmark" id="wordmark">gage</span>
+    <nav class="tabs" id="tabs"></nav>
+    <span class="whoami" id="me"></span>
+  </header>
+  <div class="stale" id="stale" hidden></div>
   <div class="left">
-    <div class="brand">
-      <span class="logo"><svg viewBox="0 0 512 512" aria-hidden="true">
-        <g fill="none" stroke="currentColor" stroke-linecap="round">
-          <path d="M 340.85 374.85 A 120 120 0 1 0 171.15 374.85" stroke-width="46"/>
-          <path d="M 256 290 L 310.5 212.2" stroke-width="40"/>
-        </g><circle cx="256" cy="290" r="23" fill="currentColor"/></svg></span>
-      <span class="wordmark" id="wordmark">gage</span>
-      <span class="whoami" id="me"></span>
-    </div>
-    <div class="stale" id="stale" hidden></div>
-    <div class="tabs" id="tabs"></div>
     <div class="filters" id="filters"></div>
     <div class="list" id="list"></div>
     <div class="lanbox" id="lanbox"></div>
     <div class="lanbox netbox" id="netbox"></div>
-    <div class="buddies" id="buddies" hidden></div>
+    <div class="side" id="budside" hidden></div>
   </div>
   <div class="right">
     <div class="head">
       <button class="back" onclick="back()" title="Back">&larr;</button>
-      <!-- Buddies takes the whole width, which hides the rail -- and the rail
-           is where the tabs live. Without this there is no way back to the
-           conversations from the page you just opened. -->
-      <button class="headbtn budback" id="budback" hidden
-        onclick="setTab('chats')">&larr; Conversations</button>
       <h1 id="title">Conversations</h1><span class="sp"></span>
       <span id="hstate"></span>
       <button class="headbtn" id="settle" hidden onclick="act('close',SEL)">Mark settled</button>
@@ -737,7 +794,7 @@ function netRender(){
     h+=`<div class="lansub">The address of the relay to use. It has to be an
         <b>https</b> address: this crosses networks nobody here controls, and
         without that there is nothing to say the relay is the relay.</div>
-      <input class="lanin" style="width:100%" aria-label="Relay address"
+      <input class="lanin wide" aria-label="Relay address"
         value="${esc(RADDR)}" oninput="RADDR=this.value"
         onkeydown="if(event.key==='Enter')relayOn()">
       <div class="devrow">
@@ -800,7 +857,7 @@ function lanRender(){
         <input class="lanin" placeholder="Call it what on your list?" value="${esc(LNAME)}"
           oninput="LNAME=this.value">
         <div class="devrow">
-          <button class="devbtn" onclick="lanPairGo('${esc(d.label)}')" ${LBUSY?'disabled':''}>
+          <button class="devbtn go" onclick="lanPairGo('${esc(d.label)}')" ${LBUSY?'disabled':''}>
             ${LBUSY?'Pairing...':'Those four pairs match'}</button>
         </div>`:''}
       </div>`;
@@ -818,7 +875,7 @@ function lanRender(){
   if(LSEL){
     h+=`<input class="lanin" id="lsubj" placeholder="Subject" value="${esc(LSUBJ)}"
            oninput="LSUBJ=this.value">
-      <textarea class="lanin" id="lnote" style="min-height:4.5em"
+      <textarea class="lanin note" id="lnote"
         placeholder="Write a note (optional)" oninput="LNOTE=this.value">${esc(LNOTE)}</textarea>`;
     if(FILES.length||LNOTE.trim()){
       h+=`<div class="devrow">
@@ -949,6 +1006,9 @@ let AGENTS=null, AGNAME='', AGBUSY=false, AGERR='', AGHOST='claude_code', AGNEW=
 // blocks the whole page, and no window.confirm for the same reason.
 let AGKILL='';
 let ASK=null, ANAME='', ACONF='', AERR='', AOK='', ABUSY=false, SHOWREF=false;
+// Whether the standing explanation is open. The rail re-renders on every
+// poll, so without this a <details> somebody opened shut itself 2.5s later.
+let BWHY=false;
 // The fingerprint, once the person has shown they read it somewhere else.
 // Held per key and dropped on cancel, so it never survives into a different
 // request's card.
@@ -1016,8 +1076,17 @@ function inviteHtml(){
     It names this machine and its public key, and nothing else.</p>
     ${INVITE}</div>`;
 }
+// The rail on the Buddies tab: this machine's own identity first, because
+// the QR and the `gage add` line are the only things on this screen that
+// another person needs, and they used to be fifth and below the fold. Then
+// the invite coming the other way. The standing explanation is last and
+// shut: the sentences are unchanged, they are simply no longer between the
+// reader and the decision.
 function budpaneHtml(){
-  return pasteHtml()+`<div class="hint">
+  return inviteHtml()+pasteHtml()+`<details class="disc"${BWHY?' open':''}
+    ontoggle="BWHY=this.open">
+    <summary>Why this matters</summary>
+    <div class="hint">
       <h2>Who can reach you</h2>
       <p>Your list is the trust boundary. A key on it is one you confirmed out of
         band; a key not on it is a decision you have not taken yet. Nothing here is
@@ -1029,15 +1098,15 @@ function budpaneHtml(){
         can stop a bundle being delivered, and mail from a refused key still arrives
         and still waits for you to accept it.</p>
       <p><code>gage decline &lt;key&gt;</code> and <code>gage undecline &lt;key&gt;</code>
-        do the same from a terminal.</p></div>`+inviteHtml();
+        do the same from a terminal.</p></div></details>`;
 }
 function pasteHtml(){
   let h=`<div class="hint"><h2>Paste an invite</h2>
     <p>Paste the other person's complete <code>gage add</code> line. The clipboard is read only when you press the button.</p>
     <button class="devbtn" onclick="pasteClipboard()">Read clipboard</button>
-    <textarea class="lanin" style="width:100%;margin-top:8px" aria-label="Invite text"
+    <textarea class="lanin wide gap" aria-label="Invite text"
       placeholder="Paste or type the complete gage add line" oninput="PASTED=this.value">${esc(PASTED)}</textarea>
-    <div class="devrow"><button class="devbtn" onclick="pasteInvite()">Use this invite</button></div>
+    <div class="devrow"><button class="devbtn go" onclick="pasteInvite()">Use this invite</button></div>
     ${AERR?`<div class="berr">${esc(AERR)}</div>`:''}${AOK?`<div class="bok">${esc(AOK)}</div>`:''}</div>`;
   if(PKEY)h+=`<div class="bwhy">Invite parsed. The existing request card now has the suggested name and pairing check.</div>`;
   return h;
@@ -1061,8 +1130,11 @@ function setTab(t){
   // kind of small thing that makes a tool feel untrustworthy.
   hashSync();
   const wide = (t==='buddies'||t==='agents');
+  // One shell. The rail never goes away: what changes is which half of it is
+  // showing -- the thread list on Chats, this machine's own identity on
+  // Buddies, the form that makes an agent one on Agents.
   for(const [id,show] of [['filters',t==='chats'],['list',t==='chats'],
-                          ['lanbox',t==='chats'],['netbox',t==='chats'],['buddies',t==='buddies'],
+                          ['lanbox',t==='chats'],['netbox',t==='chats'],['budside',wide],
                           // The right-hand pane belongs to whichever tab is
                           // showing. It used to keep the Chats empty state --
                           // "Pick a conversation" -- next to the buddy list,
@@ -1074,7 +1146,6 @@ function setTab(t){
   // are in is the heading of the section, where a heading belongs.
   const appEl=document.getElementById('app');
   if(appEl)appEl.classList.toggle('buds',wide);
-  const bb=document.getElementById('budback'); if(bb)bb.hidden=!wide;
   if(t==='agents'){
     document.getElementById('title').textContent='Agents';
     const c=document.getElementById('composer'); if(c)c.hidden=true;
@@ -1167,26 +1238,35 @@ const AGHOSTS=[['claude_code','Claude Code'],['claude_desktop','Claude Desktop']
 
 function agentRender(){
   const box=document.getElementById('budpane');
-  if(!box||TAB!=='agents')return;
-  // Same focus rule as the buddies page: this pane holds a text field, and
+  const side=document.getElementById('budside');
+  if(!box||!side||TAB!=='agents')return;
+  // Same focus rule as the buddies page: the rail holds a text field, and
   // a render underneath somebody's typing loses the caret.
   const a=document.activeElement;
-  if(a&&box.contains(a)&&(a.tagName==='INPUT'||a.tagName==='TEXTAREA')&&!AGNEW)return;
-  let h=`<div class="budwrap">`;
-  h+=`<div class="bsec">Connect an agent</div>
+  if(a&&(box.contains(a)||side.contains(a))
+     &&(a.tagName==='INPUT'||a.tagName==='TEXTAREA')&&!AGNEW)return;
+  // The rail: the one thing this tab is for doing, and the one choice that
+  // changes what every card below shows.
+  side.innerHTML=`<div class="bsec">Connect an agent</div>
     <div class="lansub budnote">Each agent gets its own identity, so a verdict
       can say <i>which</i> agent sent something and a grant can name one of
       them. They are added to your list here without a word-pair compare:
       this page generated the key a moment ago, so there is no other party
       it could belong to. A key from anywhere else still goes through the
       compare on the Buddies tab.</div>
-    <div class="devrow" style="margin-top:10px">
-      <input class="lanin" style="min-width:16em" placeholder="Name, e.g. codex"
+    <div class="devrow gap">
+      <input class="lanin wide" placeholder="Name, e.g. codex"
         value="${esc(AGNAME)}" oninput="AGNAME=this.value"
         onkeydown="if(event.key==='Enter')agentCreate()">
-      <button class="devbtn" onclick="agentCreate()" ${AGBUSY?'disabled':''}>
+      <button class="devbtn go" onclick="agentCreate()" ${AGBUSY?'disabled':''}>
         ${AGBUSY?'Creating...':'Create agent'}</button>
-    </div>`;
+    </div>
+    <div class="bsec">Host to configure</div>
+    <div class="hostpick">`+AGHOSTS.map(([k,label])=>
+      `<button class="chip${AGHOST===k?' on':''}" onclick="AGHOST='${k}';agentRender()">${label}</button>`
+    ).join('')+`</div>`;
+
+  let h=`<div class="budwrap">`;
   if(AGERR)h+=`<div class="lanerr">${esc(AGERR)}</div>`;
 
   const list=AGENTS||[];
@@ -1194,9 +1274,7 @@ function agentRender(){
   if(!list.length){
     h+=`<div class="lansub budnote">None yet.</div>`;
   }
-  h+=`<div class="hostpick">`+AGHOSTS.map(([k,label])=>
-      `<button class="chip${AGHOST===k?' on':''}" onclick="AGHOST='${k}';agentRender()">${label}</button>`
-    ).join('')+`</div>`;
+  h+=`<div class="budgrid aggrid">`;
   for(const g of list){
     const cfg=(g.configs&&g.configs[AGHOST])||'';
     h+=`<div class="dev">
@@ -1204,13 +1282,13 @@ function agentRender(){
         <span class="devtag">${esc(g.handle)}</span></div>
       <div class="devfp">${esc(g.fingerprint)}</div>
       <div class="lansub">Identity in <code>${esc(g.home)}</code></div>
-      <div class="lansub" style="margin-top:8px">Point the host at it:</div>
+      <div class="lansub gap">Point the host at it:</div>
       <pre class="cfg" id="cfg-${esc(g.name)}">${esc(cfg)}</pre>
       <div class="devrow">
         <button class="devbtn" onclick="copyCfg('${esc(g.name)}')">Copy config</button>
         <span class="copied" id="copy-cfg-${esc(g.name)}"></span>
       </div>
-      <div class="lansub" style="margin-top:10px">To let its messages be accepted
+      <div class="lansub gap">To let its messages be accepted
         without you, put this line in your <code>authority</code> file yourself.
         Nothing in gage writes that file: a path that grants authority by being
         asked is one an agent can be talked into asking for.</div>
@@ -1229,7 +1307,7 @@ function agentRender(){
       }</div>
     </div>`;
   }
-  h+=`</div>`;
+  h+=`</div></div>`;
   box.innerHTML=h;
 }
 
@@ -1314,11 +1392,13 @@ async function agentCreate(){
 }
 
 function budRender(force){
-  // The whole buddies page is rendered here, into the wide pane. It used to
-  // be split: cards in the rail, the prose explaining them in the pane. That
-  // put the thing you act on in the narrowest column on the screen.
+  // The cards -- the decisions -- render into the wide pane. The rail beside
+  // them holds this machine's identity and the explanation, so neither the
+  // thing you act on nor the thing you hand over is in the narrow column by
+  // accident.
   const box=document.getElementById('budpane');
-  if(!box||TAB!=='buddies')return;
+  const side=document.getElementById('budside');
+  if(!box||!side||TAB!=='buddies')return;
   let h='';
   const requests=(BUD.requests||[]).map(q=>q.key===PKEY?{...q,label:PNAME||q.label,
     ask_pair:PPAIR,pasted:true}:q);
@@ -1326,7 +1406,7 @@ function budRender(force){
     bundles:0,verdict:'SENDER NOT ON YOUR LIST',first_observed:null,ask_pair:PPAIR,pasted:true});
   if(requests.length){
     h+=`<div class="bsec">Not on your list<span class="bnum">${requests.length}</span></div>`
-     +`<div class="lansub budnote" style="margin-bottom:8px">${requests.some(q=>q.pasted)?'Pasted invites and keys that have sent you something are not on your list. ':''}A message is not a request for anything &mdash; deciding is yours, and doing nothing is a decision the list will keep offering.</div>`
+     +`<div class="lansub budnote gap">${requests.some(q=>q.pasted)?'Pasted invites and keys that have sent you something are not on your list. ':''}A message is not a request for anything &mdash; deciding is yours, and doing nothing is a decision the list will keep offering.</div>`
      +`<div class="budgrid">`;
     for(const q of requests){
       const open=ASK===q.key;
@@ -1335,13 +1415,13 @@ function budRender(force){
         <div class="devtop"><span class="devname">${esc(q.label)}</span>
           <span class="devtag">${q.bundles} message${q.bundles===1?'':'s'}</span>
           </div>
-        <div class="bwhy" style="margin-top:5px">${esc(vShort(q.verdict))}
+        <div class="bwhy gap">${esc(vShort(q.verdict))}
           ${q.first_observed?'&middot; first seen here '+esc(ago(q.first_observed)):''}
           &middot; pair 1 of its fingerprint is <b>${esc(q.label)}</b></div>
         ${shown?`<div class="devfp">${esc(shown)}</div>`:''}
         <div class="devrow">
-          <button class="devbtn" onclick="askOpen('${esc(q.key)}')">${open?'Cancel':'Add to my list'}</button>
-          <button class="devbtn" onclick="budDecline('${esc(q.key)}',false)" ${ABUSY?'disabled':''}
+          <button class="devbtn${open?'':' go'}" onclick="askOpen('${esc(q.key)}')">${open?'Cancel':'Add to my list'}</button>
+          <button class="devbtn quiet" onclick="budDecline('${esc(q.key)}',false)" ${ABUSY?'disabled':''}
             title="Records that you said no. It does not block anything: mail from this key still arrives and still waits for you to accept it.">Refuse</button>
         </div>
         <div class="bwhy">Refusing records the decision so you are not asked again. It does
@@ -1350,16 +1430,15 @@ function budRender(force){
         h+=`<div class="bgate">
           <div class="bwhy">${esc(ASKWHY)}</div>
           <div class="bwhy">${esc(ASKHALF)}</div>
-          <div class="bwhy" style="color:var(--warn)">${esc(ASKTRAP)}</div>
+          <div class="bwhy bwarn">${esc(ASKTRAP)}</div>
           ${q.pasted?`<div class="bwhy">Suggested name (edit as needed)</div>
-            <input class="lanin" placeholder="Name for this contact" value="${esc(ANAME)}"
-              oninput="ANAME=this.value" style="width:100%">`:''}
+            <input class="lanin wide" placeholder="Name for this contact" value="${esc(ANAME)}"
+              oninput="ANAME=this.value">`:''}
           <div class="bwhy">Type pair <b>${q.ask_pair}</b> of four, as the other machine shows it.</div>
-          <input class="lanin" placeholder="pair ${q.ask_pair}, e.g. two words" value="${esc(ACONF)}"
-            oninput="ACONF=this.value" onkeydown="if(event.key==='Enter')budReveal('${esc(q.key)}')"
-            style="width:100%">
+          <input class="lanin wide" placeholder="pair ${q.ask_pair}, e.g. two words" value="${esc(ACONF)}"
+            oninput="ACONF=this.value" onkeydown="if(event.key==='Enter')budReveal('${esc(q.key)}')">
           <div class="devrow">
-            <button class="devbtn" onclick="budReveal('${esc(q.key)}')" ${ABUSY?'disabled':''}>
+            <button class="devbtn go" onclick="budReveal('${esc(q.key)}')" ${ABUSY?'disabled':''}>
               ${ABUSY?'Checking...':'Check this pair'}</button>
           </div></div>`;
       }else if(open&&shown){
@@ -1367,10 +1446,10 @@ function budRender(force){
           <div class="bwhy">Pair ${q.ask_pair} matched. Now check <b>all four</b> above against
             the other machine before you add anything &mdash; one matching pair is 16 bits, and
             a key can be ground out to produce a chosen one.</div>
-          <input class="lanin" placeholder="Call them what on your list?" value="${esc(ANAME)}"
-            oninput="ANAME=this.value" style="width:100%">
+          <input class="lanin wide" placeholder="Call them what on your list?" value="${esc(ANAME)}"
+            oninput="ANAME=this.value">
           <div class="devrow">
-            <button class="devbtn" onclick="budConnect('${esc(q.key)}')" ${ABUSY?'disabled':''}>
+            <button class="devbtn go" onclick="budConnect('${esc(q.key)}')" ${ABUSY?'disabled':''}>
               ${ABUSY?'Adding...':'All four match -- add them'}</button>
           </div></div>`;
       }
@@ -1395,10 +1474,10 @@ function budRender(force){
   }
   h+=`</div>`;
   if(BUD.refused.length){
-    h+=`<div class="bsec"><a href="#" onclick="SHOWREF=!SHOWREF;budRender(true);return false"
-      style="color:inherit">Refused (${BUD.refused.length}) ${SHOWREF?'&#9662;':'&#9656;'}</a></div>`;
+    h+=`<div class="bsec"><button class="bsect" onclick="SHOWREF=!SHOWREF;budRender(true)"
+      >Refused (${BUD.refused.length}) ${SHOWREF?'&#9662;':'&#9656;'}</button></div>`;
     if(SHOWREF){
-      h+=`<div class="lansub" style="margin-bottom:8px">Refusing records a decision. It does
+      h+=`<div class="lansub gap">Refusing records a decision. It does
         not block anything &mdash; nothing in gage can stop a bundle being delivered, and
         mail from these keys still arrives and still waits for you to accept it. What it
         buys is that you are not asked about these again. Their word-pairs are not shown
@@ -1431,13 +1510,15 @@ function budRender(force){
   // render. An action the person takes always calls budRender directly, and
   // those paths pass force, because the whole point of them is that the
   // answer changed.
-  const box2 = box;
   const active = document.activeElement;
-  if (!force && active && box2.contains(active)
+  if (!force && active && (box.contains(active) || side.contains(active))
       && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
-  // Paste, then the standing explanation, below the cards rather than beside
-  // them: a person opens this tab to decide about somebody, not to read.
-  box.innerHTML=`<div class="budwrap">${h}${budpaneHtml()}</div>`;
+  box.innerHTML=`<div class="budwrap">${h}</div>`;
+  // The rail is tall on this tab -- the QR, the paste field, the disclosure --
+  // so a poll that redrew it must not also send it back to the top.
+  const top=side.scrollTop;
+  side.innerHTML=budpaneHtml();
+  side.scrollTop=top;
 }
 
 async function budPost(path,body){
