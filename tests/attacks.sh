@@ -4144,7 +4144,14 @@ CTX_HOME=$AA $CTX inbox >/dev/null 2>&1
 echo "alice publishes a head and bob records it"
 CTX_HOME=$AA $CTX anchor send --to bob > "$T/an-send1.txt" 2>&1
 code "anchor send" $? 0
-AID=$(idof "$AB" "journal head 3")
+# The head is READ from the output rather than assumed to be 3. It used to be
+# 3 and the number was written in: then the send journal landed, an anchor
+# send became a journal entry of its own, and the SECOND anchor in this block
+# published head 4. Four checks failed and none of them was a defect -- the
+# suite was asserting a constant that had stopped being one.
+anchored() { sed -n 's/^anchored entry \([0-9]*\) .*/\1/p' "$1" | head -1; }
+AN1=$(anchored "$T/an-send1.txt")
+AID=$(idof "$AB" "journal head $AN1")
 CTX_HOME=$AB $CTX accept "$AID" >/dev/null 2>&1
 CTX_HOME=$AB $CTX anchor record > "$T/an-rec1.txt" 2>&1
 want "$T/an-rec1.txt" "entry 3 recorded"
@@ -4172,8 +4179,9 @@ CTX_HOME=$AA $CTX journal --verify > "$T/an-verify.txt" 2>&1
 code "a re-linked edit still verifies" $? 0
 want "$T/an-verify.txt" "all of them check out"
 
-CTX_HOME=$AA $CTX anchor send --to bob >/dev/null 2>&1
-AID2=$(idof "$AB" "journal head 3")
+CTX_HOME=$AA $CTX anchor send --to bob > "$T/an-send2.txt" 2>&1
+AN2=$(anchored "$T/an-send2.txt")
+AID2=$(idof "$AB" "journal head $AN2")
 CTX_HOME=$AB $CTX accept "$AID2" >/dev/null 2>&1
 CTX_HOME=$AB $CTX anchor record > "$T/an-rec3.txt" 2>&1
 want "$T/an-rec3.txt" "does NOT match what they published before"
@@ -4185,7 +4193,7 @@ want "$T/an-list.txt" "held with 2 different digests"
 
 echo "the other half: alice checks an anchor bob reads back to her"
 D1=$(grep -oE '[0-9a-f]{64}' "$T/an-send1.txt" | head -1)
-CTX_HOME=$AA $CTX anchor check 3 "$D1" > "$T/an-check.txt" 2>&1
+CTX_HOME=$AA $CTX anchor check "$AN1" "$D1" > "$T/an-check.txt" 2>&1
 code "check against a stale anchor" $? 1
 want "$T/an-check.txt" "DOES NOT MATCH"
 CTX_HOME=$AA $CTX anchor check 99 "$D1" >/dev/null 2>&1
@@ -4310,6 +4318,69 @@ want "$T/agent-late.txt" "SENDER KEY REJECTED"
 # gage shows an MCP host config and never writes one, so removal cannot
 # un-write one either. Saying so is the whole of what it can honestly do.
 want "$T/agent-rm.txt" "claude mcp remove gage"
+
+# ---------------------------------------------------------------------------
+# The send journal. It is a record and not a control, so what is checked here
+# is that the record is TRUE: one line per send, naming who it went to, and
+# honest about whether it actually reached anyone.
+# ---------------------------------------------------------------------------
+echo
+echo "== the send journal"
+SJ=$T/sj
+mkdir -p "$SJ"
+CTX_HOME=$SJ/me   $CTX init me   >/dev/null 2>&1
+CTX_HOME=$SJ/dana $CTX init dana >/dev/null 2>&1
+SJ_DK=$(CTX_HOME=$SJ/dana $CTX whoami 2>/dev/null | head -1 | cut -f2)
+CTX_HOME=$SJ/me $CTX add dana "$SJ_DK" >/dev/null 2>&1
+CTX_HOME=$SJ/me $CTX route dana "$SJ/dana" >/dev/null 2>&1
+echo "work" > "$T/sj.md"
+
+echo "a send writes one line naming the recipient and the key"
+CTX_HOME=$SJ/me $CTX send --to dana --subject "sj one" --file "$T/sj.md" >/dev/null 2>&1
+CTX_HOME=$SJ/me $CTX sent > "$T/sj-1.txt" 2>&1
+want "$T/sj-1.txt" "to dana"
+want "$T/sj-1.txt" "sent (delivered locally)"
+want "$T/sj-1.txt" "1 item(s)"
+
+echo "a recipient this machine does not know is recorded as unknown, not as sent"
+CTX_HOME=$SJ/me $CTX send --to ghost --subject "sj two" --file "$T/sj.md" >/dev/null 2>&1
+CTX_HOME=$SJ/me $CTX sent > "$T/sj-2.txt" 2>&1
+want "$T/sj-2.txt" "ghost (not on your list)"
+want "$T/sj-2.txt" "sent (no local route)"
+
+echo "the journal does not claim to be a control"
+want "$T/sj-2.txt" "This is a record, not a control"
+
+echo "an empty list says it is not evidence of nothing having been sent"
+CTX_HOME=$SJ/dana $CTX sent > "$T/sj-3.txt" 2>&1
+want "$T/sj-3.txt" "nothing sent"
+want "$T/sj-3.txt" "is not evidence that nothing was sent"
+
+echo "--to filters, by handle and by key prefix"
+CTX_HOME=$SJ/me $CTX sent --to dana > "$T/sj-4.txt" 2>&1
+want   "$T/sj-4.txt" "to dana"
+wantno "$T/sj-4.txt" "ghost"
+CTX_HOME=$SJ/me $CTX sent --to "${SJ_DK%%.*}" > "$T/sj-5.txt" 2>&1
+want   "$T/sj-5.txt" "to dana"
+
+echo "--since refuses a window it cannot mean, rather than guessing one"
+CTX_HOME=$SJ/me $CTX sent --since 7y >/dev/null 2>&1; code "since-unit" $? 1
+CTX_HOME=$SJ/me $CTX sent --since abc >/dev/null 2>&1; code "since-number" $? 1
+
+# The exclusion is deliberate and therefore has to be asserted, or a later
+# change flips it back and the only symptom is that anchoring quietly stops
+# being able to show a contradiction.
+echo "an anchor send is NOT journalled, and the listing says so"
+CTX_HOME=$SJ/me $CTX anchor send --to dana >/dev/null 2>&1
+CTX_HOME=$SJ/me $CTX sent > "$T/sj-7.txt" 2>&1
+wantno "$T/sj-7.txt" "journal head"
+want   "$T/sj-7.txt" "anchors"
+SJN=$(grep -c "item(s)," "$T/sj-7.txt")
+if [ "$SJN" = "2" ]; then ok; else bad "an anchor added a send line: $SJN lines, wanted 2"; fi
+
+echo "the sends are chained like every other entry, and still verify"
+CTX_HOME=$SJ/me $CTX journal --verify > "$T/sj-6.txt" 2>&1
+want "$T/sj-6.txt" "all of them check out"
 
 echo "a good bundle exits 0"
 CTX_HOME=$T/b $CTX open "$T/b1" >/dev/null 2>&1; code good $? 0

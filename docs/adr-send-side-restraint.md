@@ -241,9 +241,21 @@ Three questions, and none of them is technical:
 - **Options 1, 2 and 3 — not taken, and not deferred.** They are ruled out by
   (1), not merely unscheduled. Reopening any of them requires reopening the
   pairing decision first.
-- **Option 4 — build it.** A `Sent` event in the journal and a way to read it
-  back. The journal is locally rewritable like every other local file, so this
-  inherits the limit the anchoring ADR states, and anchoring is what covers
-  it.
+- **Option 4 — built, 22 Oct.** `gage sent`, and a `Sent` event carrying the
+  addressees, item count and byte count. Written in `outbound::send_bundle`,
+  the single send path. The journal is locally rewritable like every other
+  local file, so this inherits the limit the anchoring ADR states, and
+  anchoring is what covers it.
+
+  **One exclusion, found by the suite rather than by reasoning.**
+  `gage anchor send` does not write a `Sent` line. An anchor publishes the
+  digest of the journal's current head; journalling its own send moves that
+  head the instant it is published, so two anchors can never name the same
+  index again — and that repetition is exactly how `anchor record` detects a
+  contradiction. Four checks went red and none of them was a flaky test. The
+  exclusion is stated in `gage sent`'s own output rather than left as a hole
+  where a careful reader would look, and what it gives up is bounded: an
+  anchor carries a digest of this machine's own journal, no user content, to
+  a contact already on the list.
 
 Written 22 October 2026. Decided the same day.

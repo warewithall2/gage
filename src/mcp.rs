@@ -402,6 +402,7 @@ impl Server {
                     lan: false,
                     agent: opt_str(a, "agent"),
                     model: opt_str(a, "model"),
+                    record_send: true,
                 };
                 match crate::outbound::send_bundle(args, &mut say) {
                     Ok(m) => Ok(vec![text(

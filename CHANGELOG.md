@@ -1,5 +1,66 @@
 # Changelog
 
+## 0.3.2 — unreleased
+
+**The send journal.** `gage sent` answers "what has this machine sent, and to
+whom?" — after the fact, which is the only thing a local log can honestly do
+about a local action.
+
+### Added
+
+- **`gage sent [--since 7d] [--to <handle|key>] [--json]`**, and a `Sent`
+  event in the journal carrying the addressees, the item count and the byte
+  count. Written in `outbound::send_bundle`, the single send path, for the
+  same reason the outbound scan lives there: a second path that grew its own
+  copy would eventually be missing it, and a log with an invisible hole is
+  worse than no log.
+
+  **It prevents nothing, and says so in its own output.** It is written by
+  the process that did the sending, into a file that process can rewrite —
+  the same limit the chain has, and `gage anchor` is what covers it. A
+  process that sends without going through gage leaves no line, because
+  there is nothing to write it.
+
+  The line is written *after* delivery, so it means the bundle was built,
+  signed and placed rather than merely attempted. The cost is a crash window
+  between the two; recording first would invert the lie rather than remove
+  it, and claiming a send that did not happen is the worse half for a log
+  whose whole job is answering what left.
+
+  An empty listing says what it does **not** mean: sends are recorded from
+  0.3.2 onwards, so a machine upgraded today has no lines for yesterday, and
+  an empty list is not evidence that nothing was sent.
+
+- **`gage anchor send` is deliberately NOT journalled**, and the listing
+  states the exclusion rather than leaving a hole where a careful reader
+  would look. Found by the suite, not by reasoning: an anchor publishes the
+  digest of the journal's current head, so journalling its own send moves
+  that head the instant it is published, and two anchors can never name the
+  same index again — which is exactly how `anchor record` detects a
+  contradiction. Four checks went red and none of them was a flaky test. What
+  is given up is bounded: an anchor carries a digest of this machine's own
+  journal, no user content, to a contact already on the list.
+
+### Decided
+
+- **`docs/adr-send-side-restraint.md`** — written, then answered by the
+  owner. **No recipient-side restraint will be built at all**: not an
+  allowlist, not a first-contact gate, not a rate ceiling. Every one of them
+  is enforced against `trust::Contacts`, and an agent can write that file
+  itself in two MCP calls — `gage_pair_start` hands it the word-pairs and
+  `gage_pair_confirm` takes them back. Measured against two fixture homes,
+  not inferred. Shipping a control enforced against a value the attacker
+  owns would be theatre, and the pairing flow stays end-to-end knowingly.
+
+  Content restraint is unaffected and still fail-closed: the outbound scan
+  refuses rather than warns, and `gage mcp` cannot override it.
+
+### Fixed
+
+- **The anchor block of the attack suite asserted a constant that had stopped
+  being one** — it had entry 3 written in. It now reads the anchored index
+  from the command's own output.
+
 ## 0.3.1 — 2026-10-22
 
 **A security fix, and the first dependency audit this project ever ran.**

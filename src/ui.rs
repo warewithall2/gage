@@ -1263,6 +1263,7 @@ fn send_from_ui(raw: &[u8]) -> Result<Vec<String>, (&'static str, String)> {
                 lan: true,
                 agent: None,
                 model: None,
+                record_send: true,
             },
             &mut say,
         );
@@ -1689,6 +1690,7 @@ fn reply_from_ui(body: &str) -> Result<String, (&'static str, String)> {
             lan: false,
             agent: None,
             model: None,
+            record_send: true,
         },
         &mut say,
     );

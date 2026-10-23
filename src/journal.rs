@@ -146,6 +146,19 @@ pub struct Entry {
     /// record of what was done is already the record of how much was used.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto: Option<Auto>,
+    /// Present only on `Sent`: who the bundle was addressed to.
+    ///
+    /// Empty is impossible for a real send -- `send_bundle` refuses with no
+    /// recipient -- so an absent `to` on a `Sent` line is a malformed entry
+    /// rather than a send to nobody.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to: Option<Vec<Addressee>>,
+    /// Present only on `Sent`: how much left, which is the volume half of
+    /// the question the send journal exists to answer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub items: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bytes: Option<u64>,
     /// The digest of the previous line as written, which is what makes the
     /// file a chain rather than a pile. See `link_to_previous` for what this
     /// does and does not prove, and `verify` for the check.
@@ -221,6 +234,22 @@ pub enum Event {
     /// before this existed -- the duplicate simply reappeared in `pending`
     /// beside the accepted copy, and the log said nothing at all.
     Duplicate,
+    /// This machine built and signed a bundle, and who it was addressed to.
+    ///
+    /// The only event here about something leaving rather than arriving, and
+    /// it exists because of what `docs/adr-send-side-restraint.md` concluded:
+    /// every recipient-side control anyone would build is enforced against a
+    /// contact list the agent can write itself, so none of them can mean
+    /// anything, and the honest thing left is to make what left answerable
+    /// afterwards.
+    ///
+    /// **It prevents nothing.** It is written by the same process that did
+    /// the sending, into a file that process can rewrite -- the same limit
+    /// the chain has and `docs/adr-journal-anchoring.md` states, and
+    /// anchoring is what covers it. A machine that sends a bundle without
+    /// going through gage at all leaves no line here, because there is
+    /// nothing to write it.
+    Sent,
 }
 
 impl Event {
@@ -232,8 +261,30 @@ impl Event {
             Event::Opened => "opened",
             Event::Duplicate => "duplicate",
             Event::Pruned => "pruned",
+            Event::Sent => "sent",
         }
     }
+}
+
+/// One addressee of a `Sent` entry.
+///
+/// Both halves, because neither alone answers the question asked after an
+/// incident. The handle is what a person typed and what they will remember;
+/// the key is what actually received it, and is the only half that still
+/// means something if the contact is renamed, retired or removed afterwards.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Addressee {
+    /// As given on the command line: a handle, or `group:name`.
+    pub named: String,
+    /// The key it resolved to, when it resolved to one. A group, or a name
+    /// not on the list, has none -- and the absence is the point, so it is
+    /// recorded as absent rather than as an empty string.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+    /// Whether a local route existed, so the bundle was delivered into
+    /// someone's inbox on this machine rather than left in a directory.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub routed: bool,
 }
 
 /// A thread id, or the fact that the sender sent something that was not one.
@@ -569,6 +620,9 @@ pub fn prune(keep: usize) -> std::io::Result<usize> {
         verdict: format!("{cut} earlier entries deleted; witness is a digest of their bytes"),
         thread: None,
         auto: None,
+        to: None,
+        items: None,
+        bytes: None,
         // The checkpoint itself starts the chain again, over what it
         // replaced, exactly as a first chained entry does over pre-chain
         // history.
@@ -807,8 +861,44 @@ pub fn entry_for(
         verdict: verdict.to_string(),
         thread: clean_thread(m.thread.as_deref()),
         auto: None,
+        to: None,
+        items: None,
+        bytes: None,
         prev: None, // set by `write_line`, under the lock
     }
+}
+
+/// Record that this machine sent a bundle, and to whom.
+///
+/// Takes the manifest it just signed rather than a directory, because at the
+/// moment of sending the bundle exists in a staging directory that is about
+/// to be delivered or moved, and naming a path here would record where the
+/// copy was rather than what left.
+///
+/// The witness is recomputed from the manifest bytes exactly as the receive
+/// side does, so the same bundle has the same witness on both machines and
+/// "did this reach them" is a comparison rather than a guess.
+pub fn record_sent(
+    m: &crate::manifest::Manifest,
+    manifest_bytes: &[u8],
+    to: Vec<Addressee>,
+) -> std::io::Result<()> {
+    let witness = crate::bundle::witness_of(&m.from.key, manifest_bytes);
+    let seq = crate::state::LocalState::load().seq;
+    // `verdict` on every other event is what this machine concluded about a
+    // sender. On a send there is no sender to judge -- the signer is this
+    // machine -- so it carries the disposition instead, and says which it is.
+    let routed = to.iter().filter(|a| a.routed).count();
+    let verdict = match (routed, to.len()) {
+        (0, _) => "sent (no local route)".to_string(),
+        (r, n) if r == n => "sent (delivered locally)".to_string(),
+        (r, n) => format!("sent ({r} of {n} delivered locally)"),
+    };
+    let mut e = entry_for(Event::Sent, m, &witness, &verdict, seq);
+    e.items = Some(m.items.len());
+    e.bytes = Some(m.total_bytes());
+    e.to = Some(to);
+    append(&e)
 }
 
 /// How many messages in this thread this machine has already auto-accepted.
@@ -970,6 +1060,9 @@ fn observe_one(
                 verdict: "UNREADABLE (no manifest this machine could parse)".to_string(),
                 thread: None,
                 auto: None,
+                to: None,
+                items: None,
+                bytes: None,
                 prev: None,
             };
             (key, e)
@@ -986,6 +1079,83 @@ fn observe_one(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // The send journal's wording is the whole of what it delivers: a line
+    // that says "sent" without saying whether it actually went anywhere is
+    // the kind of record that reads as reassurance. Each case below is a
+    // disposition a reader would draw a different conclusion from.
+    #[test]
+    fn a_send_says_how_much_of_it_was_delivered() {
+        let one = |named: &str, routed: bool| Addressee {
+            named: named.into(),
+            key: Some("k".into()),
+            routed,
+        };
+        // Mirrors the match in `record_sent`. Kept as a helper rather than
+        // calling it, because `record_sent` appends to the journal of
+        // whatever home the test process happens to have.
+        let verdict = |to: &[Addressee]| {
+            let r = to.iter().filter(|a| a.routed).count();
+            match (r, to.len()) {
+                (0, _) => "sent (no local route)".to_string(),
+                (r, n) if r == n => "sent (delivered locally)".to_string(),
+                (r, n) => format!("sent ({r} of {n} delivered locally)"),
+            }
+        };
+        assert_eq!(verdict(&[one("a", true)]), "sent (delivered locally)");
+        assert_eq!(verdict(&[one("a", false)]), "sent (no local route)");
+        // The case that must not round up to "delivered": some went, some
+        // are sitting in a directory waiting for a human to move them.
+        assert_eq!(
+            verdict(&[one("a", true), one("b", false)]),
+            "sent (1 of 2 delivered locally)"
+        );
+    }
+
+    // An addressee that resolved to no key is the interesting one: it means
+    // the bundle was addressed to a name this machine does not know, and the
+    // absence has to survive serialisation as an absence.
+    #[test]
+    fn an_unresolved_addressee_stays_unresolved() {
+        let a = Addressee {
+            named: "ghost".into(),
+            key: None,
+            routed: false,
+        };
+        let j = serde_json::to_string(&a).unwrap();
+        assert_eq!(j, r#"{"named":"ghost"}"#);
+        let back: Addressee = serde_json::from_str(&j).unwrap();
+        assert_eq!(back, a);
+    }
+
+    // Every other event must keep serialising without the send-only fields,
+    // or an upgrade rewrites the shape of lines already on disk and the
+    // chain over them stops verifying.
+    #[test]
+    fn the_send_fields_are_absent_on_every_other_event() {
+        let e = Entry {
+            n: 1,
+            seq: 0,
+            at: "2026-10-22T00:00:00Z".into(),
+            event: Event::Observed,
+            bundle: "abc".into(),
+            backfilled: false,
+            witness: "w".into(),
+            from_key: "k".into(),
+            author_key: None,
+            verdict: "verified".into(),
+            thread: None,
+            auto: None,
+            to: None,
+            items: None,
+            bytes: None,
+            prev: None,
+        };
+        let j = serde_json::to_string(&e).unwrap();
+        assert!(!j.contains("\"to\""), "{j}");
+        assert!(!j.contains("\"items\""), "{j}");
+        assert!(!j.contains("\"bytes\""), "{j}");
+    }
 
     #[test]
     fn a_thread_id_travels_and_anything_else_does_not() {
@@ -1052,6 +1222,9 @@ mod tests {
                 used: 0,
                 max: 2,
             }),
+            to: None,
+            items: None,
+            bytes: None,
             prev: None,
         };
         let have = vec![mk("aa", "parent"), mk("bb", "parent"), mk("cc", "other")];
@@ -1081,6 +1254,9 @@ mod tests {
             verdict: "SENDER VERIFIED".into(),
             thread: Some(Thread::Id("dd".into())),
             auto: None,
+            to: None,
+            items: None,
+            bytes: None,
             prev: None,
         };
         // Absent when a human did it: an ordinary accept must not be
@@ -1121,6 +1297,9 @@ mod tests {
             verdict: "SENDER VERIFIED".into(),
             thread: Some(Thread::Id("dd".into())),
             auto: None,
+            to: None,
+            items: None,
+            bytes: None,
             prev: None,
         };
         let s = serde_json::to_string(&e).unwrap();

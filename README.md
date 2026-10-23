@@ -1052,7 +1052,7 @@ Every other record in gage is an artifact -- a bundle in `pending`, a copy in
 says *what this machine decided*, and the moment anything happens while nobody
 is watching, that is the only question worth asking.
 
-One line per event: `observed`, `accepted`, `rejected`, `opened`.
+One line per event: `observed`, `accepted`, `rejected`, `opened`, `sent`.
 
 **`observed`, not `arrived`.** `at` is when a scan happened to run, not when
 anything was placed anywhere -- a bundle can even be placed and removed between
@@ -1069,6 +1069,34 @@ recomputed on read is a different answer wearing the same name. Retire a
 contact's key and the journal still shows the bundle observed as
 `SENDER VERIFIED`, with the later lines saying `RETIRED`; recomputation would
 have erased that.
+
+### What has left this machine
+
+    gage sent                     # one line per bundle sent, and to whom
+    gage sent --since 7d          # a window: m, h, d, w
+    gage sent --to dana           # by handle, or by key prefix
+
+Everything else in gage governs what an agent *accepts*. This is the one
+record of what it **sent** — who it was addressed to, whether the recipient
+was even on your list, how many items and how many bytes.
+
+**It is a record, not a control, and nothing above it is a control either.**
+There is no send allowlist, no first-contact gate and no rate ceiling, and
+that is a decision rather than an omission:
+[docs/adr-send-side-restraint.md](docs/adr-send-side-restraint.md). Every one
+of those controls would be enforced against your contact list, and an agent
+with `gage mcp` can add a confirmed contact to that list by itself, in two
+calls, with no human — `gage_pair_start` hands it the word-pairs and
+`gage_pair_confirm` takes them back. A control enforced against a value the
+attacker can write is theatre, and this project would rather say so than ship
+one.
+
+Two things it does not cover, both stated by the command itself. Sends are
+recorded from 0.3.2 onwards, so an empty list on a machine upgraded today is
+not evidence that nothing was sent. And `gage anchor send` is excluded: an
+anchor publishes the digest of the journal's own head, so recording it would
+move that head the moment it was published and two anchors could never name
+the same entry — which is precisely how a contradiction is detected.
 
 What a difference between two lines is *not* is proof of a key change. It
 could also be a backfilled first entry, a verdict computed after acceptance, a

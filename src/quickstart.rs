@@ -198,6 +198,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         lan: false,
         agent: None,
         model: None,
+        record_send: true,
     };
     let mut say = Vec::new();
     let sent = crate::outbound::send_bundle(args, &mut say);

@@ -96,12 +96,20 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 pub fn now_rfc3339() -> String {
-    // Seconds since epoch rendered as a UTC timestamp, without pulling in a
-    // date crate for one format string.
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
+    rfc3339(secs)
+}
+
+/// A UTC timestamp from seconds since the epoch.
+///
+/// Split out from `now_rfc3339` so that a cutoff -- "sends in the last 7
+/// days" -- is formatted by the same code that writes the field it will be
+/// compared against. Two formatters for one format is how a comparison that
+/// looks like string equality stops being one.
+pub fn rfc3339(secs: i64) -> String {
     let days = secs / 86_400;
     let tod = secs % 86_400;
     let (mut y, mut d) = (1970i64, days);

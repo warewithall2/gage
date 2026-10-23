@@ -5,7 +5,7 @@
 //! one of its checks. There is one way out of this program.
 
 use crate::manifest::AgentInfo;
-use crate::{bundle, collect, identity, manifest, routes, scrub, state, trust};
+use crate::{bundle, collect, identity, journal, manifest, routes, scrub, state, trust};
 use std::path::PathBuf;
 
 /// Look for a bundle by id in pending and accepted. Used to inherit a thread
@@ -244,6 +244,23 @@ pub struct SendArgs {
     pub lan: bool,
     pub agent: Option<String>,
     pub model: Option<String>,
+    /// Write a `Sent` line to the journal. True for everything a person or
+    /// an agent sends; false for `gage anchor send`, and only for that.
+    ///
+    /// The reason is specific and was found by the suite rather than
+    /// reasoned out. An anchor publishes the digest of the journal's current
+    /// head. Journaling the anchor's own send appends an entry, so the head
+    /// moves the instant it is published, and two anchors can never name the
+    /// same index again -- which is exactly how `anchor record` detects a
+    /// contradiction: the same entry, published twice, with two digests. Four
+    /// checks went red and none of them was a flaky test.
+    ///
+    /// So anchors are excluded, and the exclusion is STATED in `gage sent`
+    /// rather than left as a hole where a careful reader would look. What is
+    /// being given up is small and bounded: an anchor carries a digest of
+    /// this machine's own journal, no user content, and goes only to a
+    /// contact already on the list.
+    pub record_send: bool,
 }
 
 /// Build and deliver a bundle.
@@ -279,6 +296,7 @@ pub fn send_bundle(
         lan,
         agent,
         model,
+        record_send,
     } = a;
     let r#type = type_in;
 
@@ -410,6 +428,41 @@ pub fn send_bundle(
             }
             routes::deliver(&stage, &dest)?;
             delivered.push(format!("{who} -> {}", dest.display()));
+        }
+    }
+    // The send journal. Here rather than in each caller for the same reason
+    // the outbound scan is here: a second send path that grew its own copy
+    // would eventually be missing it, and a log with a hole in it is worse
+    // than no log, because the hole is invisible.
+    //
+    // It is written AFTER delivery, so a line means the bundle was built,
+    // signed and placed -- not merely attempted. The cost of that ordering is
+    // the crash window: a process that dies between `deliver` and this append
+    // has sent something it did not record. Recording first would invert the
+    // lie rather than remove it, and claiming a send that did not happen is
+    // the worse of the two for a log whose whole purpose is answering "what
+    // left".
+    //
+    // A failure to write it does NOT fail the send. The bundle has already
+    // gone; returning an error here would tell the caller it did not, which
+    // is a worse record than a missing line. It is said out loud instead.
+    if record_send {
+        let contacts = trust::Contacts::load();
+        let addressees: Vec<journal::Addressee> = to
+            .iter()
+            .map(|who| journal::Addressee {
+                named: who.clone(),
+                key: contacts.key_for_name(who),
+                routed: routes.home_of(who).is_some(),
+            })
+            .collect();
+        let manifest_bytes = std::fs::read(sent.join("manifest.json"))
+            .or_else(|_| std::fs::read(stage.join("manifest.json")))
+            .unwrap_or_default();
+        if let Err(e) = journal::record_sent(&m, &manifest_bytes, addressees) {
+            say.push(format!(
+                "  warning: the bundle went but the send journal did not record it: {e}"
+            ));
         }
     }
     say.push(format!(

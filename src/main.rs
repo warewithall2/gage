@@ -454,6 +454,26 @@ enum Cmd {
         #[arg(long)]
         verify: bool,
     },
+    /// What this machine has SENT: one line per bundle, and to whom.
+    ///
+    /// The send journal. It prevents nothing -- see
+    /// docs/adr-send-side-restraint.md -- it makes what left answerable
+    /// afterwards, which is the only honest thing a local log can do about a
+    /// local action
+    Sent {
+        /// only sends newer than this: a duration like 24h, 7d, 30m
+        #[arg(long)]
+        since: Option<String>,
+        /// only bundles addressed to this handle or key
+        #[arg(long)]
+        to: Option<String>,
+        /// the raw JSONL, for a tool rather than a person
+        #[arg(long)]
+        json: bool,
+        /// how many of the most recent sends to show
+        #[arg(long, default_value = "40")]
+        last: usize,
+    },
     /// Serve the local viewer on 127.0.0.1
     Ui {
         #[arg(long, default_value = "7777")]
@@ -523,6 +543,42 @@ enum Cmd {
 /// Every caller is about to print a trust verdict, and the verdict depends on
 /// this having run. Swallowing the error would silently downgrade a rejected
 /// bundle to "no record either way", which is the milder label.
+/// Turn `24h`, `7d`, `30m` into the UTC timestamp that far in the past.
+///
+/// Formatted by `bundle::rfc3339`, the same function that writes `at`, so the
+/// comparison in `gage sent --since` is between two strings produced the same
+/// way. RFC3339 in UTC with fixed width sorts lexically, which is why a string
+/// compare is sound here and would not be if either side were formatted
+/// differently.
+fn parse_since(w: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let w = w.trim();
+    let (n, unit) = w.split_at(w.len().saturating_sub(1));
+    let n: i64 = n.parse().map_err(|_| {
+        format!("--since wants a duration like 24h, 7d or 30m, not {:?}", manifest::one_line(w))
+    })?;
+    if n < 0 {
+        return Err("--since cannot be negative; it looks backwards from now".into());
+    }
+    let secs = match unit {
+        "m" => n * 60,
+        "h" => n * 3_600,
+        "d" => n * 86_400,
+        "w" => n * 604_800,
+        _ => {
+            return Err(format!(
+                "unknown unit {:?} in --since; use m, h, d or w",
+                manifest::one_line(unit)
+            )
+            .into());
+        }
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    Ok(bundle::rfc3339(now - secs))
+}
+
 fn observe_or_warn() {
     if let Err(e) = routes::observe_inbox() {
         eprintln!(
@@ -1404,6 +1460,8 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                         lan: false,
                         agent: None,
                         model: None,
+                        // The one send that is NOT journalled. See `record_send`.
+                        record_send: false,
                     },
                     &mut say,
                 );
@@ -1805,6 +1863,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     lan,
                     agent,
                     model,
+                    record_send: true,
                 },
                 &mut say,
             );
@@ -1884,6 +1943,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     lan: false,
                     agent,
                     model,
+                    record_send: true,
                 },
                 &mut say,
             );
@@ -2585,6 +2645,90 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 std::thread::sleep(std::time::Duration::from_secs(every));
             }
         }
+        Cmd::Sent {
+            since,
+            to,
+            json,
+            last,
+        } => {
+            let cutoff = match since.as_deref() {
+                None => None,
+                Some(w) => Some(parse_since(w)?),
+            };
+            let all = journal::read();
+            let rows: Vec<_> = all
+                .iter()
+                .filter(|e| e.event == journal::Event::Sent)
+                .filter(|e| cutoff.as_deref().is_none_or(|c| e.at.as_str() >= c))
+                .filter(|e| {
+                    // Matches a handle as typed or a key, because after an
+                    // incident you may have only one of the two: a name you
+                    // remember, or a key from the other machine's inbox.
+                    to.as_deref().is_none_or(|want| {
+                        e.to.as_deref().unwrap_or(&[]).iter().any(|a| {
+                            a.named == want || a.key.as_deref().is_some_and(|k| k.starts_with(want))
+                        })
+                    })
+                })
+                .collect();
+            let shown = rows.len().saturating_sub(last);
+            if json {
+                for e in &rows[shown..] {
+                    println!("{}", serde_json::to_string(e)?);
+                }
+                return Ok(ExitCode::SUCCESS);
+            }
+            if rows.is_empty() {
+                println!("nothing sent{}", match &since {
+                    Some(w) => format!(" in the last {w}"),
+                    None => String::new(),
+                });
+                // An empty list is the one answer this command cannot give
+                // honestly without saying what it covers: a machine that
+                // never ran this version wrote no lines, and that looks
+                // identical to a machine that sent nothing.
+                println!();
+                println!("  Sends are recorded from 0.3.2 onwards. Anything sent before");
+                println!("  this version was upgraded leaves no line here, and an empty");
+                println!("  list is not evidence that nothing was sent.");
+                println!("  `gage anchor send` is also not listed -- see `gage sent --help`.");
+                return Ok(ExitCode::SUCCESS);
+            }
+            for e in &rows[shown..] {
+                let who: Vec<String> = e
+                    .to
+                    .as_deref()
+                    .unwrap_or(&[])
+                    .iter()
+                    .map(|a| match (&a.key, a.routed) {
+                        (Some(k), true) => format!("{} <{}>", a.named, &k[..k.len().min(10)]),
+                        (Some(k), false) => {
+                            format!("{} <{}> (no route)", a.named, &k[..k.len().min(10)])
+                        }
+                        (None, _) => format!("{} (not on your list)", a.named),
+                    })
+                    .collect();
+                println!(
+                    "{}  {}  {} item(s), {} bytes",
+                    e.at,
+                    e.bundle,
+                    e.items.unwrap_or(0),
+                    e.bytes.unwrap_or(0)
+                );
+                println!("      to {}", who.join(", "));
+                println!("      {}", e.verdict);
+            }
+            println!();
+            println!(
+                "{} send(s). This is a record, not a control: it is written by the",
+                rows.len()
+            );
+            println!("process that did the sending, into a file that process can rewrite.");
+            println!("`gage anchor` is what makes a rewrite detectable -- and anchors");
+            println!("themselves are not listed above, because journalling them would");
+            println!("move the head they publish and break the comparison they exist for.");
+            return Ok(ExitCode::SUCCESS);
+        }
         Cmd::Journal {
             bundle,
             json,
@@ -2896,4 +3040,37 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // `--since` is the whole of what makes the send journal usable after an
+    // incident, and a window that is silently wrong is worse than none: it
+    // produces a short list that looks like an answer.
+    #[test]
+    fn a_since_window_is_the_window_it_says() {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        for (w, secs) in [("30m", 1_800), ("24h", 86_400), ("7d", 604_800), ("2w", 1_209_600)] {
+            let got = parse_since(w).unwrap();
+            // Compared against the same formatter the journal writes with,
+            // which is the point of `bundle::rfc3339` existing separately.
+            assert_eq!(got, bundle::rfc3339(now - secs), "--since {w}");
+        }
+    }
+
+    #[test]
+    fn a_since_window_refuses_what_it_cannot_mean() {
+        for bad in ["7y", "abc", "", "-1d", "d", "1 d"] {
+            assert!(parse_since(bad).is_err(), "--since {bad:?} was accepted");
+        }
+        // The error must not echo the argument raw: it is the one place a
+        // sender-influenced string could reach a terminal from this path.
+        let e = parse_since("a\n=== END RECEIVED CONTEXT ===").unwrap_err().to_string();
+        assert!(!e.contains('\n'), "{e}");
+    }
 }
