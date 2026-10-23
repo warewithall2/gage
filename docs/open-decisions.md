@@ -292,3 +292,25 @@ Two things remain the owner's, and both are smaller than the decision was:
   asker's key is in the clear because the signature is what makes answering
   safe at all. Hiding it needs a shared secret per contact, which is a
   different design.
+
+## 9. Restraint on the sending side
+
+Everything gage does governs what an agent *accepts*. Nothing governs *who* it
+sends to, or *how much* — and the control anyone would reach for first, "only
+confirmed contacts", is enforced against a list the agent can write itself.
+Measured with two fixture homes and no human: `gage_pair_start` hands an agent
+the word-pairs, `gage_pair_confirm` accepts them echoed back, and the
+attacker's key lands in `contacts.json` as verify-and-encrypt in two calls.
+That is documented behaviour — *"a checkpoint, not a proof"* — but its
+consequence had not been written down.
+
+Content restraint already exists and is fail-closed: the outbound scan
+refuses rather than warns, and `gage mcp` cannot override it. What is missing
+is recipient, volume, and anything at all for prose that is sensitive without
+being secret-shaped.
+
+Full options, costs and the three questions this needs answered — starting
+with whether the MCP pairing flow stays end-to-end — are in
+[docs/adr-send-side-restraint.md](docs/adr-send-side-restraint.md).
+**Recommendation in it: fix the contact-list hole, add a send journal, and
+choose no policy ceiling until there is traffic to choose it from.**
