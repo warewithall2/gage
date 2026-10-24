@@ -103,7 +103,12 @@ button{background:none;border:0;cursor:pointer}
    Rows: bar, the stale banner (zero-height until there is one), content. */
 .app{display:grid;grid-template-columns:var(--rail) 1fr;
   grid-template-rows:auto auto 1fr;height:100dvh}
+/* min-width:0 and the wrap because this bar spans both grid columns: its
+   min-content width -- brand, three tabs, handle -- otherwise becomes the
+   floor for the whole grid, and the panes below inherit a window wider than
+   the window. */
 .topbar{grid-column:1/-1;grid-row:1;display:flex;align-items:center;gap:var(--s3);
+  flex-wrap:wrap;min-width:0;
   padding:var(--s3) var(--s4);border-bottom:1px solid var(--line);background:var(--sheet)}
 .stale{grid-column:1/-1;grid-row:2}
 .left{grid-column:1;grid-row:3}
@@ -134,7 +139,11 @@ button{background:none;border:0;cursor:pointer}
   display:grid;place-items:center;background:var(--accent);color:var(--accent-ink)}
 .logo svg{width:var(--s5);height:var(--s5);display:block}
 .wordmark{font-weight:var(--w3);font-size:var(--t4);letter-spacing:-.01em}
-.whoami{margin-left:auto;text-align:right;min-width:0}
+/* The handle is this machine's own, and the CLI accepts a longer one than
+   the wizard's 40 characters. Unclamped it widened the topbar past the
+   window and gave the whole page a horizontal scrollbar. */
+.whoami{margin-left:auto;text-align:right;min-width:0;max-width:34ch;overflow:hidden}
+.whoami .h,.whoami .k{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .whoami .h{font-size:var(--t2);font-weight:var(--w2);color:var(--dim)}
 .whoami .k{font-family:var(--mono);font-size:var(--t1);color:var(--faint)}
 
@@ -313,9 +322,12 @@ textarea:focus{outline:none;border-color:var(--accent)}
 /* A trust decision is not two identical grey boxes. The act that extends
    trust is filled; the one that records a refusal -- which is reversible,
    and withholds nothing that doing nothing does not already withhold -- is
-   a quiet button. Neither borrows a verdict colour: the fill is the same
-   accent the tabs and the Send button already use, and the refusal is
-   neutral rather than red, because red here means a verdict. */
+   a quiet button. The fill is the same accent the tabs and the Send button
+   already use, and the refusal is neutral rather than red, because red here
+   means a verdict. One caveat, inherited from the palette rather than from
+   this rule: in dark mode --accent and --ok are the same green, so a filled
+   button and the Verified badge read alike. Deciding whether the verdict
+   green should diverge is a palette change and belongs with the palette. */
 .devbtn.go{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);
   font-weight:var(--w2)}
 .devbtn.go:hover{opacity:.88;color:var(--accent-ink);border-color:var(--accent)}
@@ -426,7 +438,6 @@ textarea:focus{outline:none;border-color:var(--accent)}
    cards it explains. */
 .hint{max-width:var(--measure);margin:var(--s6) auto 0;padding:0 var(--s5);color:var(--dim);
   font-size:var(--t3);line-height:1.7}
-.budwrap .hint{margin-inline:0}
 .hint h2{font-size:var(--t5);font-weight:var(--w3);color:var(--fg);
   letter-spacing:-.022em;margin-bottom:var(--s4)}
 .hint p{margin-bottom:var(--s4)}
@@ -1146,6 +1157,13 @@ function setTab(t){
   // are in is the heading of the section, where a heading belongs.
   const appEl=document.getElementById('app');
   if(appEl)appEl.classList.toggle('buds',wide);
+  // Under 880px the window is one column and `detail` hides the rail so a
+  // conversation can have the width. Buddies and Agents keep their controls
+  // in that rail, so leaving an open conversation has to clear it -- or the
+  // QR, the paste field and the create form are all display:none and the
+  // only control left on the pane is the Back arrow. It stays set while a
+  // conversation is open on Chats, so coming back lands where you left.
+  if(appEl)appEl.classList.toggle('detail', t==='chats' && !!SEL);
   if(t==='agents'){
     document.getElementById('title').textContent='Agents';
     const c=document.getElementById('composer'); if(c)c.hidden=true;
