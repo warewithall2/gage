@@ -43,7 +43,7 @@ say "gage selfcheck on $(uname -s) $(uname -m), $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 # so up front rather than letting the suite blame the code.
 BUSY=""
 for p in 7799 7809 7813 7817 7818 7819 7891 7892 7893 7895 7898 7903 7905 \
-         7931 7932 7933 7934 7935 7936; do
+         7931 7932 7933 7934 7935 7936 7937 7938 7939 7940; do
   if command -v ss >/dev/null 2>&1; then
     ss -ltn 2>/dev/null | grep -q ":$p " && BUSY="$BUSY $p"
   else

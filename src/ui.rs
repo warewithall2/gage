@@ -1815,6 +1815,20 @@ fn state_json() -> String {
         "groups": contacts.groups.iter().map(|(g, m)| serde_json::json!({
             "name": g, "members": m.len() })).collect::<Vec<_>>(),
         "routes": routes.local,
+        // The one thing the setup checklist cannot see from the lists above:
+        // whether a send has ever happened.
+        //
+        // Both halves are needed. The journal is the record, but a single
+        // non-UTF-8 byte anywhere in it -- a crash mid-append can cut a
+        // multibyte handle in half -- makes the whole file unreadable and
+        // every send in it vanish, which `gage sent` demonstrates too. The
+        // sender's own copy under `sent/` survives that, so a corrupt
+        // journal no longer un-sends what was sent. It is the weaker of the
+        // two on its own, because a staged bundle lands there as well.
+        "ever_sent": crate::journal::has_sent()
+            || std::fs::read_dir(crate::routes::sent_dir(&me))
+                .map(|mut d| d.next().is_some())
+                .unwrap_or(false),
     })
     .to_string()
 }
