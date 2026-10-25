@@ -828,6 +828,27 @@ pub fn read() -> Vec<Entry> {
     read_unlocked()
 }
 
+/// Whether this machine has ever sent a bundle.
+///
+/// The setup checklist asks one question of the log -- has a send ever
+/// happened -- and the page asks it every poll, so this stops at the first
+/// `Sent` line rather than parsing the whole history into `Entry` values
+/// the way `read` does. A log with no send in it is still read end to end,
+/// which is the cost of answering "not yet" truthfully.
+///
+/// `anchor send` is deliberately not journalled, so it cannot satisfy this.
+/// That is the right answer: publishing a head is not handing work to
+/// somebody, and the step this backs is about the latter.
+pub fn has_sent() -> bool {
+    let Ok(text) = std::fs::read_to_string(path()) else {
+        return false;
+    };
+    text.lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|l| serde_json::from_str::<Entry>(l).ok())
+        .any(|e| e.event == Event::Sent)
+}
+
 /// Build an entry from a loaded bundle, taking the verdict as given.
 ///
 /// The verdict is passed in rather than recomputed, for the same reason

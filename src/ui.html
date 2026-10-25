@@ -299,6 +299,30 @@ textarea:focus{outline:none;border-color:var(--accent)}
   margin:0 0 var(--s3) var(--s2)}
 .lanhead .dot{width:var(--s2);height:var(--s2);border-radius:var(--r3);background:var(--faint);flex:none}
 .lanhead .dot.on{background:var(--ok);box-shadow:0 0 0 var(--s1) color-mix(in srgb,var(--ok) 20%,transparent)}
+/* Setup is one column. There is nothing to put beside a checklist, and the
+   rail's three jobs -- the thread list, this machine's identity, the agent
+   form -- each belong to one of the other tabs. */
+.app.solo{grid-template-columns:1fr}
+.app.solo .left{display:none}
+/* The pane has to move with the column it lives in. Hiding the rail without
+   this leaves .right in an implicit second column and the checklist pinned
+   to the right half of an otherwise empty window. */
+.app.solo .right{grid-column:1}
+.setup{max-width:var(--measure);margin-inline:auto;width:100%}
+/* The heading sits in the same column as the cards it introduces: .hint
+   carries a side padding meant for prose standing alone under a pane. */
+.setup > .hint{padding-inline:0;margin-top:0}
+/* A step's sentence is prose. .devfp is monospace because what it usually
+   holds is a key, and a paragraph set in it reads as output rather than as
+   something written to be read. */
+.stept{font-size:var(--t2);color:var(--dim);margin-top:var(--s2);line-height:1.65}
+.step{display:flex;gap:var(--s3);align-items:flex-start}
+.stepn{font-family:var(--mono);font-size:var(--t1);color:var(--faint);
+  min-width:2ch;padding-top:.25em}
+.stepb{flex:1;min-width:0}
+/* A satisfied step recedes. It is still readable, and still states the fact
+   that satisfies it, but it has stopped being something to do. */
+.dev.done{background:var(--sheet)}
 .dev{border:1px solid var(--line);border-radius:var(--r2);padding:var(--s3);
   margin-bottom:var(--s2);background:var(--bg);transition:border-color var(--ease)}
 .dev.sel{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-soft)}
@@ -509,6 +533,7 @@ textarea:focus{outline:none;border-color:var(--accent)}
     <div class="msgs" id="msgs"></div>
     <div class="composer" id="composer" hidden></div>
     <div class="msgs" id="budpane" hidden></div>
+    <div class="msgs" id="setuppane" hidden></div>
   </div>
 </div>
 <div class="wizard" id="wizard" hidden aria-live="polite"></div>
@@ -988,7 +1013,7 @@ async function lanLoad(){
     // The relay address lives in the same poll rather than a timer of its
     // own: it changes only when somebody presses the switch below it.
     const sr=await fetch('/api/state');
-    if(sr.ok){const st=await sr.json();RELAY=st.relay||null;
+    if(sr.ok){const st=await sr.json();ST=st;RELAY=st.relay||null;
       // The suggested address comes from the binary. The page deliberately
       // contains no URL of any kind -- a test asserts it -- so that nothing
       // in the viewer can point a reader anywhere but this machine.
@@ -999,6 +1024,7 @@ async function lanLoad(){
   }
   lanRender();
   netRender();
+  if(TAB==='setup')setupRender();
 }
 lanLoad();setInterval(lanLoad,2000);
 
@@ -1010,6 +1036,9 @@ lanLoad();setInterval(lanLoad,2000);
 // "not yet" makes refusing feel like ignoring, and the way to stop being
 // asked becomes saying yes.
 let BUD={buddies:[],requests:[],refused:[]}, TAB='chats';
+// The last /api/state. The setup checklist is derived from it rather than
+// from anything this tab keeps for itself.
+let ST=null;
 let AGENTS=null, AGNAME='', AGBUSY=false, AGERR='', AGHOST='claude_code', AGNEW=null;
 // Which card has had Remove pressed once. Deleting an identity key is the
 // one act in gage that cannot be undone, so the first press arms and the
@@ -1053,11 +1082,18 @@ function tabsRender(){
   const el=document.getElementById('tabs');
   if(!el)return;
   const n=BUD.requests.length;
+  const open=setupOpenCount();
   el.innerHTML=
     `<button class="tab${TAB==='chats'?' on':''}" onclick="setTab('chats')">Chats</button>`
    +`<button class="tab${TAB==='buddies'?' on':''}" onclick="setTab('buddies')">Buddies`
    +(n?`<span class="bdg">${n}</span>`:'')+`</button>`
-   +`<button class="tab${TAB==='agents'?' on':''}" onclick="setTab('agents')">Agents</button>`;
+   +`<button class="tab${TAB==='agents'?' on':''}" onclick="setTab('agents')">Agents</button>`
+    // The badge is the count of steps still open, in the same place and the
+    // same shape as the pending-request badge. Once setup is done the tab
+    // stays -- it is also the answer to "how do I do that again" -- but it
+    // stops asking for anything.
+   +`<button class="tab${TAB==='setup'?' on':''}" onclick="setTab('setup')">Setup`
+   +(open?`<span class="bdg">${open}</span>`:'')+`</button>`;
 }
 // The add-line QR. Fetched once: it does not change while this page is
 // open, and it must not ride the 2.5s poll. Inserted as markup. An image
@@ -1141,6 +1177,7 @@ function setTab(t){
   // kind of small thing that makes a tool feel untrustworthy.
   hashSync();
   const wide = (t==='buddies'||t==='agents');
+  const solo = (t==='setup');
   // One shell. The rail never goes away: what changes is which half of it is
   // showing -- the thread list on Chats, this machine's own identity on
   // Buddies, the form that makes an agent one on Agents.
@@ -1150,13 +1187,15 @@ function setTab(t){
                           // showing. It used to keep the Chats empty state --
                           // "Pick a conversation" -- next to the buddy list,
                           // which reads as a page that half-loaded.
-                          ['msgs',t==='chats'],['budpane',wide]]){
+                          ['msgs',t==='chats'],['budpane',wide],['setuppane',solo]]){
     const el=document.getElementById(id); if(el)el.hidden=!show;
   }
   // The rail says the product name and keeps saying it; which section you
   // are in is the heading of the section, where a heading belongs.
   const appEl=document.getElementById('app');
   if(appEl)appEl.classList.toggle('buds',wide);
+  // Setup has no rail: the column collapses rather than standing empty.
+  if(appEl)appEl.classList.toggle('solo',solo);
   // Under 880px the window is one column and `detail` hides the rail so a
   // conversation can have the width. Buddies and Agents keep their controls
   // in that rail, so leaving an open conversation has to clear it -- or the
@@ -1180,6 +1219,15 @@ function setTab(t){
     if(INVITE===null)inviteLoad(false).then(()=>{if(TAB==='buddies'){
       budRender(true);
     }});
+  }else if(t==='setup'){
+    document.getElementById('title').textContent='Setup';
+    const c=document.getElementById('composer'); if(c)c.hidden=true;
+    const se=document.getElementById('settle'); if(se)se.hidden=true;
+    document.getElementById('hstate').textContent='';
+    // The agent list decides step 2, so this tab needs it even if the Agents
+    // tab has never been opened.
+    if(AGENTS===null)agentLoad().then(()=>{if(TAB==='setup')setupRender()});
+    setupRender();
   }else{
     document.getElementById('title').textContent='Conversations';
   }
@@ -1193,11 +1241,13 @@ function hashSync(){
   let h='';
   if(TAB==='buddies')h = ASK ? '#buddies='+encodeURIComponent(ASK) : '#buddies';
   if(TAB==='agents')h = '#agents';
+  if(TAB==='setup')h = '#setup';
   try{ history.replaceState(null,'',h||location.pathname); }catch(e){}
 }
 function hashRead(){
   const h=decodeURIComponent(location.hash||'');
   if(h==='#agents'){ TAB='agents'; return; }
+  if(h==='#setup'){ TAB='setup'; return; }
   if(!h.startsWith('#buddies'))return;
   TAB='buddies';
   const i=h.indexOf('=');
@@ -1558,6 +1608,123 @@ function budConnect(k){
 }
 function budDecline(k,undo){ budPost('/api/decline',{key:k,undo:!!undo}); }
 
+// ---------------------------------------------------------------------------
+// Setup
+// ---------------------------------------------------------------------------
+// Five steps, every one of them derived from the same state the rest of this
+// page renders, and none of them from a flag this tab keeps for itself. The
+// project already carries three written setup narratives -- the README, the
+// first-tester packet, and the first-run guide below -- and a fourth written
+// in here would be the copy nobody updates. A derived checklist cannot
+// disagree with the panes it points at, because it is reading what they read.
+//
+// A satisfied step states the fact that satisfies it rather than showing a
+// tick: "me, four word-pairs" is something a person can check, a tick is a
+// claim. No step borrows a verdict colour. A step is not a trust decision,
+// and in this app a green badge means a key was verified.
+//
+// Each open step names the one action and then sends you to the pane that
+// already does it. It never restates a control or a ceremony, because two
+// implementations of the pairing gate is how the gate shipped broken once.
+function setupSteps(){
+  const agentNames=(AGENTS||[]).map(a=>a.name);
+  // Contacts and this machine's own agents share one list on disk, so the
+  // people have to be separated out -- otherwise wiring an agent would
+  // quietly satisfy "somebody else's key is on your list", which is the one
+  // step no amount of local setup can satisfy.
+  const people=((ST&&ST.contacts)||[]).filter(c=>!agentNames.includes(c.name));
+  const routed=people.filter(c=>c.routed);
+  const nearby=((LAN&&LAN.devices)||[]).length;
+  const arrived=(((ST&&ST.pending)||[]).length)+(((ST&&ST.accepted)||[]).length);
+  // Deliberately "exists", not "works". /api/agents reports a grant line for
+  // every agent, but that line is the one you are meant to paste -- it is a
+  // suggestion, not evidence that any authority file contains it, and this
+  // page cannot see whether an assistant ever loaded the config. A step that
+  // claimed otherwise would be a tick standing in for a fact.
+  const agents=(AGENTS||[]);
+  const names=a=>a.map(x=>x.name).join(', ');
+  return [
+    {t:'This machine has an identity',
+     done:!!(ST&&ST.has_identity&&ST.me),
+     fact:(ST&&ST.me)?ST.me.handle+' · '+ST.me.key.slice(0,12)+'…':'',
+     mono:true,
+     act:'Choose a handle and create a key. The guide that opens on a first '
+        +'run does exactly this, and nothing else here can be done until it has.',
+     go:null,goL:''},
+    {t:'An agent identity exists here',
+     done:agents.length>0,
+     fact:agents.length
+         ?names(agents)+' — whether your assistant has loaded the config '
+          +'is not something this page can see'
+         :'',
+     act:'Create one on the Agents tab. It writes the config your assistant '
+        +'reads, with this machine’s real paths already in it; pasting '
+        +'that config into the assistant is the half that happens outside gage.',
+     go:'agents',goL:'Open Agents'},
+    {t:'Somebody else’s key is on your list',
+     done:people.length>0,
+     fact:people.length?(people.length+' '+(people.length===1?'person':'people')+': '+names(people)):'',
+     act:'Hand them your invite from the Buddies tab, or paste theirs, and '
+        +'compare all four word-pairs aloud before you add them.',
+     go:'buddies',goL:'Open Buddies'},
+    {t:'You have a way to reach them',
+     done:routed.length>0||!!(ST&&ST.relay)||nearby>0,
+     fact:routed.length?(routed.length+' with a saved address: '+names(routed))
+         :(ST&&ST.relay)?'a relay is set'
+         :nearby?(nearby+' device'+(nearby===1?'':'s')+' on this network'):'',
+     act:'Run gage lan on both machines on the same network, or set a relay '
+        +'in the rail on Conversations. Neither is required to receive.',
+     go:'chats',goL:'Open Conversations'},
+    {t:'You have exchanged something real',
+     done:!!(ST&&ST.ever_sent)||arrived>0,
+     fact:(ST&&ST.ever_sent)
+         ?(arrived?'you have sent, and something has arrived':'you have sent')
+         :(arrived?'something has arrived':''),
+     act:'Send one small thing to somebody on your list. Publishing an anchor '
+        +'does not count: that is not handing work to a person.',
+     go:'chats',goL:'Open Conversations'},
+  ];
+}
+function setupOpenCount(){ return setupSteps().filter(s=>!s.done).length; }
+function setupRender(){
+  const el=document.getElementById('setuppane'); if(!el)return;
+  const steps=setupSteps(), open=steps.filter(s=>!s.done).length;
+  let h='<div class="setup">';
+  h+='<div class="hint"><h2>'
+    +(open?esc(open+' of '+steps.length+' left'):'Nothing left to set up')
+    +'</h2><p>'
+    +(open
+      ?'Each step reads this machine’s own state, so it answers for this '
+       +'machine and not for the project in general.'
+      :'This machine has an identity, an agent that can use it, somebody '
+       +'else’s confirmed key, a way to reach them, and a real exchange '
+       +'behind it.')
+    +'</p></div>';
+  steps.forEach((st,i)=>{
+    h+='<div class="dev'+(st.done?' done':'')+'"><div class="step">'
+      +'<span class="stepn">'+(i+1)+'</span><div class="stepb">'
+      +'<div class="devtop"><span class="devname">'+esc(st.t)+'</span>'
+      +'<span class="devtag">'+(st.done?'done':'not yet')+'</span></div>';
+    if(st.done&&st.fact)
+      h+='<div class="'+(st.mono?'devfp':'stept')+'">'+esc(st.fact)+'</div>';
+    if(!st.done){
+      h+='<div class="stept">'+esc(st.act)+'</div>';
+      if(st.go)h+='<div class="devrow"><button class="devbtn" onclick="setTab(\''
+        +st.go+'\')">'+esc(st.goL)+'</button></div>';
+    }
+    h+='</div></div></div>';
+  });
+  h+='<details class="disc"><summary>Where the longer instructions are</summary>'
+    +'<div class="hint"><p>This page deliberately contains no link: a viewer '
+    +'that can point you somewhere else is a browser, and a test asserts there '
+    +'is no address anywhere in it. For the long form, run <code>gage help</code> '
+    +'in a terminal, or read the project’s own first-tester packet, which '
+    +'walks two people through this same list in about twenty minutes.</p></div>'
+    +'</details>';
+  h+='</div>';
+  el.innerHTML=h;
+}
+
 async function budLoad(){
   try{
     const r=await fetch('/api/buddies');
@@ -1569,6 +1736,7 @@ async function budLoad(){
     AERR='Could not read your list: '+(e&&e.message?e.message:e);
   }
   tabsRender(); budRender();
+  if(TAB==='setup')setupRender();
 }
 budLoad();setInterval(budLoad,2500);
 hashRead();

@@ -320,6 +320,91 @@ async function nocreate([base]) {
 //
 // Two properties, and the first is the one that makes the second safe:
 // a single press must NOT remove anything, and the second press must.
+async function setup([fresh, bare, ready, person, agent]) {
+  const tags = async () =>
+    (await page.locator('#setuppane .dev .devtag').allTextContents()).map(t => t.trim());
+  const setupBadge = async () => {
+    const b = page.locator('button.tab', { hasText: 'Setup' }).locator('.bdg');
+    return (await b.count()) ? ((await b.first().textContent()) || '').trim() : '';
+  };
+
+  // --- A machine with nothing on it. Every step must say so.
+  //
+  // Reached by URL rather than by clicking the tab: this home has no
+  // identity, so the first-run guide is over the page and intercepts the
+  // click -- which is the right behaviour, and the reason the button is
+  // driven on `bare` below instead. The hash is the door a reload uses.
+  await page.goto(fresh + '/#setup');
+  if (!(await waitFor('#setuppane .dev', 'the setup checklist never rendered'))) return;
+  // Not settle(): that helper asserts the first-run guide is absent, and on
+  // this home it is correctly present and over the page.
+  await page.waitForTimeout(3200);
+
+  const t0 = await tags();
+  ok(t0.length === 5, 'the checklist showed ' + t0.length + ' steps, not 5');
+  ok(t0.every(t => t === 'not yet'),
+     'a machine with nothing set up had a step already satisfied: ' + JSON.stringify(t0));
+  ok((await setupBadge()) === '5',
+     'the tab badge read ' + JSON.stringify(await setupBadge()) + ' with five steps open');
+
+  // --- A machine with an identity and nothing else: the real day one.
+  await page.goto(bare + '/');
+  if (!(await waitFor('#list', 'the bare console never loaded'))) return;
+  await settle();
+  await page.locator('button.tab', { hasText: 'Setup' }).first().click();
+  if (!(await waitFor('#setuppane .dev', 'the checklist never rendered on the bare home'))) return;
+  await settle();
+
+  const t1 = await tags();
+  ok(t1[0] === 'done', 'an existing identity did not satisfy step one: ' + JSON.stringify(t1));
+  ok(t1.slice(1).every(t => t === 'not yet'),
+     'a machine with only an identity had more than step one satisfied: ' + JSON.stringify(t1));
+
+  // The button is the whole point of an open step: it is the thing that
+  // sends you where the work is. A handler that is a syntax error inside an
+  // attribute still renders a perfectly good button, which is how the copy
+  // button on this same page shipped broken.
+  const go = page.locator('#setuppane .devbtn', { hasText: 'Open Agents' }).first();
+  if (await go.count()) {
+    await go.click();
+    await settle();
+    ok(/#agents/.test(page.url()),
+       'the step button did not move to the Agents tab: ' + page.url());
+  } else {
+    failed++; console.log('  FAIL: an open step offered no way to go and do it');
+  }
+
+  // --- A machine that is fully set up.
+  await page.goto(ready + '/');
+  if (!(await waitFor('#list', 'the ready console never loaded'))) return;
+  await settle();
+  await page.locator('button.tab', { hasText: 'Setup' }).first().click();
+  if (!(await waitFor('#setuppane .dev', 'the checklist never rendered on the ready home'))) return;
+  await settle();
+
+  const t2 = await tags();
+  ok(t2.every(t => t === 'done'),
+     'a fully set-up machine still showed an open step: ' + JSON.stringify(t2));
+  ok((await setupBadge()) === '',
+     'the tab still carried a badge with every step done');
+
+  const head = await text('#setuppane .hint h2');
+  ok(/Nothing left/.test(head), 'the complete checklist reads: ' + JSON.stringify(head));
+
+  // The one that matters. Contacts and this machine's own agents share a
+  // file, so counting contacts would let `gage agent new` satisfy "somebody
+  // else's key is on your list" -- the single step that is supposed to need
+  // another human. The step must name the person and not the agent.
+  const rows = await page.locator('#setuppane .dev').allTextContents();
+  const people = rows.find(r => /key is on your list/.test(r)) || '';
+  ok(new RegExp(person).test(people),
+     'the contact step did not name the person: ' + JSON.stringify(people));
+  ok(!new RegExp('\\b' + agent + '\\b').test(people),
+     'an agent on this machine was counted as somebody else: ' + JSON.stringify(people));
+  ok(/1 person\b/.test(people),
+     'the contact step did not count one person: ' + JSON.stringify(people));
+}
+
 async function agentrm([base, keep, kill]) {
   await page.goto(base + '/');
   if (!(await waitFor('#list', 'the console never loaded'))) return;
@@ -379,7 +464,7 @@ async function agentrm([base, keep, kill]) {
      + JSON.stringify(said.slice(0, 200)));
 }
 
-const SCENARIOS = { buddies, firstrun, receive, settled, nocreate, agentrm };
+const SCENARIOS = { buddies, firstrun, receive, settled, nocreate, agentrm, setup };
 
 try {
   const run = SCENARIOS[mode];

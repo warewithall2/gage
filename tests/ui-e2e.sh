@@ -17,6 +17,9 @@ LANPORT="${UI_E2E_LISTEN_PORT:-7934}"
 STPORT="${UI_E2E_SETTLED_PORT:-7935}"
 NCPORT="${UI_E2E_NOCREATE_PORT:-7936}"
 AGPORT="${UI_E2E_AGENTRM_PORT:-7937}"
+SU1PORT="${UI_E2E_SETUP_FRESH_PORT:-7938}"
+SU2PORT="${UI_E2E_SETUP_BARE_PORT:-7939}"
+SU3PORT="${UI_E2E_SETUP_READY_PORT:-7940}"
 CHROME="${CHROME:-/usr/bin/chromium}"
 HERE=$(cd "$(dirname "$0")" && pwd)
 
@@ -32,7 +35,7 @@ fi
 T=$(mktemp -d)
 pids=""
 trap 'rm -rf "$T"; for p in $pids; do kill "$p" 2>/dev/null; done' EXIT
-mkdir -p "$T"/{u1,u2,u3,fa,fb,fc,fd,w}
+mkdir -p "$T"/{u1,u2,u3,fa,fb,fc,fd,fg,fh,fi,fj,w}
 fail=0
 
 # ---------------------------------------------------------------------------
@@ -208,6 +211,42 @@ d=json.load(open(sys.argv[1]))
 r=[v for v in d["retired"].values() if v["name"]=="goner"]
 sys.exit(0 if len(r)==1 and not r[0]["compromised"] and "goner" not in d["keys"].values() else 1)
 PY
+
+# ---------------------------------------------------------------------------
+# Scenario 7: the setup checklist, at both ends of its range.
+#
+# `fg` is an empty home: every step must say "not yet", because a checklist
+# that congratulates a machine with nothing on it is worse than no checklist.
+# `fh` has the lot -- identity, an agent, a confirmed person, a route to
+# them, and a send behind it.
+#
+# The assertion worth having is the last one. Contacts and this machine's own
+# agents share contacts.json, so a checklist that counted contacts would let
+# `gage agent new` satisfy "somebody else's key is on your list" -- the one
+# step that cannot be satisfied alone.
+# ---------------------------------------------------------------------------
+CTX_HOME=$T/fh $CTX init owner >/dev/null 2>&1
+CTX_HOME=$T/fh $CTX agent new helper >/dev/null 2>&1
+CTX_HOME=$T/fi $CTX init friend >/dev/null 2>&1
+CTX_HOME=$T/fh $CTX add friend "$(CTX_HOME=$T/fi $CTX whoami | cut -f2)" >/dev/null 2>&1
+CTX_HOME=$T/fh $CTX route friend "$T/fi" >/dev/null
+printf 'a first thing\n' > "$T/w/s.md"
+CTX_HOME=$T/fh $CTX send --to friend --type share --subject "hello" \
+  --prompt "$T/w/s.md" >/dev/null 2>&1
+# `fj` is the real day one: an identity and nothing else. It is also the only
+# one of the three where the step buttons can be driven -- on `fg` the
+# first-run guide is over the page and intercepts the click, which is the
+# behaviour that fixture exists to keep.
+CTX_HOME=$T/fj $CTX init dayone >/dev/null 2>&1
+CTX_HOME=$T/fg $CTX ui --port "$SU1PORT" > "$T/fg-ui.log" 2>&1 &
+pids="$pids $!"
+CTX_HOME=$T/fj $CTX ui --port "$SU2PORT" > "$T/fj-ui.log" 2>&1 &
+pids="$pids $!"
+CTX_HOME=$T/fh $CTX ui --port "$SU3PORT" > "$T/fh-ui.log" 2>&1 &
+pids="$pids $!"
+sleep 2
+scenario setup "http://127.0.0.1:$SU1PORT" "http://127.0.0.1:$SU2PORT" \
+  "http://127.0.0.1:$SU3PORT" friend helper
 
 echo
 [ "$fail" -eq 0 ] && echo "ui-e2e: ok" || echo "ui-e2e: $fail scenario(s) failed"

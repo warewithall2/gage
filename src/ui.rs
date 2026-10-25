@@ -1815,6 +1815,11 @@ fn state_json() -> String {
         "groups": contacts.groups.iter().map(|(g, m)| serde_json::json!({
             "name": g, "members": m.len() })).collect::<Vec<_>>(),
         "routes": routes.local,
+        // The one thing the setup checklist cannot see from the lists above:
+        // whether a send has ever happened. Arrival is visible in `pending`
+        // and `accepted`; a send leaves no bundle behind on this machine,
+        // only a journal line.
+        "ever_sent": crate::journal::has_sent(),
     })
     .to_string()
 }
