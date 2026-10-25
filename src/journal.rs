@@ -831,10 +831,15 @@ pub fn read() -> Vec<Entry> {
 /// Whether this machine has ever sent a bundle.
 ///
 /// The setup checklist asks one question of the log -- has a send ever
-/// happened -- and the page asks it every poll, so this stops at the first
-/// `Sent` line rather than parsing the whole history into `Entry` values
-/// the way `read` does. A log with no send in it is still read end to end,
-/// which is the cost of answering "not yet" truthfully.
+/// happened -- and the page asks it every poll, so this stops parsing at the
+/// first `Sent` line rather than building the whole history into `Entry`
+/// values the way `read` does. The file itself is read whole either way, and
+/// a log with no send in it is parsed end to end: that is the cost of
+/// answering "not yet" truthfully.
+///
+/// It inherits `read`'s whole-file failure on invalid UTF-8, so a single bad
+/// byte hides every send in the log. `/api/state` does not rely on this
+/// alone for that reason.
 ///
 /// `anchor send` is deliberately not journalled, so it cannot satisfy this.
 /// That is the right answer: publishing a head is not handing work to

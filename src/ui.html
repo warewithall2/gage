@@ -1226,10 +1226,14 @@ function setTab(t){
     document.getElementById('hstate').textContent='';
     // The agent list decides step 2, so this tab needs it even if the Agents
     // tab has never been opened.
-    if(AGENTS===null)agentLoad().then(()=>{if(TAB==='setup')setupRender()});
+    if(AGENTS===null)agentLoad().then(()=>{if(TAB==='setup'){setupRender();tabsRender()}});
     setupRender();
   }else{
     document.getElementById('title').textContent='Conversations';
+    // Setup hides the composer and the settle button on its way in. Only
+    // render() puts them back, and without this they stayed hidden until the
+    // next inbox poll -- up to 2.5s of a conversation with no way to reply.
+    render();
   }
   tabsRender(); budRender(true);
 }
@@ -1626,6 +1630,13 @@ function budDecline(k,undo){ budPost('/api/decline',{key:k,undo:!!undo}); }
 // Each open step names the one action and then sends you to the pane that
 // already does it. It never restates a control or a ceremony, because two
 // implementations of the pairing gate is how the gate shipped broken once.
+// Whether enough has arrived to answer any of this. Rendering steps from
+// state that has not loaded is how the checklist briefly told a machine with
+// two agents and one buddy that it knew three people: AGENTS starts null, so
+// the agent filter below was empty and this machine's own agents counted as
+// somebody else. Unknown is a third answer, and it has to be said out loud
+// rather than defaulted to either of the other two.
+function setupKnown(){ return ST!==null && AGENTS!==null; }
 function setupSteps(){
   const agentNames=(AGENTS||[]).map(a=>a.name);
   // Contacts and this machine's own agents share one list on disk, so the
@@ -1635,7 +1646,7 @@ function setupSteps(){
   const people=((ST&&ST.contacts)||[]).filter(c=>!agentNames.includes(c.name));
   const routed=people.filter(c=>c.routed);
   const nearby=((LAN&&LAN.devices)||[]).length;
-  const arrived=(((ST&&ST.pending)||[]).length)+(((ST&&ST.accepted)||[]).length);
+  const accepted=((ST&&ST.accepted)||[]).length;
   // Deliberately "exists", not "works". /api/agents reports a grant line for
   // every agent, but that line is the one you are meant to paste -- it is a
   // suggestion, not evidence that any authority file contains it, and this
@@ -1648,8 +1659,12 @@ function setupSteps(){
      done:!!(ST&&ST.has_identity&&ST.me),
      fact:(ST&&ST.me)?ST.me.handle+' · '+ST.me.key.slice(0,12)+'…':'',
      mono:true,
-     act:'Choose a handle and create a key. The guide that opens on a first '
-        +'run does exactly this, and nothing else here can be done until it has.',
+     act:(ST&&ST.has_identity)
+        ?'A key file is here but will not load, so this is not a first run '
+         +'and no guide will open over it. Nothing else can be done until it '
+         +'reads again -- check its permissions before anything writes.'
+        :'Choose a handle and create a key. The guide that opens on a first '
+         +'run does exactly this, and nothing else here can be done until it has.',
      go:null,goL:''},
     {t:'An agent identity exists here',
      done:agents.length>0,
@@ -1668,26 +1683,45 @@ function setupSteps(){
         +'compare all four word-pairs aloud before you add them.',
      go:'buddies',goL:'Open Buddies'},
     {t:'You have a way to reach them',
-     done:routed.length>0||!!(ST&&ST.relay)||nearby>0,
+     // All three are tied to somebody being on the list. A relay with nobody
+     // to send to is a configured address, and a stranger announcing on this
+     // network is not a way to reach anyone -- either one on its own used to
+     // satisfy this step.
+     done:routed.length>0||(people.length>0&&(!!(ST&&ST.relay)||nearby>0)),
      fact:routed.length?(routed.length+' with a saved address: '+names(routed))
-         :(ST&&ST.relay)?'a relay is set'
-         :nearby?(nearby+' device'+(nearby===1?'':'s')+' on this network'):'',
+         :(people.length>0&&ST&&ST.relay)?'a relay is set, and somebody is on your list'
+         :(people.length>0&&nearby)?(nearby+' device'+(nearby===1?'':'s')+' on this network'):'',
      act:'Run gage lan on both machines on the same network, or set a relay '
         +'in the rail on Conversations. Neither is required to receive.',
      go:'chats',goL:'Open Conversations'},
     {t:'You have exchanged something real',
-     done:!!(ST&&ST.ever_sent)||arrived>0,
+     // Accepted, not merely arrived. Anyone can put a bundle in front of you,
+     // including a stranger and a tampered one; accepting is the act that
+     // took it. A pending bundle is somebody else's doing, not an exchange.
+     done:!!(ST&&ST.ever_sent)||accepted>0,
      fact:(ST&&ST.ever_sent)
-         ?(arrived?'you have sent, and something has arrived':'you have sent')
-         :(arrived?'something has arrived':''),
+         ?(accepted?'you have sent, and accepted something':'you have sent')
+         :(accepted?'you have accepted something':''),
      act:'Send one small thing to somebody on your list. Publishing an anchor '
         +'does not count: that is not handing work to a person.',
      go:'chats',goL:'Open Conversations'},
   ];
 }
-function setupOpenCount(){ return setupSteps().filter(s=>!s.done).length; }
+// The badge counts nothing until the state it would count has arrived.
+function setupOpenCount(){ return setupKnown()?setupSteps().filter(s=>!s.done).length:0; }
+// The explanation keeps its own open flag, for the reason the buddies panel
+// does: this pane re-renders on a 2s poll, and a <details> rebuilt from
+// scratch shuts the paragraph you are reading within one tick.
+let SUWHY=false;
 function setupRender(){
   const el=document.getElementById('setuppane'); if(!el)return;
+  // Nothing is claimed before the state that would decide it has arrived.
+  if(!setupKnown()){
+    el.innerHTML='<div class="setup"><div class="hint"><h2>Reading this machine</h2>'
+      +'<p>The steps below are derived from this machine’s own state, so '
+      +'there is nothing to say until it has been read.</p></div></div>';
+    return;
+  }
   const steps=setupSteps(), open=steps.filter(s=>!s.done).length;
   let h='<div class="setup">';
   h+='<div class="hint"><h2>'
@@ -1696,8 +1730,13 @@ function setupRender(){
     +(open
       ?'Each step reads this machine’s own state, so it answers for this '
        +'machine and not for the project in general.'
-      :'This machine has an identity, an agent that can use it, somebody '
-       +'else’s confirmed key, a way to reach them, and a real exchange '
+      // Exactly the five predicates, and no more than they establish. An
+      // earlier version of this sentence said "an agent that can use it" and
+      // "somebody else's confirmed key"; neither is checked here. A key goes
+      // on your list when it is added, and comparing the word-pairs is a
+      // separate act this page cannot witness.
+      :'This machine has an identity, an agent identity, somebody else’s '
+       +'key on its list, a way to reach them, and a send or an acceptance '
        +'behind it.')
     +'</p></div>';
   steps.forEach((st,i)=>{
@@ -1714,7 +1753,8 @@ function setupRender(){
     }
     h+='</div></div></div>';
   });
-  h+='<details class="disc"><summary>Where the longer instructions are</summary>'
+  h+='<details class="disc"'+(SUWHY?' open':'')+' ontoggle="SUWHY=this.open">'
+    +'<summary>Where the longer instructions are</summary>'
     +'<div class="hint"><p>This page deliberately contains no link: a viewer '
     +'that can point you somewhere else is a browser, and a test asserts there '
     +'is no address anywhere in it. For the long form, run <code>gage help</code> '
@@ -1736,7 +1776,11 @@ async function budLoad(){
     AERR='Could not read your list: '+(e&&e.message?e.message:e);
   }
   tabsRender(); budRender();
-  if(TAB==='setup')setupRender();
+  // The agent list decides two of the five steps and was loaded exactly once,
+  // so `gage agent new` in a terminal left this tab describing the machine as
+  // it had been when the page opened. It is reloaded while this tab is the
+  // one showing, and nowhere else.
+  if(TAB==='setup'){ await agentLoad(); setupRender(); tabsRender(); }
 }
 budLoad();setInterval(budLoad,2500);
 hashRead();

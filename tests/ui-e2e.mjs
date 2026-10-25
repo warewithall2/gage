@@ -340,6 +340,14 @@ async function setup([fresh, bare, ready, person, agent]) {
   // this home it is correctly present and over the page.
   await page.waitForTimeout(3200);
 
+  // Not vacuous: the pane renders no step at all until /api/state and
+  // /api/agents have both answered, so five rows IS the evidence that the
+  // state arrived. Before that it says so, and that is asserted here --
+  // these same five "not yet" tags were once also what an unloaded page
+  // produced, which would have kept a server that never answered green.
+  const loading = await text('#setuppane');
+  ok(!/Reading this machine/.test(loading),
+     'the checklist was still waiting for state when it was asserted on');
   const t0 = await tags();
   ok(t0.length === 5, 'the checklist showed ' + t0.length + ' steps, not 5');
   ok(t0.every(t => t === 'not yet'),
@@ -403,6 +411,25 @@ async function setup([fresh, bare, ready, person, agent]) {
      'an agent on this machine was counted as somebody else: ' + JSON.stringify(people));
   ok(/1 person\b/.test(people),
      'the contact step did not count one person: ' + JSON.stringify(people));
+
+  // The app window is resizable and the rail is hidden on this tab, which is
+  // exactly the shape of change that leaves a pane in a grid column that is
+  // no longer there. Checked at a width below the 880px breakpoint, where
+  // the one-column rules take over.
+  await page.setViewportSize({ width: 420, height: 800 });
+  await page.waitForTimeout(400);
+  const narrow = await page.evaluate(() => {
+    const pane = document.getElementById('setuppane');
+    const r = pane.getBoundingClientRect();
+    const d = document.documentElement;
+    return { boxes: pane.getClientRects().length, w: Math.round(r.width),
+             rows: document.querySelectorAll('#setuppane .dev').length,
+             over: d.scrollWidth - d.clientWidth };
+  });
+  ok(narrow.boxes > 0 && narrow.w > 0 && narrow.rows === 5,
+     'the checklist was not on screen in a narrow window: ' + JSON.stringify(narrow));
+  ok(narrow.over === 0,
+     'the checklist scrolled sideways in a narrow window by ' + narrow.over + 'px');
 }
 
 async function agentrm([base, keep, kill]) {
