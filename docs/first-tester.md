@@ -102,7 +102,27 @@ you are on the same network, or by sending files to each other.
 
 Keep the output on screen. You need both parts next.
 
-## 3. Pair — the one part that needs two humans
+## 3. Open the page (about 1 minute)
+
+    gage ui
+
+Opens a local page at `http://127.0.0.1:7777`. Leave it running in its own
+terminal tab — everything below can be done from the terminal, but the page
+is the easier way to see where you are.
+
+It opens on **Setup**, a checklist of five things, each marked *done* or *not
+yet* with the evidence underneath. It is not a written guide: every line is
+read from this machine's own state, so it answers for your machine rather
+than for the project in general. Right now it should say two of the five are
+done. By the end of this test all five should be.
+
+The other three tabs: **Chats** is what has arrived and what you sent,
+**Buddies** is whose keys you have confirmed, **Agents** is for pointing an
+AI assistant at gage, which is beyond what this test needs.
+
+Nothing on this page leaves your machine, and it never reaches the network.
+
+## 4. Pair — the one part that needs two humans
 
 This is the step the whole thing rests on, and it is deliberately not
 automated. **Do this on a phone call or in person — not over the same
@@ -142,7 +162,7 @@ that prints a *different* four pairs for a different situation; if one of you
 uses it and the other does not, the words will not match even though nothing
 is wrong.
 
-## 4. Send each other something (about 10 minutes)
+## 5. Send each other something (about 10 minutes)
 
 Make two small files — any text will do. One is a question you want answered;
 one is a document the question is about.
@@ -171,13 +191,6 @@ If you have no relay, send them the `/tmp/pkg` directory as a zip, or run
 
 Read what it prints carefully — this is the part we most want your reaction
 to. Now swap roles, so each of you has sent one and received one.
-
-## 5. Optional: the window
-
-    gage ui
-
-Opens a local page at `http://127.0.0.1:7777` showing your conversations and
-who is on your list. Nothing leaves your machine.
 
 ## 6. Optional: keep a copy of your key
 
@@ -210,8 +223,10 @@ By the end you should have:
 - [ ] An opened bundle where, **before** you see any of the content, you are
       told who signed it, whether that key is on your list, and that nothing
       inside carries any authority. It should say `SENDER VERIFIED`.
+- [ ] The Setup tab showing all five steps done.
 
-That last one is the product. Everything else is plumbing to get you there.
+That second-to-last one is the product. Everything else is plumbing to get you
+there.
 
 If a step failed and you could not finish, that is still a successful test.
 Stop where you are and answer the questions.

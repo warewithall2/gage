@@ -1,5 +1,91 @@
 # Changelog
 
+## 0.3.3 — 2026-10-26
+
+**One viewer, and a checklist that reads the machine.** Everything here is the
+local page. No protocol change, no new command, and a 0.3.2 machine and a
+0.3.3 machine exchange bundles exactly as before.
+
+### Added
+
+- **A Setup tab** that answers "am I set up?" from this machine's own state
+  rather than from a page somebody wrote once. Five steps — an identity, an
+  agent identity, somebody else's key on your list, a way to reach them, one
+  real exchange — each marked done or not yet with the evidence underneath,
+  and a badge counting what is open.
+
+  It is derived rather than written because three setup narratives already
+  existed (the README, `docs/first-tester.md`, the first-run wizard) and a
+  fourth prose page would have drifted from the other three. A checklist that
+  reads `state_json` cannot.
+
+  Each step claims only what it checks, which cost more than it sounds.
+  "A way to reach them" needs somebody on your list, not merely a relay
+  configured or a stranger announcing on the network. "Exchanged something
+  real" counts an *accepted* bundle, not one that merely arrived — arrival is
+  not consent, and a tampered bundle arrives too. Step 2 says "an agent
+  identity exists here" and admits in the same line that whether your
+  assistant loaded the config is not something this page can see.
+
+- **`journal::has_sent()`** and `"ever_sent"` in the UI state, backing step
+  five. It short-circuits at the first `Sent` event, and falls back to the
+  `sent/` copy on disk when the journal cannot be read — one non-UTF-8 byte
+  makes the whole file unreadable, and a send that happened should not become
+  a send that did not.
+
+### Changed
+
+- **One shell for all four tabs.** Chats, Buddies, Agents and Setup now share
+  a rail and a pane instead of each tab rebuilding the page, and the QR and
+  the `gage add` line sit at the top of the Buddies rail rather than fifth and
+  below the fold — they are the only things on that screen another person
+  needs.
+
+- **Green is a verdict, and the accent is no longer green.** The interactive
+  accent and `--ok` were the same paint: identical in dark mode, two degrees
+  of hue apart in light. A filled Accept button, a selected tab and the SENDER
+  VERIFIED badge were one colour — the strongest claim this program makes,
+  spent on an invitation to press something. The accent is now blue, which
+  asserts nothing; the FILE tag, which was also that green and so read as a
+  verified one, is a slate. The rail mark keeps the icon's green through a new
+  `--brand` token, because the rule beside it promises the tile matches the
+  thing in the dock.
+
+  Measured in a browser with the tints composited over what actually paints
+  behind them, not asserted from the stylesheet: every pair above 4.5:1, the
+  lowest on the page being a settled tag on a selected row at 4.77. The
+  separation accent and ok now have is hue, not luminance, so a person without
+  colour vision gets it from the badge's shape and its word — which is why
+  every verdict is spelled out in text.
+
+### Fixed
+
+- **The checklist counted this machine's own agents as people** on first
+  paint, because the agent list was null until its fetch returned and the
+  filter that removes them had nothing to filter. It read "3 people" for about
+  60ms, which is why three seconds of waiting in the end-to-end test never saw
+  it. The pane now renders nothing until both fetches have answered — which
+  also stopped five fresh-home assertions from being vacuous, since "not yet"
+  was also what an unloaded page produced.
+
+- **The agent list was loaded once per page**, so `gage agent new` in a
+  terminal left the Setup tab describing the machine as it was when the page
+  opened.
+
+- **A disclosure could not stay open**: the pane rebuilt every two seconds
+  with no saved flag.
+
+- **The rail did not come back** when you left a conversation below 880px,
+  leaving the QR, the paste field and the create form at `display:none` on the
+  other tabs.
+
+- **A long handle widened the top bar** past the window and gave the whole
+  page a horizontal scrollbar. The CLI accepts a longer handle than the
+  wizard's 40-character cap.
+
+- **Arriving at Conversations from a step button** left the composer hidden
+  for up to two and a half seconds.
+
 ## 0.3.2 — 2026-10-23
 
 **The send journal.** `gage sent` answers "what has this machine sent, and to
