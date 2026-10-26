@@ -43,9 +43,26 @@
 
   --bg:#fbfaf8; --sheet:#ffffff; --sunk:#f3f1ec; --line:#e7e3dc; --line2:#d6d1c7;
   --fg:#191815; --dim:#5b5751; --faint:#8b867d;
-  --accent:#2c5a4d; --accent-ink:#ffffff; --accent-soft:#e6eee9;
+  /* Green is reserved. It is the colour of a verdict -- SENDER VERIFIED, a
+     paired device, a settled thread -- and nothing a person can merely click
+     may borrow it. Until 25 October the interactive accent was a green two
+     degrees of hue from --ok (and in dark mode the identical value), so a
+     filled Send button and the Verified badge were the same paint: the
+     strongest claim this program makes, spent on an invitation to press
+     something. The accent is now blue, which asserts nothing, and the
+     verdict set keeps the traffic-light hues it has to keep.
+     The mark stays green -- see packaging/icon -- because a logo is not a
+     claim about a bundle. */
+  --accent:#26608f; --accent-ink:#ffffff; --accent-soft:#e5eef6;
+  /* The mark's own green, from packaging/icon: the logo is not chrome and
+     not a verdict, and it has to go on matching the thing in the dock. */
+  --brand:#1D6E47; --brand-ink:#f4f1e8;
   --ok:#2c6650; --warn:#8a5712; --bad:#9a2b2b;
-  --prompt:#8a5712; --memory:#9a2b2b; --decision:#45458a; --file:#2c5a4d;
+  /* A bundle's kind is a fact about its contents, not a judgement of it, so
+     --file is a slate: the same hue family as the accent at a fifth of its
+     saturation. It was the accent green, which made a FILE tag read as a
+     verified one. */
+  --prompt:#8a5712; --memory:#9a2b2b; --decision:#45458a; --file:#5c6672;
   --shadow:0 1px 2px rgba(25,24,21,.04), 0 10px 28px -20px rgba(25,24,21,.30);
   --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
   --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
@@ -58,18 +75,20 @@
 @media (prefers-color-scheme:dark){:root:not([data-theme=light]){
   --bg:#121316; --sheet:#1b1d21; --sunk:#232529; --line:#2b2e34; --line2:#3a3e45;
   --fg:#edebe7; --dim:#a8a49d; --faint:#7a766f;
-  --accent:#86c7b1; --accent-ink:#0f1f1a; --accent-soft:#1f2f2a;
+  --accent:#8bbce2; --accent-ink:#0c1a26; --accent-soft:#1d2a36;
+  --brand:#1D6E47; --brand-ink:#f4f1e8;
   --ok:#86c7b1; --warn:#dcac60; --bad:#e8908a;
-  --prompt:#dcac60; --memory:#e8908a; --decision:#a8a8e4; --file:#86c7b1;
+  --prompt:#dcac60; --memory:#e8908a; --decision:#a8a8e4; --file:#9aa6b4;
   --shadow:0 1px 2px rgba(0,0,0,.45), 0 12px 32px -22px rgba(0,0,0,.9);
   color-scheme:dark;
 }}
 :root[data-theme=dark]{
   --bg:#121316; --sheet:#1b1d21; --sunk:#232529; --line:#2b2e34; --line2:#3a3e45;
   --fg:#edebe7; --dim:#a8a49d; --faint:#7a766f;
-  --accent:#86c7b1; --accent-ink:#0f1f1a; --accent-soft:#1f2f2a;
+  --accent:#8bbce2; --accent-ink:#0c1a26; --accent-soft:#1d2a36;
+  --brand:#1D6E47; --brand-ink:#f4f1e8;
   --ok:#86c7b1; --warn:#dcac60; --bad:#e8908a;
-  --prompt:#dcac60; --memory:#e8908a; --decision:#a8a8e4; --file:#86c7b1;
+  --prompt:#dcac60; --memory:#e8908a; --decision:#a8a8e4; --file:#9aa6b4;
   --shadow:0 1px 2px rgba(0,0,0,.45), 0 12px 32px -22px rgba(0,0,0,.9);
   color-scheme:dark;
 }
@@ -136,7 +155,7 @@ button{background:none;border:0;cursor:pointer}
    the thing at the top of the rail are recognisably one product. Square now
    that it holds a glyph rather than the word. */
 .logo{width:var(--s6);height:var(--s6);border-radius:var(--r1);flex:none;
-  display:grid;place-items:center;background:var(--accent);color:var(--accent-ink)}
+  display:grid;place-items:center;background:var(--brand);color:var(--brand-ink)}
 .logo svg{width:var(--s5);height:var(--s5);display:block}
 .wordmark{font-weight:var(--w3);font-size:var(--t4);letter-spacing:-.01em}
 /* The handle is this machine's own, and the CLI accepts a longer one than
@@ -348,10 +367,9 @@ textarea:focus{outline:none;border-color:var(--accent)}
    and withholds nothing that doing nothing does not already withhold -- is
    a quiet button. The fill is the same accent the tabs and the Send button
    already use, and the refusal is neutral rather than red, because red here
-   means a verdict. One caveat, inherited from the palette rather than from
-   this rule: in dark mode --accent and --ok are the same green, so a filled
-   button and the Verified badge read alike. Deciding whether the verdict
-   green should diverge is a palette change and belongs with the palette. */
+   means a verdict. The fill used to be a green a shade off the Verified
+   badge's -- in dark mode exactly it -- which is why the palette now keeps
+   green for verdicts and paints the accent blue. */
 .devbtn.go{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);
   font-weight:var(--w2)}
 .devbtn.go:hover{opacity:.88;color:var(--accent-ink);border-color:var(--accent)}
