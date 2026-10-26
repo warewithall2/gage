@@ -90,17 +90,32 @@ for you, because yours arrived over the network.
 
 ## 2. Make your identity (about 1 minute)
 
-    gage connect
+    gage quickstart
 
-That creates your identity and prints two things: a line starting with
-`gage add`, and four word-pairs.
+This walks you through the whole thing — it is the same commands the rest of
+this packet spells out, asked one at a time. It will:
 
-If your partner gave you a relay address, use it instead —
-`gage connect <that address>` — which also sets up a mailbox so you can
-exchange over the internet. Without one you can still do everything here if
-you are on the same network, or by sending files to each other.
+1. **Make your identity**, a keypair on this machine. It asks for a name,
+   which is only a label; leave it empty and gage derives two words from the
+   key itself.
+2. **Offer to add your partner's key.** You do not have it yet, so answer
+   **n** — section 4 comes back to this.
+3. **Offer to send a first bundle.** Also **n** for now; section 5.
 
-Keep the output on screen. You need both parts next.
+What it prints matters, so leave it on screen: a line starting with
+`gage add`, which is public and which you send your partner, and **four
+word-pairs**, which are not for sending anywhere — they are what you read
+out loud in section 4.
+
+Everything after this can be done either from the page or from the terminal,
+and the packet shows the terminal form because it is the same on every
+machine.
+
+**If you would rather not be walked through it**, `gage connect` does the
+identity step alone and prints the same two things. And if your partner gave
+you a relay address, `gage connect <that address>` also sets up a mailbox so
+you can exchange over the internet. Without one you can still do everything
+here on the same network, or by sending files to each other.
 
 ## 3. Open the page (about 1 minute)
 
@@ -176,18 +191,51 @@ over on this machine. The bundle was built.
 
 Then get it to them, whichever way applies:
 
-    gage push /tmp/pkg --to theirname --yes    # if you have a relay
+**On the same network as your partner** — the same wifi, say — there is a
+one-command form that builds it and hands it over in a single step. Run
+`gage lan` in another terminal tab on *both* machines, then:
 
-If you have no relay, send them the `/tmp/pkg` directory as a zip, or run
-`gage lan` on both machines if you are on the same network.
+    gage send --to theirname --type question --subject "a test" \
+              --prompt ask.md --file notes.md --lan
+
+Both of you need the other on your list first (section 4), because a query
+from a key you have not added is ignored on purpose. If it says it got no
+answer, do not debug it — use the file path below and tell us, since that is
+the kind of thing this test is for.
+
+**If you have a relay address:**
+
+    gage push /tmp/pkg --to theirname --yes
+
+**Otherwise, send it as one file.** `/tmp/pkg` is a directory, and what is in
+it is signed but *readable* — so seal it first, which encrypts it to your
+partner's key and gives you a single file to attach:
+
+    gage seal /tmp/pkg --to theirname --out /tmp/pkg.gageb
+
+That envelope reveals only their key, its size and the time it was made. Send
+it however you normally send a file; the channel does not have to be a private
+one, which is rather the point.
 
 **When something arrives for you:**
+
+If it came over a relay or your own network, it is already waiting:
 
     gage pull        # only if you are using a relay
     gage inbox
     gage accept <the id it shows>
 
 `accept` prints the exact `gage open ...` line to run. Run that line.
+
+If your partner sent you a `.gageb` file instead, open it from where you saved
+it:
+
+    gage unseal ~/Downloads/pkg.gageb --out /tmp/theirs
+    gage open /tmp/theirs
+
+Decrypting it proves only that it was addressed to you. `gage open` is the
+step that tells you who signed it and whether you have confirmed them, and it
+says so itself when you unseal.
 
 Read what it prints carefully — this is the part we most want your reaction
 to. Now swap roles, so each of you has sent one and received one.

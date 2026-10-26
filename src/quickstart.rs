@@ -266,6 +266,12 @@ pub(crate) fn parse_add(s: &str) -> (Option<String>, Option<String>) {
 fn finish(added: Option<&str>) {
     rule();
     println!("That is the whole of it. Worth knowing:");
+    // The page first, and named for what it does rather than what it is. It
+    // opens on a checklist derived from this machine's own state, which is
+    // the question somebody who has just finished this has -- "am I set up?"
+    // -- and the list below is the terminal answer to a question they have
+    // not asked yet.
+    println!("  gage ui             a local page that says which steps are done");
     println!("  gage inbox          what is waiting, unread");
     println!("  gage open <dir>     read one, inside the trust frame");
     println!("  gage whoami         your line, and your word-pairs again");
