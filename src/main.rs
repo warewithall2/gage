@@ -262,7 +262,19 @@ enum Cmd {
     /// itself the authority to obey whatever talked it into it. Edit the
     /// file yourself.
     Authority,
-    /// Encrypt a bundle for one recipient. Nothing leaves this machine unsealed.
+    /// Encrypt a bundle for one recipient
+    ///
+    /// The sealed file is the whole bundle -- items, manifest and signature --
+    /// as one opaque envelope only they can open. Hand it over any way you
+    /// like; the transport is trusted with nothing.
+    ///
+    /// This help used to end "Nothing leaves this machine unsealed", which is
+    /// not something a command can promise and was not true: `gage send
+    /// --out <dir>` writes a plain directory with readable `items/` and
+    /// `manifest.json`, which is exactly what you want when you are about to
+    /// seal it, and exactly not what you want if you believed that sentence
+    /// and copied the directory instead. Sealing is a step you take, not a
+    /// property of the program.
     Seal {
         dir: PathBuf,
         #[arg(long)]

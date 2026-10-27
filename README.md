@@ -50,6 +50,43 @@ and historically the glove thrown down to open a challenge. Both senses fit.
 Everything downstream — every verdict, every grant, every unattended
 acceptance — rests on that one human moment.
 
+## "Why not just sign the payload yourself?"
+
+Asked by a reviewer, and no document here answered it, which is a gap worth
+closing because it is the first question anyone technical will have. Ed25519
+is forty lines away in any language. If you want a signed handoff, sign the
+tarball and send it.
+
+What that gets you is **authenticity**. Every part of the gap between that and
+this is a local decision the signature cannot make for you:
+
+- **A signature says a key signed something. It does not say you ever agreed
+  to hear from that key.** The verdict is computed from your allowlist, and
+  — since this release — from a record that a human compared four word-pairs
+  with its owner. "Valid signature" and "someone I have confirmed" are
+  different sentences, and only one of them is a statement about a person.
+- **Verifying it yourself means writing the verdict yourself**, and the
+  interesting verdicts are the ones nobody writes until they have been
+  burned: a key you retired that is still signing; a bundle that cannot be
+  placed either side of that retirement; a key you looked at and refused. Each
+  needs local state the signature knows nothing about — an allowlist, a
+  retirement cut, an observation counter — and getting the *direction* of each
+  one wrong is the difference between a warning and a thief's content rendered
+  as a colleague's.
+- **The payload still has to be read by a model**, and that is the half this
+  is really about. A verified payload is still someone else's prose arriving
+  where your agent takes instructions. The frame, the fence nonce, the
+  per-item kind labels, the withholding rules, the accept gate — none of that
+  follows from a signature, and all of it is what decides whether a signed
+  message becomes a prompt-injection delivery vehicle with a certificate.
+- **And the honest limit:** the frame is text, and text does not outrank the
+  host prompt. See [docs/dogfood-2026-10-15.md](docs/dogfood-2026-10-15.md),
+  where that is what happened. `gage authority` exists because the only thing
+  that can grant authority is the receiver, in a file no sender can reach.
+
+So: sign the tarball if the question is "did this come from them". This is for
+the question after it, which is "and what may my agent do about it".
+
 ## The receiving agent's half of the trust boundary
 
 Signing what an agent *does* is well covered by other work — receipts over

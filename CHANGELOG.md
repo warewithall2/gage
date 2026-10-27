@@ -1,5 +1,127 @@
 # Changelog
 
+## Unreleased
+
+**A verdict that means what the documents said it meant.** Three independent
+reviews — a security audit, a documentation audit and a product critique —
+converged on one finding: the documents described a stricter product than the
+binary was. This is the response. It changes behaviour you will notice on the
+first bundle, so read the first section before upgrading.
+
+### Changed — you will see this immediately
+
+- **`SENDER VERIFIED` now requires a recorded out-of-band confirmation.**
+  Every contact on an existing machine drops to **`SENDER ON YOUR LIST,
+  UNCONFIRMED`** until somebody runs `gage confirm <name>`. Nothing is
+  withheld, nothing stops arriving, and the key is still attributable — but
+  `gage authority` honours no grant under the new verdict, so **any
+  pre-authorised flow stops until the contacts it names are confirmed.**
+
+  Why that bill is worth paying: `SENDER VERIFIED` meant "this key is on your
+  list", while every document described it as meaning "a human compared this
+  key's word-pairs out of band". Those are different claims, nothing recorded
+  the second, and every route onto the list can be driven by software — `gage
+  add` from a chat window, `quickstart` from a pasted token, the MCP server
+  from an agent's say-so. A reviewer paired a stranger's key over MCP in two
+  tool calls, with no human anywhere, and it read `SENDER VERIFIED`.
+
+  To restore a machine to where it was: `gage contacts`, then `gage confirm
+  <name>` for each, after comparing the four pairs with them. `gage
+  fingerprint <name>` prints them and says whether a confirmation exists.
+
+- **An agent cannot confirm a key.** `gage_pair_confirm` still adds one —
+  `gage_pair_start` returns the word-pairs, so its echo check was never a
+  human gate and two documents wrongly said it was — but what it adds is
+  unconfirmed. Only `gage confirm` at a terminal, or the viewer's confirm
+  step (which asks for all four pairs and displays none), writes a record.
+
+- **`gage add` no longer reverses a retirement or a decline quietly.** Both
+  were undone with a `note:` line in output nobody had to read. Use `gage add
+  <name> <key> --reinstate`. It also refuses a name you retired a *different*
+  key under: grants are matched by name, so retiring `alice` and adding
+  somebody else as `alice` used to hand them everything `alice` was allowed
+  to do.
+
+- **`keychange --accept` installs the replacement unconfirmed**, and says why:
+  the notice is signed by the key being retired, so it proves whoever held
+  that key chose this one — which is also true if it was stolen.
+
+- **`gage push` scans what it is pushing.** The outbound secret scan ran on
+  the send path only, so `gage push` and `gage_push` took a directory somebody
+  else assembled straight to sealing. A reviewer pushed AWS keys and an
+  OpenSSH private key through it. There is no `--allow-findings` on this path.
+
+- **`reveal` is refused over MCP.** The CLI flag stays; there it is a person at
+  a terminal. The refusal names the command to run.
+
+- **`--out` may not write inside `inbox/`, `sent/` or `outbox/`.** An agent
+  calling `gage_send out=<home>/inbox/accepted/<id>` manufactured its own
+  received context: real signature, forged *arrival*.
+
+- **An unreadable `contacts.json` stops the program** (exit 2) instead of
+  becoming an empty allowlist — which turned every contact into a stranger and
+  then overwrote the file on the next add.
+
+### Added
+
+- **`gage confirm <name> [words…]`** — the only thing that records a
+  confirmation. Checks the pairs rather than taking your word for it, and
+  stores the fingerprint that was compared, so attaching an encryption key
+  after a signing-only comparison expires the record and says so.
+- **`gage add --same-machine`**, for `gage agent new`: both keys came out of a
+  keygen the same process just ran, so there is no channel and nothing to
+  compare. Recorded as what it is, and not reachable over MCP.
+- **`/api/confirm`** in the viewer, and an unconfirmed contact's card now
+  hides its fingerprint and asks for all four pairs.
+- **`confirmed` in `gage_open`'s verdict block**, beside `on_your_list`, which
+  used to answer for both.
+- **`ARRIVAL UNRECORDED`** documented in `spec.md`, which listed six verdicts
+  when the code had seven. Now eight.
+
+### Fixed
+
+- A forged `manifest.id` wrote its own `trust :` and `authorised :` lines into
+  the tamper block and `gage inbox`; also the collect summary's subject.
+- `SENDER REFUSED BEFORE` offered the add-or-decline decision again on every
+  bundle, which is the one thing recording a decline exists to stop.
+- `collect` skipped `.ctx` but not `.gage`, so collecting a directory
+  containing a live gage home swept up `identity.key` and the inbox.
+- The scrub refusal pointed at `~/.ctx/scrub.json`, two versions after the
+  home moved. The path is computed now.
+- `gage fingerprint <name>` printed its notes on stdout, so `| cut -f2` read
+  four lines of prose before the value.
+- Setup step 4 could not be satisfied by handing a sealed file over — the path
+  `docs/first-tester.md` now leads with — so the packet's "five of five" was
+  unreachable. A completed exchange satisfies it.
+- `watch --help` said `--on-arrival` "does not accept the bundle" and
+  `--auto-accept` "never opens or runs anything". With both flags the
+  auto-accept pass runs first, so the bundle may already be accepted when the
+  hook starts; `CTX_AUTO_ACCEPTED` says which. Corrected in the help,
+  `notify.rs`, README and `open-decisions.md`.
+- **The label is not a prefix of the fingerprint** for a contact you can seal
+  to — the fingerprint covers `sign ␟ box`, the label covers `sign`. README,
+  `spec.md` and `words.rs` all claimed otherwise and both worked examples were
+  written to match. The label cannot be widened (a manifest carries nothing
+  else), so the claim went, and a test now fails if the two line up.
+- `seal --help` promised "Nothing leaves this machine unsealed", which a
+  command cannot promise and `gage send --out` disproves.
+- README: "Nothing arrives from anyone you have not confirmed" (never true),
+  "on a bad verdict the contents are withheld" (now spelled out, verdict by
+  verdict), test counts of 680/106 against a real 958/167, and nothing at all
+  about the viewer's pre-filled `relay.gage.sh` default.
+- `docs/first-tester.md` said two of five setup steps start done. It was one.
+- `docs/dogfood-2026-10-15.md` presented "two of three agents honoured the
+  frame" as the frame working. The one trial that went the other way is the
+  only one where anything contested it, which is the realistic condition.
+
+### Tests
+
+958 attack checks (was 928), 167 unit tests (was 165), 55 MCP end-to-end
+checks (was 48), 16 restore-drill checks, viewer end-to-end green. New
+regression coverage for every item above that can be driven from a shell,
+including the MCP self-pairing path, the push scan, `--out` into the inbox,
+the forged id, and the declined re-offer.
+
 ## 0.3.3 — 2026-10-26
 
 **One viewer, and a checklist that reads the machine.** Everything here is the
