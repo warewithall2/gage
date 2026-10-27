@@ -462,8 +462,31 @@ impl Server {
                 // Exactly the CLI's path: load, then render. The renderer
                 // decides what is withheld; nothing here second-guesses it.
                 let l = crate::bundle::load(&dir).map_err(|e| ToolError::Refused(e.to_string()))?;
-                let reveal = a.get("reveal").and_then(|v| v.as_bool()).unwrap_or(false);
-                let rendering = crate::open::render(&l, reveal).map_err(ToolError::Refused)?;
+                // `reveal` is REFUSED here, not honoured.
+                //
+                // It used to be passed straight through with a description
+                // that said "only if your user asked" -- which is the honour
+                // system, enforced against the one party it needs to be
+                // enforced against. An agent acting on text it read inside a
+                // bundle sets a boolean and reads the payload of a sender
+                // whose key this machine rejected; that payload is withheld
+                // precisely because nothing can be pinned on anybody for it.
+                //
+                // The CLI flag stays, because there it is a person at a
+                // terminal taking an act under their own name. So the refusal
+                // hands over the exact command rather than just saying no.
+                if a.get("reveal").and_then(|v| v.as_bool()).unwrap_or(false) {
+                    return Err(ToolError::Refused(format!(
+                        "`reveal` is not available over MCP. Contents are withheld when a \
+                         sender is not attributable under a key this machine accepts, and \
+                         an agent cannot be the thing that waives that -- the request to \
+                         waive it would arrive the same way the bundle did. If your user \
+                         wants to see it anyway, they can run this themselves:\n  \
+                         gage open {} --reveal",
+                        crate::manifest::safe_display(&l.manifest.id, 80)
+                    )));
+                }
+                let rendering = crate::open::render(&l, false).map_err(ToolError::Refused)?;
                 let withheld = rendering.contains("Contents withheld")
                     || rendering.contains("Contents withheld:");
                 // Verdict FIRST, as structured data, then the rendering. An
@@ -650,7 +673,7 @@ fn tool_list() -> Vec<Value> {
             "inputSchema": s(json!({"type":"object","properties":{
                 "id":{"type":"string","description":"a bundle id from gage_inbox"},
                 "dir":{"type":"string","description":"a bundle directory"},
-                "reveal":{"type":"boolean","description":"show contents despite a bad verdict; only if your user asked"}
+                "reveal":{"type":"boolean","description":"REFUSED over MCP, and the refusal tells your user the command to run themselves. Kept in this schema so an agent that tries it gets the explanation instead of a silent no-op"}
             },"additionalProperties":false})),
         }),
         json!({

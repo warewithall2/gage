@@ -222,12 +222,64 @@ fn scan_long_line(line: &str, policy: &Policy) -> Option<(String, String)> {
     None
 }
 
+/// Scan a bundle that is already built, from its manifest.
+///
+/// `scan` takes the specs a send is about to build from; this takes a
+/// directory that exists. Both exist because there are two ways out of this
+/// program and only one of them was scanned: `gage push` and `gage_push` take
+/// a directory somebody else assembled -- by hand, by a script, by an agent
+/// calling `gage_send out=` and then pushing the result -- and went straight
+/// to `seal_dir`. A reviewer pushed AWS keys and an OpenSSH private key
+/// through and decrypted them on the far side.
+///
+/// Reads item paths out of the signed manifest rather than walking the
+/// directory, so a file the manifest does not list is not what is sent and
+/// not what is scanned.
+pub fn scan_built(dir: &std::path::Path) -> Vec<Finding> {
+    let Ok(raw) = std::fs::read_to_string(dir.join("manifest.json")) else {
+        return Vec::new();
+    };
+    let Ok(m) = serde_json::from_str::<crate::manifest::Manifest>(&raw) else {
+        return Vec::new();
+    };
+    let specs: Vec<(crate::manifest::ItemKind, String, std::path::PathBuf)> = m
+        .items
+        .iter()
+        .map(|it| (it.kind, it.path.clone(), dir.join(&it.path)))
+        .collect();
+    scan(&specs)
+}
+
+/// The refusal a scan of a built bundle produces, as lines.
+///
+/// Shared so `gage push` and `gage_push` cannot drift into describing the
+/// same finding two different ways.
+pub fn refusal_lines(findings: &[Finding]) -> Vec<String> {
+    let mut lines = vec![format!(
+        "outbound scan found {} item(s) that should not leave:",
+        findings.len()
+    )];
+    for f in findings {
+        lines.push(format!(
+            "  {}:{}  [{}]  {}",
+            f.path, f.line, f.rule, f.preview
+        ));
+    }
+    lines.push(format!(
+        "refusing to push. Pushing is the moment it leaves this machine, and \
+         there is no --allow-findings here: a bundle assembled elsewhere is \
+         exactly the one nobody scanned. Fix the files and build it again, or \
+         add a rule to {}.",
+        policy_path().display()
+    ));
+    lines
+}
+
 fn display_path(rel: &str) -> String {
     rel.strip_prefix("items/").unwrap_or(rel).to_string()
 }
 
 // Where scrub.json lives; paired with `ensure_policy_file` below.
-#[allow(dead_code)]
 pub fn policy_path() -> std::path::PathBuf {
     crate::identity::home().join("scrub.json")
 }

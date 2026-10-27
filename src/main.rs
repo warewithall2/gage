@@ -458,9 +458,14 @@ enum Cmd {
         quiet: bool,
         /// Run this command when an arrival is covered by a grant in your
         /// authority file. It is given CTX_BUNDLE_ID, CTX_FROM, CTX_FROM_KEY,
-        /// CTX_TYPE, CTX_SUBJECT, CTX_EXPECTS_REPLY and CTX_GRANT in its
-        /// environment -- never the bundle's contents, and it does not accept
-        /// the bundle. Arrivals with no grant notify as usual and run nothing
+        /// CTX_TYPE, CTX_SUBJECT, CTX_EXPECTS_REPLY, CTX_GRANT and
+        /// CTX_AUTO_ACCEPTED in its environment -- never the bundle's
+        /// contents. The hook itself accepts nothing; but with --auto-accept
+        /// also given, acceptance happens FIRST, so the bundle may already be
+        /// accepted when the hook runs and CTX_AUTO_ACCEPTED says whether it
+        /// was. This help used to say only "it does not accept the bundle",
+        /// which read as a promise about the watcher and was one about the
+        /// hook. Arrivals with no grant notify as usual and run nothing
         #[arg(long)]
         on_arrival: Option<String>,
         /// seconds before a hook that has not finished is killed
@@ -470,7 +475,11 @@ enum Cmd {
         /// within that grant's max-exchanges for the thread. Only grants
         /// written `auto-accept` qualify, and only replies to something this
         /// machine sent. Every such acceptance records which grant allowed
-        /// it. Acceptance moves the bundle; it never opens or runs anything
+        /// it. Acceptance itself moves the bundle and reads nothing -- but it
+        /// runs BEFORE --on-arrival, so with both flags a granted arrival is
+        /// accepted and then your hook runs with CTX_AUTO_ACCEPTED=1. Nothing
+        /// here opens a payload; the hook can, and that is your command's
+        /// choice, not this flag's
         #[arg(long)]
         auto_accept: bool,
     },
@@ -725,6 +734,22 @@ fn push_core(
         .box_keys
         .get(&sign)
         .ok_or(format!("{to} has no encryption key on file; re-add them"))?;
+    // Scan the thing being pushed. `outbound::send_bundle` scans what it is
+    // about to build and `outbound.rs` opens with "There is one way out of
+    // this program" -- which was not true: push takes a directory somebody
+    // else assembled, and `gage_push` let an agent hand over a bundle it had
+    // built by hand with nothing looking at the contents. A reviewer pushed
+    // AWS keys and an OpenSSH private key through this path and decrypted
+    // them on the far side.
+    //
+    // No --allow-findings here, deliberately. On the send path that flag is a
+    // person saying "I looked, they are false positives" about files they
+    // chose moments ago. Here the bundle predates the command and may not
+    // have been assembled by a human at all.
+    let findings = scrub::scan_built(dir);
+    if !findings.is_empty() {
+        return Err(scrub::refusal_lines(&findings).join("\n").into());
+    }
     let env = seal::seal_dir(dir, boxpub)?;
     let body = serde_json::json!({
         "to_box": boxpub, "envelope": serde_json::to_string(&env)? })
@@ -870,9 +895,17 @@ fn fetch_mailbox(
         // would otherwise have written a bundle outside the inbox entirely.
         if !manifest::id_is_safe(&loaded.manifest.id) {
             eprintln!(
-                "  refused: a bundle whose id is not an id ({:?}) -- it would have become \
+                "  refused: a bundle whose id is not an id ({}) -- it would have become \
                  a path",
-                loaded.manifest.id.chars().take(40).collect::<String>()
+                // The ONE place in this file where the id has to be escaped,
+                // and the one place it was not: every print below this point
+                // has passed `id_is_safe`, which is 16 lowercase hex digits
+                // and cannot carry a newline. This arm runs precisely because
+                // it did not pass, so the value here is arbitrary
+                // sender-chosen bytes landing on stdout that an agent reads.
+                // `{:?}` escapes a newline but not a frame marker, and it is
+                // not what the rest of the program uses.
+                manifest::safe_display(&loaded.manifest.id, 40)
             );
             let _ = std::fs::remove_dir_all(&tmp);
             continue;
@@ -958,7 +991,13 @@ fn fetch_mailbox(
                 .unwrap_or_else(|e| format!("could not be read back: {e}"));
             println!(
                 "  {}  {}  ({}){}",
-                loaded.manifest.id, loaded.manifest.subject, verdict, label
+                loaded.manifest.id,
+                // Sender-chosen, and this line is the collect summary an
+                // agent reads after `gage pull`. The id above it is safe by
+                // `id_is_safe`; the subject has never been checked at all.
+                manifest::safe_display(&loaded.manifest.subject, 160),
+                verdict,
+                label
             );
             n += 1;
         }

@@ -290,9 +290,17 @@ pub fn load(dir: &Path) -> std::io::Result<Loaded> {
     // suppress a real message if a sender can choose a collision.
     match manifest.expected_id() {
         Some(want) if want == manifest.id => {}
+        // Escaped and bounded, like every other sender-chosen value that
+        // reaches a reader. This one was raw, and it is the worst place for
+        // that: a tamper line is read by a human and by an agent, it is
+        // rendered inside the frame beside `trust :` and `authorised :`
+        // lines, and `gage inbox` prints it too. An id carrying newlines
+        // writes its own verdict lines into both. The id is also the one
+        // field here that is guaranteed NOT to be what it claims -- this arm
+        // only runs because it does not address the content.
         Some(want) => tampered.push(format!(
             "manifest id {} does not address this content (expected {want})",
-            manifest.id
+            crate::manifest::safe_display(&manifest.id, 80)
         )),
         // No chain means no author to compute the id from, and the check used
         // to pass on that. So a bundle could omit its chain, carry a real

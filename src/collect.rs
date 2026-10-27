@@ -42,7 +42,13 @@ const SKIP_DIRS: &[&str] = &[
     ".terraform",
     "vendor",
     ".DS_Store",
+    // The gage home itself, under both names it has had. `.ctx` was the old
+    // one and stayed here alone after the rename, so collecting a directory
+    // that contained a live `.gage` swept up identity.key, contacts.json and
+    // the whole inbox. `.ctx` is kept because a machine that predates the
+    // rename still has one.
     ".ctx",
+    ".gage",
 ];
 
 /// Directories whose contents are secrets regardless of what the files in

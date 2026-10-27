@@ -232,6 +232,25 @@ printf '%s' "$V8" | grep -qF '"payload_withheld":true' && ok || bad "payload_wit
 if printf '%s' "$R8" | grep -qF "full jitter"; then bad "a bad verdict still rendered the payload"; else ok; fi
 printf '%s' "$R8" | grep -qF "Contents withheld" && ok || bad "the rendering does not say the contents were withheld"
 
+# And `reveal` cannot lift it from here. It used to be passed straight through
+# with a description that said "only if your user asked" -- the honour system,
+# enforced against the one party it has to be enforced against. An agent
+# acting on text it read inside a bundle sets a boolean and reads the payload
+# of a sender nothing can be pinned on. The CLI flag stays, because there it
+# is a person at a terminal acting under their own name, so the refusal hands
+# over that command.
+cat > "$T/s8b" <<EOF
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"gage_open","arguments":{"dir":"$T/bad","reveal":true}}}
+EOF
+session "$T/b" "$T/s8b" "$T/o8b"
+[ "$(field "$T/o8b" 2 result.isError)" = true ] && ok || bad "gage_open honoured reveal over MCP"
+R8B=$(tool_json "$T/o8b" 2 0)
+if printf '%s' "$R8B" | grep -qF "full jitter"; then
+  bad "the reveal refusal leaked the payload it was refusing"; else ok; fi
+printf '%s' "$R8B" | grep -qF "gage open" && ok \
+  || bad "the refusal does not name the command a human can run"
+
 echo "--- protocol errors do not wedge the session"
 cat > "$T/s9" <<EOF
 {not json at all

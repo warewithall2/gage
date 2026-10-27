@@ -319,8 +319,17 @@ mod tests {
 ///    the human sees, so it leaks nothing the desktop popup does not -- but
 ///    it is the sender's text, and a hook that treats it as trustworthy input
 ///    is a hook with a problem.
-/// 3. **This code does not accept the bundle.** After `run_hook` returns, gage
-///    has moved nothing: the bundle is still unread, still in `pending`.
+/// 3. **This code does not accept the bundle.** `run_hook` moves nothing.
+///
+///    With `--auto-accept` ALSO given, though, the bundle may already be in
+///    `accepted` before this runs: the watcher does its auto-accept pass
+///    first, deliberately, so that a hook written for an unattended loop
+///    finds the bundle settled rather than racing the watcher for it. So
+///    "still unread, still in `pending`" -- which this note and the README
+///    both used to say flatly -- is true of `--on-arrival` alone and false of
+///    the two flags together. `CTX_AUTO_ACCEPTED` tells the hook which world
+///    it is in, and was already being set when the claim above still read as
+///    unconditional.
 ///
 ///    Stated about this code rather than about the world, because a reviewer
 ///    was right that the stronger phrasing was false. The hook is handed

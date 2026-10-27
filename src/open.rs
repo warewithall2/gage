@@ -186,23 +186,58 @@ pub fn render(l: &Loaded, reveal: bool) -> Result<String, String> {
             // confirming comes before adding, because `gage add` on an
             // unconfirmed key is the step that makes SENDER VERIFIED mean
             // nothing later.
-            for line in [
-                "  what next  : nothing here is authorised, and you do not have to",
-                "               decide now -- the bundle has already arrived and",
-                "               reading it changes nothing. If you know who this is:",
-                "               ask them, over a channel that is not this one, to read",
-                "               you the four word-pairs their `gage whoami` shows. If",
-                "               they match the ones `gage add` prints, that key is",
-                "               theirs -- and `gage confirm` is what writes that down.",
-                "               Without it the contact reads UNCONFIRMED, which is",
-                "               honest and not a fault. If you do not know who it is,",
-                "               leave it or refuse it; refusing is a record, not a block.",
-                "                   gage add <a-name-for-them> <their-key>",
-                "                   gage confirm <a-name-for-them>            -- after comparing",
-                "                   gage decline <their-key>                  -- stop being asked",
-            ] {
-                s.push_str(line);
-                s.push('\n');
+            // A key you already refused is not a decision waiting to be
+            // made. This block used to print the same "add it or decline it"
+            // advice either way, so every bundle from a declined key offered
+            // the same choice again -- which is exactly what recording a
+            // decline exists to stop, and left accepting as the only way to
+            // make the question go away.
+            match contacts.declined_record(&m.from.key) {
+                Some(d) => {
+                    for line in [
+                        format!(
+                            "  what next  : nothing. You looked at this key on {} and",
+                            d.at
+                        ),
+                        "               refused it, so there is no decision here to take"
+                            .to_string(),
+                        "               again. Refusing was a record and never a block --"
+                            .to_string(),
+                        "               nothing in gage stops a bundle being delivered, so"
+                            .to_string(),
+                        "               mail from this key still arrives and still waits"
+                            .to_string(),
+                        "               behind the accept gate. If you have since decided"
+                            .to_string(),
+                        "               otherwise, reversing it has to be said out loud:"
+                            .to_string(),
+                        "                   gage add <a-name-for-them> <their-key> --reinstate"
+                            .to_string(),
+                    ] {
+                        s.push_str(&line);
+                        s.push('\n');
+                    }
+                }
+                None => {
+                    for line in [
+                        "  what next  : nothing here is authorised, and you do not have to",
+                        "               decide now -- the bundle has already arrived and",
+                        "               reading it changes nothing. If you know who this is:",
+                        "               ask them, over a channel that is not this one, to read",
+                        "               you the four word-pairs their `gage whoami` shows. If",
+                        "               they match the ones `gage add` prints, that key is",
+                        "               theirs -- and `gage confirm` is what writes that down.",
+                        "               Without it the contact reads UNCONFIRMED, which is",
+                        "               honest and not a fault. If you do not know who it is,",
+                        "               leave it or refuse it; refusing is a record, not a block.",
+                        "                   gage add <a-name-for-them> <their-key>",
+                        "                   gage confirm <a-name-for-them>            -- after comparing",
+                        "                   gage decline <their-key>                  -- stop being asked",
+                    ] {
+                        s.push_str(line);
+                        s.push('\n');
+                    }
+                }
             }
         }
     }

@@ -372,12 +372,15 @@ pub fn send_bundle(
             ));
         }
         if !allow_findings {
-            lines.push(
-                "refusing to build this bundle. Fix the files, add a rule to \
-                         ~/.ctx/scrub.json, or pass --allow-findings if they are false \
-                         positives."
-                    .to_string(),
-            );
+            // The path is COMPUTED, not written out. This line said
+            // `~/.ctx/scrub.json` long after the home moved to `~/.gage`, so
+            // the one piece of advice a person needed in order to act on a
+            // refusal sent them to a file nothing reads.
+            lines.push(format!(
+                "refusing to build this bundle. Fix the files, add a rule to {}, \
+                 or pass --allow-findings if they are false positives.",
+                crate::scrub::policy_path().display()
+            ));
             return Err(lines.join("\n").into());
         }
         for l in &lines {
@@ -405,6 +408,50 @@ pub fn send_bundle(
     // Built once into a staging dir, then delivered to each routed
     // recipient. Building per-recipient would give one payload a
     // different content id for every person who received it.
+    // `--out` must not name somewhere inside this machine's own inbox.
+    //
+    // Found by review: `gage_send out=<home>/inbox/accepted/<anything>` wrote
+    // a bundle the CALLER authored straight into the accepted inbox, where
+    // every reader treats it as mail that arrived, was accepted and crossed
+    // the gate. An agent could manufacture its own received context, with its
+    // own signature on it, and `gage inbox --all` would list it beside real
+    // arrivals. Nothing about the signature is forged; what is forged is the
+    // *arrival*, which is a local fact this program is the only witness to.
+    //
+    // Checked lexically rather than by canonicalising, because the target
+    // usually does not exist yet, and `..` is resolved first so that
+    // `inbox/../inbox/accepted` is the same answer as the direct path.
+    if let Some(p) = &out {
+        let home = identity::home();
+        let abs = if p.is_absolute() {
+            p.clone()
+        } else {
+            std::env::current_dir()?.join(p)
+        };
+        let mut norm = PathBuf::new();
+        for c in abs.components() {
+            match c {
+                std::path::Component::ParentDir => {
+                    norm.pop();
+                }
+                std::path::Component::CurDir => {}
+                other => norm.push(other),
+            }
+        }
+        for reserved in ["inbox", "sent", "outbox"] {
+            if norm.starts_with(home.join(reserved)) {
+                return Err(format!(
+                    "--out may not write inside {}: that is where this machine records \
+                     what ARRIVED and what it sent. A bundle you built is not an arrival, \
+                     and putting it there would make it indistinguishable from one. Write \
+                     it anywhere else and hand it over, or drop --out and let gage deliver \
+                     it.",
+                    home.join(reserved).display()
+                )
+                .into());
+            }
+        }
+    }
     let stage = out
         .clone()
         .unwrap_or_else(|| identity::home().join(format!("outbox/{}", std::process::id())));
