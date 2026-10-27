@@ -164,7 +164,7 @@ pub fn render(l: &Loaded, reveal: bool) -> Result<String, String> {
                     // is any record tying the key to the person, which is
                     // the claim `SENDER VERIFIED` makes and this one does
                     // not.
-                    "  \x20             Nobody on this machine has compared this key's word-pairs\n\
+                    "  \x20           Nobody on this machine has compared this key's word-pairs\n\
                      \x20             with its owner, so the key is attributable but the NAME\n\
                      \x20             beside it is only what you typed when you added it. Ask\n\
                      \x20             them to read you the four pairs their `gage fingerprint`\n\
@@ -426,6 +426,39 @@ pub fn render(l: &Loaded, reveal: bool) -> Result<String, String> {
     }
     if let Some(r) = &m.in_reply_to {
         s.push_str(&format!("  in reply to: {}\n", one_line(r)));
+    }
+    // Where this directory IS, when it is not in the inbox.
+    //
+    // The accept gate is the project's claim that "arrival is not consent",
+    // and it governs `inbox/pending` -- which a bundle handed over as a
+    // sealed file never passes through. `gage unseal --out dir && gage open
+    // dir` renders the payload with no accept step and leaves `gage inbox`
+    // saying nothing is pending, so a reader who had been told nothing is
+    // read until it is accepted has just read something that was not.
+    //
+    // Said rather than silently fixed: moving `unseal` into the inbox would
+    // change where mail lands for everyone, and `open` on a directory is also
+    // how you inspect a bundle you built. What was wrong is that nothing
+    // mentioned it. Now the frame does, above the payload, where both a human
+    // and an agent will see it.
+    {
+        let inbox = crate::identity::home().join("inbox");
+        let under_inbox = l
+            .dir
+            .canonicalize()
+            .ok()
+            .zip(inbox.canonicalize().ok())
+            .map(|(d, i)| d.starts_with(i))
+            .unwrap_or(false);
+        if !under_inbox {
+            s.push_str(
+                "  arrived as : a directory you pointed at, NOT through your inbox. The\n\
+                 \x20              accept gate applies to inbox/pending; this bundle has not\n\
+                 \x20              crossed it and will not appear in `gage inbox`. That is\n\
+                 \x20              normal for a sealed file somebody handed you, and it means\n\
+                 \x20              reading it was the whole of the decision.\n",
+            );
+        }
     }
     s.push_str(&format!(
         "  items      : {}, {} bytes",

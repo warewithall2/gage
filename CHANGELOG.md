@@ -62,6 +62,14 @@ first bundle, so read the first section before upgrading.
   becoming an empty allowlist — which turned every contact into a stranger and
   then overwrote the file on the next add.
 
+- **`gage open` says when a bundle did not come through your inbox.** "Arrival
+  is not consent" governs `inbox/pending`, and a sealed file handed over never
+  passes through it: `gage unseal --out dir && gage open dir` renders the
+  payload with no accept step and leaves `gage inbox` empty. That is the right
+  behaviour — pointing `open` at a directory *is* the decision — but nothing
+  said so while the README promised nothing is read until it is accepted. The
+  frame now says it, above the payload.
+
 ### Added
 
 - **`gage confirm <name> [words…]`** — the only thing that records a
@@ -116,7 +124,7 @@ first bundle, so read the first section before upgrading.
 
 ### Tests
 
-958 attack checks (was 928), 167 unit tests (was 165), 55 MCP end-to-end
+961 attack checks (was 928), 167 unit tests (was 165), 55 MCP end-to-end
 checks (was 48), 16 restore-drill checks, viewer end-to-end green. New
 regression coverage for every item above that can be driven from a shell,
 including the MCP self-pairing path, the push scan, `--out` into the inbox,

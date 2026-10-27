@@ -296,6 +296,17 @@ want "$T/un/manifest.json" "GIRAFFEHOUSE"
 CTX_HOME=$T/c $CTX unseal "$T/env.ctxb" --out "$T/un2" > "$T/u2" 2>&1; code wrongkey $? 1
 want "$T/u2" "not sealed to your key"
 
+echo "a bundle opened from a directory says it never crossed the accept gate"
+# "Arrival is not consent" governs inbox/pending, and a sealed file handed
+# over never passes through it: `unseal --out dir && open dir` renders the
+# payload with no accept step and leaves `gage inbox` saying nothing is
+# pending. That is the right behaviour -- pointing `open` at a directory IS
+# the decision -- but nothing said so, while the README promised nothing is
+# read until it is accepted. The frame says it now, above the payload.
+CTX_HOME=$T/b $CTX open "$T/un" > "$T/gate" 2>&1
+want "$T/gate" "NOT through your inbox"
+if CTX_HOME=$T/b $CTX inbox 2>/dev/null | grep -qF GIRAFFEHOUSE; then
+  bad "an unsealed bundle appeared in the inbox after all"; else ok; fi
 echo "a sealed bundle still carries its own signature verdict"
 CTX_HOME=$T/b $CTX open "$T/un" > "$T/so" 2>&1
 want "$T/so" "SENDER VERIFIED"
@@ -2514,6 +2525,9 @@ if [ -n "$nmid" ]; then ok; else bad "no pending bundle with subject lab"; fi
 CTX_HOME=$T/nm2 $CTX open "$T/nm2/inbox/pending/$nmid" > "$T/nmo1" 2>&1
 want   "$T/nmo1" "own word-label"
 wantno "$T/nmo1" "NAME MISMATCH"
+# The control for the accept-gate line above: this bundle really did arrive
+# through the inbox, so it must not claim otherwise.
+wantno "$T/nmo1" "NOT through your inbox"
 # Now the reader uses that very label as a name for somebody else. The quiet
 # note must give way to the loud warning, because the name is being borrowed.
 addc $T/nm2 "$NM1LABEL" "$NM2K"
