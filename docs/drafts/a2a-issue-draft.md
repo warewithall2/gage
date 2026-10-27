@@ -1,105 +1,155 @@
-# Draft: an A2A issue, not yet posted
+# Draft: posting to A2A, not yet posted
 
-**Status: draft for Owen to review, edit and post under his own account.
+**Status: drafts for Owen to review, edit and post under his own account.
 Nothing here has been sent anywhere.**
 
-## Why a new issue rather than a comment on #1672
+Two versions below. **Version A** is a comment on an existing, dormant issue
+and is the one to post first. **Version B** is a new issue, worth opening only
+if A gets a response, because it asks the spec for something rather than
+adding to someone else's request.
 
-[#1672 "Agent Identity Verification for Agent Cards"][1672] is open, but it is
-not the neutral design thread a secondary source suggested. It is a vendor
-proposal — AgentID (`getagentid.dev`), a centralized CA with a verification
-endpoint — and its comment thread is three vendors converging on a pluggable
-scheme: AgentID, `corpollc/qntm`, and `aeoess/agent-passport`. No A2A
-maintainer appears in it. A comment from a fourth project would read as a
-fourth pitch, and the point below is orthogonal to what they are arguing
-about rather than a contribution to it.
+## The landscape, read 2026-10-27
 
-(The "Agent Registry, issue #741" I was told about does not exist — that
-number 404s. Check any issue number before citing it.)
+Check these again before posting; they move, and the previous draft of this
+file was written against a picture that has since changed.
 
-## The draft
+| | | |
+|---|---|---|
+| [#388][388] "Data labeling" | open, **0 comments**, untouched since 2025-06-23 | sender-supplied annotations in `metadata`, including "untrusted data which may lead to prompt injection" |
+| [#1672][1672] "Agent Identity Verification for Agent Cards" | open, **661 comments**, last activity 2026-08-19 | vendor-heavy; AgentID, APS, qntm, OATR. Someone has already argued "reliance policy is out of scope, by design" |
+| [#1829][1829] "minimal Ed25519 + RFC 9421 signing extension for A2A messages" | open, 143 comments, last 2026-08-08 | **per-message** signing — the payload-integrity gap `docs/a2a.md` names as missing |
+| [#2133][2133] "Exact-message authorization envelope for consequential actions" | open, last 2026-08-18 | adjacent |
 
-**Title:** Identity verification establishes who sent a message, not what the
-receiver may do with it
+**What this changes.** The earlier draft asserted that A2A defines no
+integrity for message payloads. That is still true of the *specification*, but
+#1829 is an active proposal for exactly it, and posting without acknowledging
+that reads as not having looked. The durable point is narrower and better:
+signing answers *who sent this*, labelling answers *what kind of thing it is
+said to be*, and **neither says anything about how a receiving implementation
+must present the content to a model.** That last one is an interop property,
+not an implementation detail, and it is the gap.
 
 ---
 
-The identity work in #1672 and the threads around it addresses a real gap:
-today the Agent Card relies on transport-layer trust, and a receiving agent
-has no protocol-level way to verify who it is talking to.
+## Version A — a comment on #388
 
-I want to name a second gap that is orthogonal to it, because I think it is
-being assumed away rather than solved, and because it is the one that does
-not get easier once identity verification lands.
+*Why here: #388 asks for labels that include "untrusted data which may lead to
+prompt injection". It has sat with zero comments since May 2025. It is the
+right venue, it has no competing vendors in it, and the comment below is a
+correction offered to someone else's proposal rather than a pitch.*
 
-**Verifying the sender does not make the content safe to read.**
+---
 
-A2A's receiving agent is, in the usual case, a language model. The content it
-receives becomes tokens in its context, adjacent to its own instructions.
-Authentication tells you a message's provenance. It tells you nothing about
-whether acting on the content is safe, and the two are routinely conflated
-because in human systems they are nearly the same thing — a signed letter
-from a colleague is usually also a safe letter.
+This is the right problem to name, and I think the proposal is two problems
+wearing one coat. Separating them would make both easier to specify.
 
-Two concrete cases where perfect identity verification changes nothing:
+**The cooperative half works as written.** PII, need-to-know, retention class
+— these are facts the sender knows and has no motive to misstate, and a
+namespaced annotation under `metadata` is a reasonable way to carry them. Data
+flow policy and logging are real wins.
 
-1. **A verified agent that has itself been injected upstream.** It signs
-   correctly, its card verifies, its certificate chains. It relays an
-   instruction it was talked into relaying. Every identity check passes and
-   the receiver is compromised.
-2. **Content that imitates the frame around it.** If a receiving
-   implementation presents a received message to its model as text, then
-   message content containing something that looks like the end of that text
-   — a delimiter, a system-style line, a forged verdict — can close the frame
-   early, and everything after it reads as the implementation's own voice. I
-   have had this work in testing against my own renderer, which is why I
-   stopped treating it as theoretical.
+**The adversarial half does not, and cannot.** A label saying content is
+untrusted is set by the sender. The case that matters is the one where the
+sender is the problem — a compromised agent, or an honest agent relaying
+something it was itself injected with — and that sender will not set the flag.
+An implementation that reads `a2a.dev/annotations/untrusted` and relaxes when
+it is absent is strictly worse off than one that never looked, because it now
+has a reason to believe content is safe.
 
-**Why this belongs in the spec rather than in each implementation.**
+Content that arrived from another agent is untrusted **because of where it
+came from**, not because of what it says about itself. That is a property the
+receiver derives from the envelope, and no field in a document the sender
+controls can carry it. The same argument applies to any `"verified": true`
+style field being discussed elsewhere in this repo: a message can carry
+*evidence*, it cannot carry the *verdict*.
 
-If every A2A implementation invents its own way of presenting received parts
-to a model, then the same message is safe against one and not another, and
-there is no way for a sender or an auditor to reason about it. Interop needs
-agreement on how received content is delimited and labelled, not only on how
-the sender is identified. That is the same argument that put message `parts`
-in the spec rather than leaving serialization to implementers.
-
-**A minimal surface, offered as a starting point rather than a proposal:**
+**A smaller thing that would help more.** Whatever the labels end up being,
+the receiving implementation still has to put the content somewhere, and in
+the usual case that somewhere is a model's context next to its own
+instructions. If every implementation invents its own way of doing that, the
+same message is safe against one and unsafe against another, and neither a
+sender nor an auditor can reason about it. Two pieces of that are cheap:
 
 - A normative statement that content received from another agent MUST NOT be
   presented to a model as instruction-bearing, and that an implementation
-  which does so is non-conformant. This alone would be worth more than any
-  mechanism, because it makes the failure nameable.
-- Delimiters that content cannot forge. A fixed marker string is forgeable by
-  definition; a per-message random nonce in the marker is not, since the
-  sender cannot predict it.
-- **The identity verdict computed by the receiver, never carried in the
-  message.** This is a direct comment on the `verifiedIdentity` field shape
-  in #1672: a field in a document the sender controls can say anything it
-  likes, including `"verified": true`. Whatever the mechanism, the conclusion
-  has to be derived by the receiver from the signature and its own policy, or
-  the field is decorative. A card can carry the *evidence*; it cannot carry
-  the *verdict*.
+  which does so is non-conformant. The statement alone is worth more than any
+  mechanism, because it makes the failure nameable in a bug report.
+- If a delimiter is used to fence received content, it has to be one the
+  content cannot forge. A fixed marker string is forgeable by definition; a
+  per-message random nonce in the marker is not, because the sender cannot
+  predict it.
 
-**Disclosure and what I am not asking for.** I maintain a small open-source
-tool that does the receiving half of this, so I have been wrong about it in
-public a few times and have the scar tissue to show for it. I am not
-proposing it as the answer and it speaks no A2A. I would rather the spec have
-a position on this than have my implementation's position adopted. If it is
-useful I am happy to write up the specific attacks that worked against my own
-frame and what the fixes were.
+I have had frame-escape work against my own renderer in testing — content that
+imitated the end of the fence, so everything after it read in the
+implementation's own voice — which is why I stopped treating this as
+theoretical. Happy to write up the specific attacks and the fixes if that is
+useful to anyone here.
 
-[1672]: https://github.com/a2aproject/A2A/issues/1672
+---
+
+## Version B — a new issue, only if A lands
+
+**Title:** Nothing in the spec says how received content may be presented to a
+model
+
+---
+
+Three threads here are solving adjacent halves of one problem, and I think the
+half none of them covers is the one that decides whether the others matter.
+
+- [#1672][1672] and the Agent Card work: *who published this card.*
+- [#1829][1829]: *did this specific message come from that agent.*
+- [#388][388]: *what kind of content is this said to be.*
+
+All three are about establishing provenance or description. None of them says
+what a receiving implementation may then **do** with the content, and in A2A
+the receiver is usually a language model, where "do" means "place these tokens
+next to my own instructions."
+
+Two cases where all three succeeding changes nothing:
+
+1. **A verified agent that was injected upstream.** Signature valid, card
+   verifies, chain intact. It relays an instruction it was talked into
+   relaying. Every check passes; the receiver is compromised.
+2. **Content that imitates its own frame.** If an implementation presents
+   received parts to a model as text, content containing something that looks
+   like the end of that text can close the frame early, and the remainder
+   reads as the implementation's own voice.
+
+**Why this belongs in the spec rather than in each implementation.** If every
+implementation chooses its own presentation, the same message is safe against
+one and not another, and there is no way for a sender, a receiver or an
+auditor to reason about it. That is the same argument that put `parts` in the
+spec rather than leaving serialization to implementers.
+
+**A minimal surface, as a starting point rather than a proposal:**
+
+- A normative "received content MUST NOT be presented to a model as
+  instruction-bearing; an implementation that does so is non-conformant."
+- Delimiters content cannot forge: a per-message nonce, not a fixed marker.
+- The trust verdict computed by the receiver and never carried in the message.
+  A field the sender controls can say `"verified": true`. Evidence travels;
+  conclusions do not.
+
+**Disclosure.** I maintain a small open-source tool that does the receiving
+half of this. I am not proposing it, it speaks no A2A, and I have been wrong
+about this in public enough times to have the scar tissue. I would rather the
+spec have a position than have mine adopted.
 
 ---
 
 ## Before posting
 
-- Read the current state of #1672; it moves.
-- Decide whether to link gage at all. The draft deliberately does not link it:
-  the thread already has three projects promoting themselves, and the point
-  lands harder without a fourth link in it. A maintainer who wants the detail
-  will ask.
+- Re-read #388 and #1829; the table above is a snapshot, not a fact.
+- Post **A** first and wait. B is a request of the maintainers; A is help with
+  someone else's. If A draws no reply in a couple of weeks, B stands alone.
+- **Decide whether to link gage.** Neither version links it. #1672 already has
+  several projects promoting themselves and the point lands harder without a
+  fourth link; anyone who wants the detail will ask. Owen's call.
 - This contradicts nothing in `docs/a2a.md`, which already says gage is not a
-  registry, not a CA and not an identity provider. It is the same position,
-  said where the spec is being written.
+  registry, not a CA and not an identity provider.
+
+[388]: https://github.com/a2aproject/A2A/issues/388
+[1672]: https://github.com/a2aproject/A2A/issues/1672
+[1829]: https://github.com/a2aproject/A2A/issues/1829
+[2133]: https://github.com/a2aproject/A2A/issues/2133
