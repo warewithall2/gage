@@ -13,12 +13,16 @@ gage is that channel built the other way round. It is three things:
 
 - **A bundle** — files, a prompt and decisions in a signed, sealed directory.
 - **A list you control.** Two people compare four word-pairs over a channel
-  neither machine controls. Nothing arrives from anyone you have not confirmed,
-  and arrival is not consent: nothing is read until it is accepted.
+  neither machine controls, and `gage confirm` records that they did. A key
+  nobody has confirmed still works and says so — `SENDER ON YOUR LIST,
+  UNCONFIRMED` — because being on a list and having been checked are two
+  different facts and only one of them is a claim about a person. Arrival is
+  not consent either: nothing is read until it is accepted.
 - **A reading frame.** Before any payload, the receiving agent is told that
-  this is *data* from an identified party carrying no authority — and on a bad
-  verdict the contents are withheld rather than annotated, because an
-  annotation is something the payload can argue with.
+  this is *data* from an identified party carrying no authority — and when the
+  sender is not attributable under a key you currently accept, the contents
+  are withheld rather than annotated, because an annotation is something the
+  payload can argue with.
 
 ![Twenty-one seconds of real terminal output: two identities going from gage init to a rendered trust verdict, pairing with word-pairs, sending through a relay, and the frame the receiving agent is shown before any content.](docs/screenshots/demo.gif)
 
@@ -125,13 +129,26 @@ Three specific defences, each written after the attack worked in testing:
 Payload digests are checked against the signed manifest, so a signed manifest
 beside swapped files is caught and the contents are withheld.
 
+**Which verdicts withhold, exactly.** This is worth stating plainly, because
+an earlier version of this README said "on a bad verdict" and left a reader to
+guess the set — and the guess most people make is wrong. Contents are withheld
+on a digest mismatch, and for `SENDER UNVERIFIABLE`, `SENDER KEY REJECTED` and
+`ARRIVAL UNRECORDED`: the cases where nothing can be pinned on anybody.
+Contents are **shown**, with the verdict above them, for `SENDER NOT ON YOUR
+LIST`, `SENDER REFUSED BEFORE` and `SENDER ON YOUR LIST, UNCONFIRMED`. Those
+are attributable — a real signature by a real key — and withholding them would
+make the ordinary first contact with a new person unusable while buying
+nothing: whoever handed you the file can hand you the file again. What you
+get instead is the verdict, before the payload, every time.
+
 ## Keys, said out loud
 
     $ gage whoami
     owen	yomSmC3TalJ5IM+H0yvkhhWVab4ujiAVIQFR4WvdXiM=.KlXt+/5rj4y3FMC7eqau4zF5eZV+x7PjYZUdyUXHDEM=
 
-      this key says : humble pillar · ruddy lobster · marine armour · eastern dovecote
-      shown as      : humble pillar
+      this key says : carved daffodil · grand lintel · spiced barley · bright iguana
+      device label  : humble pillar   (from the signing key alone, so NOT the first
+                        pair above -- it is how others tell machines apart)
 
 LocalSend labels a device with a word pair and it is the nicest thing about
 using it — but there the words are a *name* the device picked, so anyone can
@@ -146,8 +163,22 @@ lovely, and useless as a check, since an attacker generates keypairs until
 theirs also renders "humble pillar" — about 65,000 tries. So the pair is a
 **label**, for telling devices apart in a list, and nothing is ever confirmed
 against it. The **fingerprint** is four pairs, 64 bits, and is what a person
-compares. Both come from the same hash in the same order, so the label is
-always a real prefix of the fingerprint rather than a separate lookalike.
+compares.
+
+They come from the same function, so for a key with no encryption half the
+label is the fingerprint's first pair. For the key above it is **not** — look
+at the two lines again. The fingerprint covers the signing key *and* the
+encryption key, because confirming only the signing half let an attacker
+substitute the key your mail gets sealed to and still pass the comparison word
+for word. The label covers the signing key alone, and has to: a bundle's
+manifest carries nothing else, so that is the only nickname a receiver can
+derive for a sender it has never met.
+
+This paragraph used to say the label was "always a real prefix of the
+fingerprint", `spec.md` and `words.rs` agreed, and the example above was
+written to match — which is how a wrong claim survives three documents. It was
+wrong for every contact you can seal to. A unit test now fails if the two ever
+line up again.
 
 ## The second machine
 
@@ -443,6 +474,8 @@ automated.
     gage init owen                      # make your keypair
     gage whoami                         # the line you give to a colleague
     gage add dana <their-key>           # buddy list; keyed on the key, not the name
+    gage confirm dana                   # after comparing the words out loud: the
+                                        #   only thing that produces SENDER VERIFIED
     gage rotate                         # replace your key without losing your past
 
     gage send --to dana --subject "backoff refactor" \
@@ -600,6 +633,27 @@ claims are keyed by the pair rather than the mailbox.
 For the case where the other agent is not on your filesystem. The relay is
 deliberately stupid: it holds sealed envelopes addressed to an X25519 public
 key and hands them to whoever proves they hold the matching secret.
+
+### Which relay you are using
+
+**There is no default relay on the command line.** `gage push` and `gage pull`
+refuse until you have run `gage join <address>`, and they name no address for
+you.
+
+**The viewer is different, and this was documented nowhere until a review
+asked.** The "available over the internet" switch on Conversations arrives
+pre-filled with `https://relay.gage.sh` (`RELAY_DEFAULT`, `src/ui.rs`). It is
+a suggestion in an editable field: nothing is contacted until you press the
+button, and pressing it registers your mailbox there. Clear the field and type
+your own address if you have one, and `gage relay --bind …` on any host you
+control is the whole server.
+
+Whichever relay you use, including that one, the properties below are what you
+are relying on and they are the reason the default is tolerable: it holds
+sealed envelopes it cannot open, and what it learns is metadata — which
+mailbox has mail, how big, and when. If that metadata matters to you, run your
+own; if the other machine is on your filesystem or your network, you need no
+relay at all and `gage seal` / `gage lan` are the shorter paths.
 
 On the host that will hold mail:
 
@@ -1006,12 +1060,21 @@ and it travels here. One bounded line, already in the notification you see,
 so it leaks nothing the popup does not -- but a hook that treats it as
 trustworthy input is a hook with a problem.
 
-**gage does not accept the bundle.** When the hook returns, gage has moved
-nothing: still unread, still in `pending`. The hook itself is handed
+**`--on-arrival` does not accept the bundle.** The hook runs and gage has
+moved nothing: still unread, still in `pending`. The hook itself is handed
 `CTX_BUNDLE_ID` and can of course run `gage accept && gage open` -- and for an
-agent loop that is the point. What gage guarantees is that *it* never crosses
-the gate for you, so crossing it stays an act your own hook performs, with a
-journal entry to show it.
+agent loop that is the point. What gage guarantees is that *the hook machinery*
+never crosses the gate for you, so crossing it stays an act your own hook
+performs, with a journal entry to show it.
+
+One exception, and it is one you turn on: with **`--auto-accept` as well**, the
+watcher runs its auto-accept pass *before* the hook, so a granted arrival is
+already in `accepted` by the time your command starts. That ordering is
+deliberate -- an unattended hook should find the bundle settled rather than
+race the watcher for it -- and `CTX_AUTO_ACCEPTED` is `1` when it happened.
+This paragraph used to say "gage does not accept the bundle" without the
+qualifier, which was a promise about one flag read as a promise about the
+watcher.
 
 **gage does not interpolate sender text into your command.** The subject is
 written by whoever sent it; in a shell line it would be command injection with
@@ -1383,8 +1446,11 @@ in the message. See [Authority](#authority-the-one-thing-that-says-you-may-act).
     cargo build --release && cargo test --release && bash tests/attacks.sh
     bash tests/ui-e2e.sh      # optional: drives the viewer in a real browser
 
-680 checks plus 106 Rust unit tests, and one end-to-end test that opens the
-viewer in a browser and completes a connection request.
+958 checks plus 167 Rust unit tests, 55 MCP end-to-end checks, a 16-check
+identity restore drill, and one end-to-end test that opens the viewer in a
+browser and completes a connection request. `tests/selfcheck.sh` runs the lot
+and is the only number worth quoting — this line said 680 and 106 for long
+enough to be wrong by a third.
 
 That last one exists because of a gap the other two could not see. The buddy
 panel's confirmation gate lives entirely in the page's client state, and it

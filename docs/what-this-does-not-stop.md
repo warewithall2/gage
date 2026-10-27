@@ -82,8 +82,30 @@ Audited on 22 October 2026, against those classes:
 - **What remains true and is not a bug:** the server acts with the identity's
   full authority for anything the CLI can do unattended, and any local
   process that can spawn it has that authority. It is not a sandbox and does
-  not claim to be. The single exception is that it cannot put a key on the
-  buddy list alone — `gage_pair_confirm` needs the word-pairs echoed back.
+  not claim to be.
+
+- **An agent CAN put a key on the buddy list alone.** This bullet used to
+  claim the opposite — "the single exception is that it cannot put a key on
+  the buddy list alone — `gage_pair_confirm` needs the word-pairs echoed
+  back" — and a reviewer drove a stranger's key through it in two tool calls.
+  `gage_pair_start` *returns* the word-pairs, so the echo
+  `gage_pair_confirm` checks is an echo of something the server just said.
+  The check catches a transcription slip between two calls. It cannot catch
+  an agent that never asked a human, which is the only attacker here.
+
+  What is true instead is narrower and holds: **nothing reachable over MCP
+  writes a confirmation.** A key paired this way is on the list and reads
+  `SENDER ON YOUR LIST, UNCONFIRMED`; it never reads `SENDER VERIFIED`, and
+  `authority` honours no grant under it. Only a human typing four word-pairs
+  back — `gage confirm`, or the viewer's confirm step, which shows none of
+  them — produces the stronger verdict.
+
+  The limit of *that*, stated here rather than left for the next review: an
+  agent with **shell** access is not bound by it. It can run `gage
+  fingerprint` and `gage confirm` in sequence, or simply write
+  `contacts.json`. Nothing in a program can stop a process that can write
+  that program's files. The boundary is the MCP surface — a tool-using model
+  with no shell — and that is the surface this claim is about.
 
 ### The hole the audit found: the subject walked past the accept gate
 

@@ -107,7 +107,7 @@ For anything that arrived through `pull`, you do not need to parse prose:
       {
         "id": "45a219ae9a2ff33d",
         "subject": "shape",
-        "trust": "SENDER VERIFIED (signature valid, key is on your list)",
+        "trust": "SENDER VERIFIED (signature valid, key is on your list, word-pairs confirmed)",
         "from_key": "Q+AQQSNZY0P38RmWR6lNHUy4AMP52ThvKf65Q5plfLw=",
         "from_handle_claimed": "a",
         "forwarded": false, "items": 1, "prompts": 0,

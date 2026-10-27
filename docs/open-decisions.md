@@ -183,7 +183,9 @@ protection that exists elsewhere:
 - it is not given the payload, because the accept gate is what holds contents
   back and a hook carrying them would have retired that gate for every
   granted arrival;
-- it does not accept the bundle, so reading stays a separate recorded act;
+- the hook machinery does not accept the bundle, so reading stays a separate
+  recorded act -- with the one exception you opt into, `--auto-accept`, whose
+  pass runs before the hook and sets `CTX_AUTO_ACCEPTED=1`;
 - sender-chosen text reaches it only through the environment, flattened to
   one line, never interpolated into the command string.
 

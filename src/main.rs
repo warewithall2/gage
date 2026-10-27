@@ -1095,7 +1095,18 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 "  this key says : {}",
                 words::fingerprint_of(&id.public_b64(), Some(&id.box_public_b64()))
             );
-            eprintln!("  shown as      : {}", words::label(&id.public_b64()));
+            // Labelled for what it covers. These two lines sat adjacent with
+            // the shorter one reading "shown as", which invited the reading
+            // that it is the first of the four pairs above -- and that is
+            // true only for a key with no encryption half. This one has one,
+            // so the two values come from two different hashes. README and
+            // spec.md both printed this example WITH the label repeated as
+            // the fingerprint's first pair, which cannot happen.
+            eprintln!(
+                "  device label  : {}   (from the signing key alone, so NOT the first",
+                words::label(&id.public_b64())
+            );
+            eprintln!("                    pair above -- it is how others tell machines apart)");
             eprintln!();
             eprintln!("  Those words come from the key, so nobody picks their own.");
             eprintln!("  When you pair with another machine, both screens must show");

@@ -1755,16 +1755,34 @@ function setupSteps(){
         +'compare all four word-pairs aloud before you add them.',
      go:'buddies',goL:'Open Buddies'},
     {t:'You have a way to reach them',
-     // All three are tied to somebody being on the list. A relay with nobody
-     // to send to is a configured address, and a stranger announcing on this
-     // network is not a way to reach anyone -- either one on its own used to
-     // satisfy this step.
-     done:routed.length>0||(people.length>0&&(!!(ST&&ST.relay)||nearby>0)),
+     // All of these are tied to somebody being on the list. A relay with
+     // nobody to send to is a configured address, and a stranger announcing
+     // on this network is not a way to reach anyone -- either one on its own
+     // used to satisfy this step.
+     //
+     // And handing a sealed file over counts, which it did not: this step
+     // asked for a route, a relay or a LAN neighbour, so the whole
+     // file-handover path -- `gage seal` on one machine, `gage unseal && gage
+     // open` on the other, which is the path the first-tester packet now
+     // LEADS with -- could be completed end to end and leave this step
+     // reading "not yet" for ever. The packet promises five of five. A
+     // checklist with a step nobody can reach teaches people to ignore it.
+     //
+     // A completed exchange is better evidence than a configured address
+     // anyway: an address is a claim that a path exists, an exchange is the
+     // path having worked.
+     done:routed.length>0
+         ||(people.length>0&&(!!(ST&&ST.relay)||nearby>0||accepted>0||!!(ST&&ST.ever_sent))),
      fact:routed.length?(routed.length+' with a saved address: '+names(routed))
          :(people.length>0&&ST&&ST.relay)?'a relay is set, and somebody is on your list'
-         :(people.length>0&&nearby)?(nearby+' device'+(nearby===1?'':'s')+' on this network'):'',
-     act:'Run gage lan on both machines on the same network, or set a relay '
-        +'in the rail on Conversations. Neither is required to receive.',
+         :(people.length>0&&nearby)?(nearby+' device'+(nearby===1?'':'s')+' on this network')
+         :(people.length>0&&(accepted>0||(ST&&ST.ever_sent)))
+             ?'something has already made the trip, which is better evidence than an address'
+             :'',
+     act:'Three ways, and none is required to receive: hand a sealed file over '
+        +'(gage seal, then gage unseal and gage open at the other end), run '
+        +'gage lan on both machines on the same network, or set a relay in the '
+        +'rail on Conversations.',
      go:'chats',goL:'Open Conversations'},
     {t:'You have exchanged something real',
      // Accepted, not merely arrived. Anyone can put a bundle in front of you,

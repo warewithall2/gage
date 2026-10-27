@@ -43,12 +43,12 @@ The next hop is always the literal directory `prior/`. The walker never follows 
 **3. What `open` prints.** The two unknowns are two axes the five sender verdicts fold into one label for one party. The signature axis: hop 1 valid, hop 2 valid, and the author's signature over the innermost bytes valid too. The list axis: the author's key is not on your list. Hop 2 already occupies the trust line, so that line cannot also be `SENDER NOT ON YOUR LIST`. The viewer classifies with `startsWith("SENDER NOT")`. The sample below assumes hop 1 and hop 2 are on the list, which is the rendering where one green sender verdict most invites a reader to treat the author as known. A prior hop whose signature is valid and whose key is absent gets `PRIOR HOP ABSENT FROM YOUR LIST` instead, a different label and not a prefix of the author one.
 
 ```
-  trust      : SENDER VERIFIED (signature valid, key is on your list)
-  sender     : carol (key CarolKey1234…), name confirmed against your list
+  trust      : SENDER VERIFIED (signature valid, key is on your list, word-pairs confirmed)
+  sender     : carol (key CarolKey1234…), a name you hold for this key
   subject    : <the cover Carol signed>
   origin     : <alice's id>  "<alice's subject>"
 
-  hop 1      : bob (key BobKey123456…), name confirmed against your list
+  hop 1      : bob (key BobKey123456…), a name you hold for this key
                PRIOR HOP VERIFIED (signature valid, key is on your list)
                bob signed the exact bytes enclosed under him. A receipt of
                those bytes. His list is not visible here, and this line does

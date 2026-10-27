@@ -168,15 +168,34 @@ So: the server acts with the identity's full authority for anything the CLI
 can do unattended — read the buddy list, send, push off the machine, pull,
 open bundles. It is not a sandbox and does not pretend to be one.
 
-**Except the ceremony.** Putting a key on the buddy list needs the word-pairs
-echoed back through `gage_pair_confirm`, and a wrong echo adds nothing. That
-is the one thing an agent cannot do by asking nicely.
+**Including the buddy list.** This section used to lead with "except the
+ceremony — putting a key on the buddy list needs the word-pairs echoed back
+through `gage_pair_confirm` … that is the one thing an agent cannot do by
+asking nicely", and then, in the next paragraph, conceded that a key knows its
+own word-pairs and `gage_pair_start` hands them over. Both paragraphs were
+here; the strong one came first and was the one people quoted. A reviewer
+paired a stranger's key in two tool calls, with no human anywhere, and the
+result read `SENDER VERIFIED`.
 
-And the honest limit of that, which is the same one the viewer's confirmation
-gate has: **a key knows its own word-pairs**, and `gage_pair_start` hands them
-to the agent, so an echo proves the pairs made a round trip and not that a
-human read them off another screen. It is a checkpoint, not a proof. The tool
-description says so where the model will read it.
+So the claim is gone, and the mechanism changed under it. An agent **can** put
+a key on the buddy list alone. What it cannot do is **confirm** one: nothing
+reachable over MCP writes a confirmation record, so a key paired by an agent
+reads `SENDER ON YOUR LIST, UNCONFIRMED` and `authority` honours no grant
+under it. `Trust::Known` — the verdict everything else keys on — now requires
+a record that a human compared four word-pairs out of band, and the only
+things that write one are `gage confirm` at a terminal and the viewer's
+confirm step, which asks for all four pairs and displays none.
+
+The echo check in `gage_pair_confirm` stays, because it costs nothing and
+catches a transcription slip between two tool calls. It is a checkpoint, and
+it is no longer load-bearing. The tool description says so where the model
+will read it.
+
+The limit of the new claim, in the same spirit: an agent with a **shell** can
+run `gage fingerprint` and then `gage confirm`, or write `contacts.json`
+directly. No program stops a process that can write its files. The boundary
+is the MCP surface — a tool-using model with no shell — and that is what this
+section is about.
 
 Three things are deliberately *not* reachable through MCP, and the reasons are
 different from each other:

@@ -19,6 +19,23 @@ at its own pace — 21 seconds, start to finish.
 Lines beginning `#` are narration from the script. Everything after a `$` is a
 command and its own output.
 
+> **This capture is from before the confirmation record (27 October 2026) and
+> has not been re-recorded.** Nothing in it is edited — that is the point of
+> the file, so correcting the text by hand would cost more than the staleness
+> does. Three things print differently now, and `scripts/demo.sh` reproduces
+> the current output if you want it:
+>
+> - the verdict reads `SENDER VERIFIED (signature valid, key is on your list,
+>   word-pairs confirmed)`, and reaching it takes one more step — `gage
+>   confirm <name>`, after the pairs have been compared. The capture's `gage
+>   add` alone would now print `SENDER ON YOUR LIST, UNCONFIRMED`;
+> - the sender line reads "a name you hold for this key" rather than "name
+>   confirmed against your list", which claimed a check that `add` had not
+>   performed;
+> - `gage fingerprint`'s second line no longer calls the label "the label
+>   only" without saying what it covers: for a contact you can seal to it is
+>   the signing key's label and **not** a prefix of the four pairs above it.
+
 ---
 
 ```console

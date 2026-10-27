@@ -128,8 +128,16 @@ is the easier way to see where you are.
 It opens on **Setup**, a checklist of five things, each marked *done* or *not
 yet* with the evidence underneath. It is not a written guide: every line is
 read from this machine's own state, so it answers for your machine rather
-than for the project in general. Right now it should say two of the five are
-done. By the end of this test all five should be.
+than for the project in general. Right now it should say **one** of the five
+is done — this machine has an identity, and nothing else has happened yet. By
+the end of this test all five should be.
+
+(This paragraph said "two" until a reviewer counted. It was one, and the step
+about having a way to reach somebody could not be satisfied by handing a file
+over at all, so following this packet to the end left you at four of five with
+nothing you could do about it. Both are fixed; if the page and this paragraph
+ever disagree again, the page is reading your machine and this is a sentence
+somebody typed.)
 
 The other three tabs: **Chats** is what has arrived and what you sent,
 **Buddies** is whose keys you have confirmed, **Agents** is for pointing an
@@ -176,6 +184,34 @@ Use that plain form for this comparison. There is a `--signing-only` option
 that prints a *different* four pairs for a different situation; if one of you
 uses it and the other does not, the words will not match even though nothing
 is wrong.
+
+**Last, write it down.** This is a new step and it is the one that makes the
+call mean anything:
+
+    gage confirm theirname
+
+It asks you to type the four pairs they read out. Type them as they said them
+— punctuation and capitals do not matter, the words and their order do. If
+they do not match the key on your list, nothing is recorded and you should go
+back to the paragraph above.
+
+Until you run this, `gage` will say so on every bundle from them:
+
+    trust      : SENDER ON YOUR LIST, UNCONFIRMED (signature valid, but
+                 nobody here ever compared this key's word-pairs)
+
+That is not an error and mail still arrives. It is the tool declining to claim
+you did something it has no record of. Before this existed, `gage add` alone
+printed `SENDER VERIFIED` — so the verdict said "a human checked this" when
+all that had happened was a key being pasted, and anything that could add a
+contact could manufacture it. **If you only test one thing in this packet,
+test whether that distinction is clear from the output alone**, because it is
+the change three reviewers asked for and the one most likely to be confusing.
+
+After it, bundles from them read:
+
+    trust      : SENDER VERIFIED (signature valid, key is on your list,
+                 word-pairs confirmed)
 
 ## 5. Send each other something (about 10 minutes)
 

@@ -1,8 +1,13 @@
 # gage — the wire reality
 
-What is actually on disk and on the network in **v0.1.0**, derived from the
+What is actually on disk and on the network in **v0.3.3**, derived from the
 code rather than from intent. Where this document and the code disagree, the
 code wins and this document is wrong; please report it.
+
+That has happened. This line read **v0.1.0** for three releases, and the
+verdict table below listed six verdicts when the code had seven. Both were
+found by review, not by reading. The version is `Cargo.toml`'s; the verdicts
+are `trust::ALL`, which the compiler keeps complete.
 
 Format version: **`v: 1`** (`src/manifest.rs`, `FORMAT_VERSION`).
 
@@ -114,17 +119,29 @@ list, the receiver's own witness record):
 
 | verdict | meaning |
 |---|---|
-| `SENDER VERIFIED` | signature valid, key is on your list |
+| `SENDER VERIFIED` | signature valid, key is on your list, **and a human recorded confirming its word-pairs** |
+| `SENDER ON YOUR LIST, UNCONFIRMED` | signature valid and the key is on your list, but nothing here records anybody comparing it — or what was confirmed no longer covers the key on file |
 | `SENDER NOT ON YOUR LIST` | signature valid, you have never accepted this key |
 | `SENDER REFUSED BEFORE` | signature valid, and you declined this key rather than adding it |
 | `SENDER UNVERIFIABLE` | signature missing or invalid |
 | `SENDER KEY RETIRED` | signature valid; you saw this bundle *before* you retired that key, so it is still attributable |
 | `SENDER KEY REJECTED` | signature valid, but it reached you *after* you retired that key — contents withheld, non-zero exit |
+| `ARRIVAL UNRECORDED` | signature valid under a retired key, and no record of this bundle reaching you either side of the retirement — contents withheld |
 
-These six are distinct states and none is a shorter way of saying another.
-Contents are withheld for `UNVERIFIABLE`, `KEY REJECTED`, and the
-"cannot be placed either side of the retirement" case; `--reveal` shows them
-and leaves the verdict exactly as it was.
+These eight are distinct states and none is a shorter way of saying another
+(asserted by a test, because the viewer classifies them with `startsWith`).
+Contents are withheld for `UNVERIFIABLE`, `KEY REJECTED` and `ARRIVAL
+UNRECORDED`, and on a digest mismatch; `--reveal` shows them and leaves the
+verdict exactly as it was.
+
+**`SENDER VERIFIED` requires a confirmation record, not just an entry on the
+list.** Every route onto the list can be driven by software — `gage add` takes
+a key out of a chat window, `quickstart` takes a pasted token, the MCP server
+takes an agent's say-so — so until a separate record existed, the strongest
+verdict in the system was available to anything that could add a contact. The
+record stores the fingerprint that was compared and is re-checked on every
+verdict, so attaching an encryption key after a signing-only comparison
+expires it. Only a human typing four word-pairs back writes one.
 
 **`SENDER NOT ON YOUR LIST` renders its contents.** A stranger must be able to
 send you a first message; the protection is the accept gate and the frame, not
@@ -158,18 +175,30 @@ what the sender says they sent, while being unable to occupy a line of its own.
 A key renders to words derived from the key itself (`src/words.rs`), so nobody
 chooses their own:
 
-    this key says : humble pillar · ruddy lobster · marine armour · eastern dovecote
-    shown as      : humble pillar
+    this key says : carved daffodil · grand lintel · spiced barley · bright iguana
+    device label  : humble pillar   (signing key only -- not the first pair above)
 
 - The **fingerprint** is four pairs = **64 bits**, from `sha256` over the
   signing key, or over `signpub ␟ boxpub` when both halves exist. This is what
   a person compares, aloud, over a channel neither machine controls.
-- The **label** is the first pair = **16 bits**. It is for telling two machines
+- The **label** is **16 bits**, the first pair of `sha256` over the signing key
+  alone -- so the first pair of the fingerprint only when there is no
+  encryption half, as the example above shows. It is for telling two machines
   apart in a list and is *never* confirmed against: an attacker can grind
   ~65,000 keypairs until theirs renders any pair they want.
 
-Both come from the same hash in the same order, so the label is always a true
-prefix of the fingerprint rather than a separate lookalike value.
+Both come from the same function, so for a key with **no encryption half** the
+label is the fingerprint's first pair. For a contact you can seal to it is
+**not**: the fingerprint covers `sign ␟ box` and the label covers `sign`, so
+they are two values out of two different hashes that merely look alike.
+
+This paragraph claimed the opposite — "the label is always a true prefix of the
+fingerprint" — and so did the README and `words.rs`, while `gage fingerprint`
+printed both on adjacent lines. It was wrong for every sealable contact, which
+is to say for every ordinary one. The label cannot be widened to fix it: a
+manifest carries the sender's signing key alone, so the signing-only label is
+the only nickname a receiver can derive for a sender it has no entry for. So
+the claim went instead, and a unit test now fails if the two ever line up.
 
 **What the ceremony binds:** that the key your machine holds under a name is
 the key the other person's machine holds. It binds a key to a human you
@@ -221,7 +250,16 @@ talked it into it.
 Rules enforced by `src/authority.rs`:
 
 1. A grant is consulted **only** after `SENDER VERIFIED`. Any other verdict and
-   no grant is read at all.
+   no grant is read at all — including `SENDER ON YOUR LIST, UNCONFIRMED`,
+   which is where a key an agent added by itself lands. A grant on a key
+   nobody ever checked is the same mistake as a grant on a bad signature, one
+   step further back.
+
+   Grants are matched by **name**, and a name is yours to re-use, so
+   `trust::add_contact` refuses to put a key under a name you retired a
+   different key under unless you pass `--reinstate`. Without that, retiring
+   `alice` and adding somebody else as `alice` handed them everything `alice`
+   was allowed to do, silently.
 2. A **malformed file grants nothing** — one unusable line voids the whole
    file, because the other direction lets a typo on line 2 widen line 3.
 3. The scope comes from the message **kind**, via `MsgType::granted_scope`,
