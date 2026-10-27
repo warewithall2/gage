@@ -22,9 +22,23 @@
 //!    buy is that no *documented, reachable-by-asking* path exists, so an
 //!    injected agent has to be told to write a file by hand, which is a
 //!    conspicuous thing to find in a transcript.
-//! 2. **A grant only ever follows a verified sender.** `lookup` refuses
-//!    outright unless the verdict is `Trust::Known`. A grant on a key whose
-//!    signature did not check out would be worse than no feature at all.
+//! 2. **A grant only ever follows a CONFIRMED sender.** `lookup` refuses
+//!    outright unless the verdict is `Trust::Known`, which since the
+//!    confirmation record exists means a key somebody compared out of band --
+//!    not merely one that is on the list. That tightening is the whole reason
+//!    the record was worth adding here: `Trust::Unconfirmed` is attributable
+//!    and perfectly ordinary, and a key an agent put on the list by calling
+//!    the MCP server is also `Trust::Unconfirmed`, so the two are
+//!    indistinguishable to this function and neither gets a grant. A grant on
+//!    a key whose signature did not check out would be worse than no feature
+//!    at all; a grant on a key nobody ever checked is the same mistake one
+//!    step further back.
+//!
+//!    Grants are matched by NAME, and a name is yours to re-use, so
+//!    `trust::add_contact` refuses to put a key under a name you retired
+//!    unless you say `--reinstate`. Without that, retiring alice and adding
+//!    somebody else under "alice" handed them everything alice was allowed to
+//!    do, silently. Found by review.
 //! 3. **A malformed file grants nothing.** One unparsable line voids the
 //!    whole file rather than the line, because the alternative is a typo in
 //!    line 2 silently widening line 3 -- and the failure direction here is
@@ -166,6 +180,9 @@ impl Authority {
     ) -> Result<&Grant, Denied> {
         // Property 2, and it comes first on purpose: no path through this
         // function reaches a grant without having passed this check.
+        // `Known` and not `knows()`: on the list is not the same as
+        // confirmed, and this is the function where the difference has to
+        // cost something or the record is decoration.
         if trust != crate::trust::Trust::Known {
             return Err(Denied::NotVerified);
         }
@@ -415,6 +432,7 @@ mod tests {
         let c = contacts();
         for t in [
             Trust::Unknown,
+            Trust::Unconfirmed,
             Trust::Unverified,
             Trust::Retired,
             Trust::Revoked,

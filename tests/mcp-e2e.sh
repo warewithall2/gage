@@ -108,7 +108,7 @@ if tool_json "$T/o2" 4 0 | grep -qF "mcpbob"; then bad "a wrong echo still creat
 if grep -qF "$(printf '%s' "$BKEY" | cut -d. -f1)" "$T/a/contacts.json" 2>/dev/null; then
   bad "a wrong echo wrote the key to contacts.json"; else ok; fi
 
-echo "--- pairing: the right echo completes it, both ways"
+echo "--- pairing: an agent can put a key on the list, and cannot confirm one"
 cat > "$T/s3" <<EOF
 {"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}
 {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"gage_pair_start","arguments":{"key":"$BKEY","name":"mcpbob"}}}
@@ -119,6 +119,21 @@ session "$T/a" "$T/s3" "$T/o3"
 [ "$(field "$T/o3" 3 result.isError)" = false ] && ok || bad "the correct echo was refused"
 tool_json "$T/o3" 3 0 | grep -qF '"added":"mcpbob"' && ok || bad "pair_confirm did not report the add"
 tool_json "$T/o3" 4 0 | grep -qF "mcpbob" && ok || bad "the buddy is not on the list"
+# THE CHECK THIS FILE WAS MISSING, and the hole a reviewer drove a stranger's
+# key through. `gage_pair_start` RETURNS the word-pairs, so the echo
+# `gage_pair_confirm` checks is an echo of something this server just said: an
+# agent completes the whole ceremony alone, with no human anywhere, and two
+# documents claimed that was the one thing it could not do.
+#
+# The echo check stays -- it costs nothing and catches a transcription slip
+# between two tool calls -- but it is no longer load-bearing. What holds is
+# that nothing reachable over MCP writes a confirmation, so a key paired this
+# way reads UNCONFIRMED and `authority` honours no grant under it.
+if python3 -c "
+import json,sys
+c=json.load(open('$T/a/contacts.json'))
+sys.exit(0 if not c.get('confirmed') else 1)
+"; then ok; else bad "MCP pairing wrote a confirmation record"; fi
 # A second confirm of a spent pairing is refused: the id is gone.
 cat > "$T/s3b" <<EOF
 {"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}
@@ -126,7 +141,8 @@ cat > "$T/s3b" <<EOF
 EOF
 session "$T/a" "$T/s3b" "$T/o3b"
 [ "$(field "$T/o3b" 2 result.isError)" = true ] && ok || bad "a pairing id survived its session"
-# bob adds alice through MCP too, so the send below has a verified verdict.
+# bob adds alice through MCP too. The verdict below is UNCONFIRMED, not
+# verified, because that is what an agent's say-so is worth -- see above.
 cat > "$T/s4" <<EOF
 {"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}
 {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"gage_pair_start","arguments":{"key":"$AKEY","name":"mcpalice"}}}
@@ -160,7 +176,10 @@ cat > "$T/s6" <<EOF
 EOF
 session "$T/b" "$T/s6" "$T/o6"
 IB=$(tool_json "$T/o6" 2 0)
-printf '%s' "$IB" | grep -qF "SENDER VERIFIED" && ok || bad "gage_inbox carries no verdict"
+printf '%s' "$IB" | grep -qF "SENDER ON YOUR LIST, UNCONFIRMED" && ok \
+  || bad "gage_inbox carries no verdict"
+if printf '%s' "$IB" | grep -qF "SENDER VERIFIED"; then
+  bad "a contact paired entirely over MCP reads SENDER VERIFIED"; else ok; fi
 printf '%s' "$IB" | grep -qF '"subject":"backoff"' && ok || bad "gage_inbox lost the subject"
 # Payloads are not in the inbox listing.
 if printf '%s' "$IB" | grep -qF "full jitter"; then bad "gage_inbox leaked a payload"; else ok; fi
@@ -173,8 +192,15 @@ EOF
 session "$T/b" "$T/s7" "$T/o7"
 V=$(tool_json "$T/o7" 2 0)
 R=$(tool_json "$T/o7" 2 1)
-printf '%s' "$V" | grep -qF '"verdict":"SENDER VERIFIED' && ok || bad "the verdict is not the first block"
+printf '%s' "$V" | grep -qF '"verdict":"SENDER ON YOUR LIST, UNCONFIRMED' && ok \
+  || bad "the verdict is not the first block"
+# Attributable and unconfirmed are different facts, and the block says both.
+# An agent branching on `on_your_list` alone would treat a key another agent
+# added as one its user had vouched for, which is the whole point.
 printf '%s' "$V" | grep -qF '"attributable":true' && ok || bad "attributable missing"
+printf '%s' "$V" | grep -qF '"on_your_list":true' && ok || bad "on_your_list missing"
+printf '%s' "$V" | grep -qF '"confirmed":false' && ok \
+  || bad "the verdict block does not distinguish on-the-list from confirmed"
 printf '%s' "$V" | grep -qF '"payload_withheld":false' && ok || bad "payload_withheld wrong on a good verdict"
 printf '%s' "$R" | grep -qF "full jitter" && ok || bad "the rendering has no payload"
 # The fence markers and their nonce must survive the transport intact.

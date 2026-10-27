@@ -10,6 +10,17 @@
 # touches the identity it is testing around is a test that can lose it.
 set -u
 CTX="${CTX:-$PWD/target/release/gage}"
+
+# Add a contact and record the out-of-band confirmation, the state an ordinary
+# working setup is in. `add` alone leaves a contact UNCONFIRMED by design --
+# nothing compared anything -- and the viewer scenarios here are about what the
+# page does with a confirmed one. The fixture reads the words off this machine,
+# which is what stands in for the phone call.
+uic_addc() { # uic_addc <home> <name> <key>
+  CTX_HOME=$1 $CTX add "$2" "$3" >/dev/null 2>&1 || return 1
+  local fp; fp=$(CTX_HOME=$1 $CTX fingerprint "$2" 2>/dev/null | cut -f2)
+  [ -n "$fp" ] && CTX_HOME=$1 $CTX confirm "$2" "$fp" >/dev/null 2>&1
+}
 PORT="${UI_E2E_PORT:-7931}"
 FRPORT="${UI_E2E_FIRSTRUN_PORT:-7932}"
 RXPORT="${UI_E2E_RECEIVE_PORT:-7933}"
@@ -45,14 +56,14 @@ for h in u1 u2 u3; do CTX_HOME=$T/$h $CTX init $h >/dev/null 2>&1; done
 K1=$(CTX_HOME=$T/u1 $CTX whoami | cut -f2)
 printf 'the quarterly numbers\n' > "$T/w/f.md"
 for h in u2 u3; do
-  CTX_HOME=$T/$h $CTX add u1 "$K1" >/dev/null 2>&1
+  uic_addc $T/$h u1 "$K1"
   CTX_HOME=$T/$h $CTX route u1 "$T/u1" >/dev/null
   CTX_HOME=$T/$h $CTX send --to u1 --type question --subject "review this" \
     --prompt "$T/w/f.md" >/dev/null 2>&1
 done
 # u2 goes on the list, so exactly one request is left and the script knows
 # whose it is.
-CTX_HOME=$T/u1 $CTX add u2 "$(CTX_HOME=$T/u2 $CTX whoami | cut -f2)" >/dev/null 2>&1
+uic_addc $T/u1 u2 "$(CTX_HOME=$T/u2 $CTX whoami | cut -f2)"
 CTX_HOME=$T/u1 $CTX inbox >/dev/null 2>&1
 CTX_HOME=$T/u1 $CTX ui --port "$PORT" >/dev/null 2>&1 &
 pids="$pids $!"
@@ -148,7 +159,7 @@ fi
 # a verdict about a key it has confirmed.
 AKEY=$(CTX_HOME=$T/fa $CTX whoami 2>/dev/null | cut -f2)
 if [ -n "$AKEY" ]; then
-  CTX_HOME=$T/fb $CTX add frontrunner "$AKEY" >/dev/null 2>&1
+  uic_addc $T/fb frontrunner "$AKEY"
 fi
 CTX_HOME=$T/fb $CTX ui --port "$RXPORT" > "$T/fb-ui.log" 2>&1 &
 pids="$pids $!"
@@ -228,7 +239,7 @@ PY
 CTX_HOME=$T/fh $CTX init owner >/dev/null 2>&1
 CTX_HOME=$T/fh $CTX agent new helper >/dev/null 2>&1
 CTX_HOME=$T/fi $CTX init friend >/dev/null 2>&1
-CTX_HOME=$T/fh $CTX add friend "$(CTX_HOME=$T/fi $CTX whoami | cut -f2)" >/dev/null 2>&1
+uic_addc $T/fh friend "$(CTX_HOME=$T/fi $CTX whoami | cut -f2)"
 CTX_HOME=$T/fh $CTX route friend "$T/fi" >/dev/null
 printf 'a first thing\n' > "$T/w/s.md"
 CTX_HOME=$T/fh $CTX send --to friend --type share --subject "hello" \

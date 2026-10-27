@@ -115,7 +115,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 if name.is_empty() {
                     println!("  no name given -- skipping.");
                 } else {
-                    match crate::trust::add_contact(&name, &key) {
+                    match crate::trust::add_contact(&name, &key, crate::trust::AddOpts::plain()) {
                         // `add_contact` returns the lines `gage add` prints,
                         // word-pairs and all -- so they are printed, not
                         // reformatted. Joining them was my bug, and it put a

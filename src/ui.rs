@@ -577,6 +577,20 @@ fn handle(stream: TcpStream, port: u16) -> std::io::Result<()> {
                 &serde_json::json!({ "error": msg }).to_string(),
             ),
         },
+        ("POST", "/api/confirm") => match confirm_from_ui(&req.body) {
+            Ok(_) => respond(
+                stream,
+                "200 OK",
+                "application/json",
+                &serde_json::json!({ "ok": true }).to_string(),
+            ),
+            Err((code, msg)) => respond(
+                stream,
+                code,
+                "application/json",
+                &serde_json::json!({ "error": msg }).to_string(),
+            ),
+        },
         ("POST", "/api/pair") => match pair_from_ui(&req.body) {
             Ok(lines) => respond(
                 stream,
@@ -1024,9 +1038,22 @@ pub fn buddies_json() -> String {
                 "key": k,
                 // Shown so a person can confirm a contact they already have,
                 // which is what you do after a machine behaves oddly.
-                "fingerprint": crate::words::fingerprint_of(k, contacts.box_keys.get(k).map(|s| s.as_str())),
+                "fingerprint": contacts.fingerprint_for(k),
+                // The signing-only label, which is all a label can ever be
+                // -- see `words::label`. It is NOT the first pair of the
+                // fingerprint above for a sealable contact, so the page must
+                // not present it as one.
                 "label": crate::words::label(k),
                 "sealable": contacts.box_keys.contains_key(k),
+                // Whether anybody ever compared this key out of band, which
+                // is the difference between SENDER VERIFIED and SENDER ON
+                // YOUR LIST, UNCONFIRMED.
+                "confirmed": contacts.is_confirmed(k),
+                // There WAS a confirmation and it no longer covers the key:
+                // the ordinary cause is an encryption key attached after the
+                // fact, so what was compared covers less than what is on
+                // file now.
+                "stale": contacts.stale_confirmation(k).is_some(),
                 "unread": unread.get(k).copied().unwrap_or(0),
                 "waiting": waiting.get(k).copied().unwrap_or(0),
                 "reach": reach(k, n),
@@ -1338,14 +1365,53 @@ fn pair_from_ui(body: &str) -> Result<Vec<String>, (&'static str, String)> {
             format!("the words on screen are not this key's any more ({real}) -- look again"),
         ));
     }
-    crate::trust::add_contact(&name, &{
-        if e.boxpub.is_empty() {
-            e.sign.clone()
-        } else {
-            format!("{}.{}", e.sign, e.boxpub)
-        }
-    })
+    // Added UNCONFIRMED, which is what the page has always said this step
+    // does -- "they are added to your list here without a word-pair compare".
+    // The fingerprint is printed on this screen, so a click beside it is not
+    // evidence anybody compared it with anything. `/api/confirm` is the step
+    // that records a comparison, and it asks for all four pairs with nothing
+    // on screen.
+    crate::trust::add_contact(
+        &name,
+        &{
+            if e.boxpub.is_empty() {
+                e.sign.clone()
+            } else {
+                format!("{}.{}", e.sign, e.boxpub)
+            }
+        },
+        crate::trust::AddOpts::plain(),
+    )
     .map_err(|e| ("400 Bad Request", e))
+}
+
+/// Record an out-of-band confirmation from the page.
+///
+/// The browser half of `gage confirm`, and the only route through the viewer
+/// that can produce `SENDER VERIFIED`. It asks for all four pairs and shows
+/// none of them: the request card's single-pair check is, in its own words, a
+/// prompt to compare rather than proof of one, and 16 bits typed next to a
+/// button is not the claim `SENDER VERIFIED` makes.
+fn confirm_from_ui(body: &str) -> Result<String, (&'static str, String)> {
+    let v: serde_json::Value =
+        serde_json::from_str(body).map_err(|e| ("400 Bad Request", format!("bad body: {e}")))?;
+    let name = v
+        .get("name")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let typed = v.get("words").and_then(|x| x.as_str()).unwrap_or("");
+    let mut c = crate::trust::Contacts::load();
+    let key = c
+        .key_for_name(&name)
+        .ok_or_else(|| ("404 Not Found", format!("no contact named {name}")))?;
+    let seq = crate::state::LocalState::load().seq;
+    c.confirm(&key, typed, "word-pairs typed back in the viewer", seq)
+        .map_err(|e| ("409 Conflict", e))?;
+    c.save()
+        .map_err(|e| ("500 Internal Server Error", e.to_string()))?;
+    Ok(serde_json::json!({"confirmed": name}).to_string())
 }
 
 /// Which of the four word-pairs this key's connection request asks for.
@@ -1574,7 +1640,12 @@ fn connect_from_ui(body: &str) -> Result<Vec<String>, (&'static str, String)> {
         Some(b) => format!("{key}.{b}"),
         None => key.clone(),
     };
-    let mut out = crate::trust::add_contact(&name, &token).map_err(|e| ("400 Bad Request", e))?;
+    // Unconfirmed on purpose. One pair is 16 bits, this page says so two
+    // lines above the button, and the four pairs are on screen by the time
+    // the add is clicked -- so the add is an assertion, not evidence. The
+    // person is pointed at the step that records one.
+    let mut out = crate::trust::add_contact(&name, &token, crate::trust::AddOpts::plain())
+        .map_err(|e| ("400 Bad Request", e))?;
     if !contacts.box_keys.contains_key(&key) {
         // `add_contact` already says "verify only". This adds the remedy,
         // which is the part a person cannot work out from the statement.

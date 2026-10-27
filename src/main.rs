@@ -165,7 +165,47 @@ enum Cmd {
         all: bool,
     },
     /// Add someone's key to your buddy list (the signpub.boxpub token)
-    Add { name: String, key: String },
+    Add {
+        name: String,
+        key: String,
+        /// Put back a key you retired, or add one you refused
+        ///
+        /// Both are decisions somebody took to narrow this list, and `add`
+        /// will not quietly undo either. It used to, with a `note:` line in
+        /// the output -- so anything that could add a contact could reverse a
+        /// revocation and leave no record anybody had to read.
+        #[arg(long)]
+        reinstate: bool,
+        /// This machine generated the key, so there is nothing to compare
+        ///
+        /// For `gage agent new`, which makes a second identity beside this
+        /// one: both keys come out of a keygen this machine just ran, there
+        /// is no other party and no channel for anybody to sit on. Never use
+        /// it for a key that came from anywhere else -- it records a
+        /// confirmation that nobody performed.
+        #[arg(long)]
+        same_machine: bool,
+    },
+    /// Record that you compared a contact's word-pairs out of band
+    ///
+    /// The one thing that writes a confirmation, and the only reason a
+    /// bundle ever reads SENDER VERIFIED. Every other way a key gets onto
+    /// your list -- `add` from a chat window, `quickstart` from a pasted
+    /// token, an agent calling the MCP server -- records that something put
+    /// a key there, which is exactly as strong as the channel it came over.
+    ///
+    /// Type the four pairs as the OTHER machine shows them. Typing them is
+    /// the point: it is the part that shows you read them off something that
+    /// is not this screen.
+    Confirm {
+        /// The contact, as they appear in `gage contacts`
+        name: String,
+        /// The four word-pairs, as their machine shows them
+        ///
+        /// Separators and case do not matter; the words do. Leave it off to
+        /// be asked for them.
+        words: Vec<String>,
+    },
     /// Agent identities on this machine: one key each, so a grant can name one
     #[command(subcommand)]
     Agent(AgentCmd),
@@ -1115,17 +1155,23 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                             if b.is_none() {
                                 // Said out loud rather than quietly showing
                                 // a narrower value as though it were the
-                                // same one.
-                                println!("note: {n} has no encryption key on file, so these words");
-                                println!("  cover the signing key only. You can verify them and");
-                                println!("  not seal to them; re-add them from a full token to");
-                                println!("  get both.");
+                                // same one -- and on STDERR, which is the
+                                // other half of the rule the comment below
+                                // states and this block used to break:
+                                // `gage fingerprint x | cut -f2` saw four
+                                // lines of prose before the value.
+                                eprintln!(
+                                    "note: {n} has no encryption key on file, so these words"
+                                );
+                                eprintln!("  cover the signing key only. You can verify them and");
+                                eprintln!("  not seal to them; re-add them from a full token to");
+                                eprintln!("  get both.");
                             }
                             (n.clone(), k, b)
                         }
                         None => match c.retired_by_name(n) {
                             Some((k, r)) => {
-                                println!("note: {n} is a key you retired on {}", r.retired_at);
+                                eprintln!("note: {n} is a key you retired on {}", r.retired_at);
                                 // A retired contact's encryption key is not
                                 // kept, so these words cover the signing key
                                 // only -- which is honest for a key that can
@@ -1150,9 +1196,25 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             }
             println!("{who}\t{}", words::fingerprint_of(&key, boxpub.as_deref()));
             eprintln!(
-                "{who}\t{}\t(the label only -- never confirm against this)",
+                "{who}\t{}\t(the device label: signing key only, NOT a prefix of the \
+                 words above, and never a thing to confirm against)",
                 words::label(&key)
             );
+            // Whether anybody ever compared these words, for the contact
+            // case. Printed here because this is the command a person runs
+            // while wondering exactly that.
+            if name.is_some() {
+                let c = trust::Contacts::load();
+                if c.is_confirmed(&key) {
+                    eprintln!("  confirmed; bundles from this key read SENDER VERIFIED");
+                } else if c.stale_confirmation(&key).is_some() {
+                    eprintln!("  a confirmation exists but no longer covers this key --");
+                    eprintln!("  compare these words again, then: gage confirm {who}");
+                } else if c.knows(&key) {
+                    eprintln!("  NOT confirmed. Once you have compared these with them:");
+                    eprintln!("    gage confirm {who}");
+                }
+            }
         }
         Cmd::Authority => {
             let a = authority::Authority::load();
@@ -1404,6 +1466,18 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             }
             c.save()?;
             println!("\n{name} moved onto the new key.");
+            // No confirmation carries over, and this is the one place where
+            // saying why matters most. The notice is signed by the key being
+            // retired, so accepting it proves the holder of the OLD key chose
+            // the new one -- which is precisely what a thief holding the old
+            // key also gets to prove. A rotation is a channel, not a
+            // comparison, and the only thing that distinguishes the two cases
+            // is a human asking them.
+            println!("  NOT confirmed: the notice was signed by the key being retired, so");
+            println!("  it shows whoever held that key chose this one -- which is also true");
+            println!("  if that key was stolen. Their mail reads SENDER ON YOUR LIST,");
+            println!("  UNCONFIRMED until you compare the new words with them:");
+            println!("      gage confirm {name}");
             println!("  cutoff recorded at {now}, observation {seq} (this machine's own");
             println!(
                 "  record). They state they rotated at {} -- that is their",
@@ -1746,10 +1820,83 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 }
             }
         }
-        Cmd::Add { name, key } => {
-            for l in trust::add_contact(&name, &key)? {
+        Cmd::Add {
+            name,
+            key,
+            reinstate,
+            same_machine,
+        } => {
+            for l in trust::add_contact(
+                &name,
+                &key,
+                trust::AddOpts {
+                    // A key off a web page or out of a chat window, which is
+                    // what this command is for. Nobody compared anything, so
+                    // nothing is recorded as confirmed and the output says
+                    // which command to run once somebody has.
+                    confirmed: None,
+                    reinstate,
+                    same_machine,
+                    seq: state::LocalState::load().seq,
+                },
+            )? {
                 println!("{l}");
             }
+        }
+        Cmd::Confirm { name, words } => {
+            let mut c = trust::Contacts::load();
+            let key = match c.key_for_name(&name) {
+                Some(k) => k,
+                None => {
+                    return Err(match c.retired_by_name(&name) {
+                        Some((_, r)) => format!(
+                            "you retired the key you held for {name} on {}, so there is \
+                             nothing live to confirm",
+                            r.retired_at
+                        ),
+                        None => format!("no contact named {name}. `gage contacts` lists them."),
+                    }
+                    .into());
+                }
+            };
+            // Printed before the words are asked for, never after: the
+            // comparison is worth nothing if this screen shows the answer
+            // first. It prints the LABEL, which is one pair and is already
+            // in `gage contacts` as the way to tell entries apart.
+            println!(
+                "confirming {name} ({})",
+                words::label(&key)
+            );
+            if c.box_keys.contains_key(&key) {
+                println!("  On their machine:  gage fingerprint");
+            } else {
+                // No encryption key on file, so the value is over the signing
+                // half alone and their machine must be asked for that one.
+                // The wrong command here is the failure review found in the
+                // viewer: an honest person compares two different values and
+                // is told they do not match.
+                println!("  On their machine:  gage fingerprint --signing-only");
+                println!(
+                    "  (you have no encryption key for {name}, so the words cover the \
+                     signing key only)"
+                );
+            }
+            let typed = if words.is_empty() {
+                print!("  The four pairs they read out: ");
+                use std::io::Write;
+                std::io::stdout().flush()?;
+                let mut line = String::new();
+                std::io::stdin().read_line(&mut line)?;
+                line
+            } else {
+                words.join(" ")
+            };
+            let seq = state::LocalState::load().seq;
+            c.confirm(&key, &typed, "word-pairs typed back at a terminal", seq)?;
+            c.save()?;
+            println!();
+            println!("confirmed {name}.");
+            println!("  Bundles signed by this key now read SENDER VERIFIED.");
         }
         Cmd::Decline { key } => {
             let (sign, _) = identity::split_key(&key);
@@ -3013,7 +3160,27 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     }
                 }
             }
-            for l in trust::add_contact(&name, &cand.token())? {
+            // Only the typed form records a confirmation. A `y` next to the
+            // words printed on this screen is the person's assertion that
+            // they compared them, and this machine has no way to tell that
+            // from a `y` typed without looking -- which is the shape of
+            // mistake the confirmation record exists to stop making. Typing
+            // the pairs back is evidence they were read off something else,
+            // so that is what writes the record, and the unconfirmed path
+            // says which command closes the gap.
+            for l in trust::add_contact(
+                &name,
+                &cand.token(),
+                trust::AddOpts {
+                    confirmed: confirm.as_deref().map(|echo| trust::Confirmation {
+                        echo,
+                        how: "word-pairs typed back during LAN pairing",
+                    }),
+                    reinstate: false,
+                    same_machine: false,
+                    seq: state::LocalState::load().seq,
+                },
+            )? {
                 println!("{l}");
             }
             println!();

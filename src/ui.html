@@ -353,6 +353,10 @@ textarea:focus{outline:none;border-color:var(--accent)}
 .devtag{font-size:var(--t1);padding:var(--s1) var(--s2);border-radius:var(--r3);
   border:1px solid var(--line2);color:var(--dim);white-space:nowrap}
 .devtag.ok{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 45%,transparent)}
+/* Unconfirmed is the ordinary state of a new contact, not an error, so it
+   takes the warn colour rather than the bad one -- and never the ok colour,
+   which this page reserves for a verdict that has been earned. */
+.devtag.warn{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 45%,transparent)}
 /* Word-pairs are the thing a person compares character by character, so they
    get the monospace face, room to breathe, and no truncation ever. */
 .devfp{font-size:var(--t2);color:var(--fg);margin-top:var(--s2);line-height:1.6;
@@ -569,6 +573,11 @@ const ago=iso=>{const d=(Date.now()-Date.parse(iso))/1000;
 // rendered as a recognised one is how a new, worse verdict gets displayed as
 // an old, milder one.
 const V=[['SENDER VERIFIED','Verified','v-ok'],
+         // On your list, and nobody here ever compared its word-pairs. Warn
+         // and not ok: every route onto the list except `gage confirm` can be
+         // driven by software, so this is the verdict most contacts have, and
+         // it must not be allowed to read as the one above it.
+         ['SENDER ON YOUR LIST','Unconfirmed','v-warn'],
          ['SENDER NOT','Not on your list','v-warn'],
          // A key you looked at and refused. Warn and not bad: the state is
          // one the person chose, and it withholds nothing that "not on your
@@ -582,6 +591,10 @@ const V=[['SENDER VERIFIED','Verified','v-ok'],
          // observation step failed. Styled as bad, since the one thing it
          // must never look like is a pass.
          ['VERDICT UNAVAILABLE','Verdict unavailable','v-bad']];
+// Per-contact confirm inputs and their errors, keyed by name. Kept out of
+// BUD because BUD is replaced wholesale on every poll and half-typed
+// word-pairs must survive that.
+const CONFW={},CONFE={};
 const vRow=t=>V.find(r=>(t||'').startsWith(r[0]));
 const vClass=t=>{const r=vRow(t);return r?r[2]:'v-bad';};
 const vShort=t=>{const r=vRow(t);return r?r[1]:(t||'No verdict');};
@@ -1549,16 +1562,37 @@ function budRender(force){
   }
   h+=`<div class="bsec">Your list<span class="bnum">${BUD.buddies.length}</span></div>`;
   if(!BUD.buddies.length){
-    h+=`<div class="lansub budnote">Nobody yet. Pair with a buddy on this network to add their key.</div>`;
+    h+=`<div class="lansub budnote">Nobody yet. Pair with a buddy on this network to add their key, then confirm its word-pairs with them.</div>`;
   }
   h+=`<div class="budgrid">`;
   for(const b of BUD.buddies){
     h+=`<div class="dev">
       <div class="devtop"><span class="devname">${esc(b.name)}</span>
         ${b.unread?`<span class="bnum">${b.unread} unread</span>`:''}
+        ${b.confirmed?'<span class="devtag ok" title="Somebody compared this key\'s four word-pairs against the other machine, over a channel neither machine controls.">confirmed</span>'
+                     :`<span class="devtag warn" title="On your list, but nothing here records anybody comparing its word-pairs.">${b.stale?'confirmation stale':'unconfirmed'}</span>`}
         ${b.sealable?'<span class="devtag ok">sealable</span>'
                     :'<span class="devtag" title="A bundle does not carry its sender\'s encryption key, so a contact added from a message is verify-only.">verify only</span>'}</div>
-      <div class="devfp">${esc(b.fingerprint)}</div>
+      ${b.confirmed
+        ? `<div class="devfp">${esc(b.fingerprint)}</div>`
+        : `<div class="bwhy">${b.stale
+            ? 'What was confirmed for this contact no longer covers the key on file &mdash; an encryption key was added after the comparison, and the words that were checked did not cover it. Confirm it again.'
+            : 'Nobody has compared this key\'s word-pairs. It is on your list, so its mail arrives and is attributable &mdash; but nothing here records that the key belongs to the person whose name is beside it.'}
+            Their mail reads <b>SENDER ON YOUR LIST, UNCONFIRMED</b> until somebody does.</div>
+           <div class="bwhy">This key's device label is <b>${esc(b.label)}</b> &mdash; derived from the
+             signing key alone, which is all a manifest carries, so it is <i>not</i> the first of the
+             four pairs when there is an encryption key as well. It tells entries apart and nothing more.
+             The four pairs are deliberately not shown here: ask them to run
+             <code>gage fingerprint${b.sealable?'':' --signing-only'}</code> and read them out over a call,
+             then type all four below.</div>
+           <div class="devrow">
+             <input class="lanin wide" placeholder="all four pairs, as their machine shows them"
+               value="${esc(CONFW[b.name]||'')}"
+               oninput="CONFW['${esc(b.name)}']=this.value" ${ABUSY?'disabled':''}>
+             <button class="devbtn" onclick="budConfirm('${esc(b.name)}')" ${ABUSY?'disabled':''}>
+               ${ABUSY?'Checking...':'Confirm'}</button>
+           </div>
+           ${CONFE[b.name]?`<div class="lanerr">${esc(CONFE[b.name])}</div>`:''}`}
       ${reachRow(b.reach)}
     </div>`;
   }
@@ -1629,6 +1663,26 @@ function budConnect(k){
   budPost('/api/connect',{key:k,name:ANAME,confirm:p});
 }
 function budDecline(k,undo){ budPost('/api/decline',{key:k,undo:!!undo}); }
+
+// Confirming is its own call rather than a flag on an add, because it happens
+// at a different moment: the add is when a key arrives, the confirmation is
+// after a phone call. The error is kept per contact, so one failed comparison
+// does not clear the words somebody else is halfway through typing -- and the
+// server never says what the right answer was.
+async function budConfirm(name){
+  const words=(CONFW[name]||'').trim();
+  if(!words){ CONFE[name]='Type the four pairs they read out.'; budRender(true); return; }
+  CONFE[name]='';ABUSY=true;budRender(true);
+  try{
+    const r=await fetch('/api/confirm',{method:'POST',
+      headers:{'X-Gage':'1','Content-Type':'application/json'},
+      body:JSON.stringify({name:name,words:words})});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok)throw new Error(j.error||('HTTP '+r.status));
+    delete CONFW[name];
+  }catch(e){ CONFE[name]=(e&&e.message)?e.message:String(e); }
+  ABUSY=false; await budLoad(); load();
+}
 
 // ---------------------------------------------------------------------------
 // Setup

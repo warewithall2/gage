@@ -29,9 +29,18 @@ if [ -n "$FP" ] && [ -n "$KEY" ]; then ok; else bad "could not create the fixtur
 # A correspondent who confirms that key BEFORE the export, so everything
 # afterwards is checked against a list that predates the backup.
 CTX_HOME=$T/two $CTX init drillbob >/dev/null 2>&1
-CTX_HOME=$T/two $CTX add drillalice "$KEY" >/dev/null 2>&1
+# Added AND confirmed: a backup drill is about whether the identity survives,
+# so the contacts either side of it have to be in the state an ordinary setup
+# is in. `add` alone leaves a contact UNCONFIRMED, which is correct and would
+# make every verdict here read as that instead of testing the restore.
+drill_addc() { # drill_addc <home> <name> <key>
+  CTX_HOME=$1 $CTX add "$2" "$3" >/dev/null 2>&1 || return 1
+  local fp; fp=$(CTX_HOME=$1 $CTX fingerprint "$2" 2>/dev/null | cut -f2)
+  [ -n "$fp" ] && CTX_HOME=$1 $CTX confirm "$2" "$fp" >/dev/null 2>&1
+}
+drill_addc "$T/two" drillalice "$KEY"
 KEY2=$(CTX_HOME=$T/two $CTX whoami 2>/dev/null | cut -f2)
-CTX_HOME=$T/one $CTX add drillbob "$KEY2" >/dev/null 2>&1
+drill_addc "$T/one" drillbob "$KEY2"
 
 # Something signed before the loss, and mail sealed to the old encryption key.
 printf 'written before the disk died\n' > "$T/before.md"

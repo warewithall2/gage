@@ -1,10 +1,31 @@
 //! The buddy list, which is the entire access-control model.
 //!
-//! AIM had this right in 1997: you accept people, and anyone else cannot
-//! reach you. Here it does double duty -- it stops unsolicited bundles, and
-//! it is what turns a signature into a *meaning*. A valid signature only
-//! proves the sender holds a key; the allowlist is what says you have ever
-//! agreed to hear from that key.
+//! AIM had this right in 1997: you accept people, and everyone else lands in
+//! a queue you decide about. Here the list does double duty -- it decides
+//! what reaches your inbox unasked, and it is what turns a signature into a
+//! *meaning*. A valid signature only proves the sender holds a key; the
+//! allowlist is what says you have ever agreed to hear from that key.
+//!
+//! Said precisely, because the first version of this note said strangers
+//! "cannot reach you" and that was not true: a bundle handed over as a file,
+//! or unsealed from a mailbox, is read by `gage open` whoever signed it. What
+//! the list controls is the VERDICT and the accept gate, not whether bytes
+//! can arrive. Someone who can hand you a file can always hand you a file.
+//!
+//! ## Being on the list is not the same as having been confirmed
+//!
+//! A key gets onto this list by several routes, and only one of them involves
+//! a human comparing anything: `gage add` takes a key off a web page or out
+//! of a chat window, the MCP server adds one on an agent's say-so, and
+//! `quickstart` adds one from a token pasted into a prompt. None of those is
+//! a confirmation -- they record that something put a key here, which is
+//! exactly as strong as the channel it came over.
+//!
+//! So `confirmed` is a separate map, and the verdict distinguishes them.
+//! Before it existed, `SENDER VERIFIED` meant "this key is on the list" while
+//! every document described it as meaning "a human compared this key's
+//! word-pairs out of band" -- and an agent that could call `gage add` could
+//! manufacture the stronger reading. A claim nothing records is not a claim.
 //!
 //! Keyed by public key, not by handle. A handle is a label anybody can claim.
 
@@ -14,8 +35,25 @@ use std::fs;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Trust {
-    /// Signature valid and the key is on the allowlist.
+    /// Signature valid, the key is on the allowlist, and a human recorded
+    /// confirming its word-pairs over a channel neither machine controls.
+    ///
+    /// The only verdict that means what the documents say `SENDER VERIFIED`
+    /// means, and the only one `authority` will honour a grant under.
     Known,
+    /// Signature valid and the key is on the allowlist, but **nothing on this
+    /// machine records a human ever confirming it** -- or what was confirmed
+    /// no longer covers the key on file, because an encryption key was
+    /// attached after the fact.
+    ///
+    /// Attributable: the signature is good, and a key that signs two bundles
+    /// ties them to the same holder. What is missing is any evidence that the
+    /// holder is the person whose name is beside it, which is the claim the
+    /// word-pair ceremony exists to make and the one `gage add` cannot make
+    /// on its own. Contents are NOT withheld -- you put this key on your list
+    /// deliberately, and withholding would make the honest ordinary case
+    /// useless -- but the verdict stops borrowing a word it has not earned.
+    Unconfirmed,
     /// Signature valid, key not on the allowlist. Real sender, stranger.
     Unknown,
     /// Signature valid, and a human on this machine **refused** this key.
@@ -69,6 +107,7 @@ pub enum Trust {
 #[allow(dead_code)]
 pub const ALL: &[Trust] = &[
     Trust::Known,
+    Trust::Unconfirmed,
     Trust::Unknown,
     Trust::Declined,
     Trust::Unverified,
@@ -92,6 +131,7 @@ impl Trust {
             Trust::Retired => 4,
             Trust::Revoked => 5,
             Trust::Unwitnessed => 6,
+            Trust::Unconfirmed => 7,
         }
     }
 
@@ -102,7 +142,12 @@ impl Trust {
     /// "known". A safety label that fails a substring check is not a label.
     pub fn label(&self) -> &'static str {
         match self {
-            Trust::Known => "SENDER VERIFIED (signature valid, key is on your list)",
+            Trust::Known => {
+                "SENDER VERIFIED (signature valid, key is on your list, word-pairs confirmed)"
+            }
+            Trust::Unconfirmed => {
+                "SENDER ON YOUR LIST, UNCONFIRMED (signature valid, but nobody here ever compared this key's word-pairs)"
+            }
             Trust::Unknown => {
                 "SENDER NOT ON YOUR LIST (signature valid, you have never accepted this key)"
             }
@@ -191,6 +236,51 @@ pub struct Contacts {
     /// the only way to stop being asked is to accept.
     #[serde(default)]
     pub declined: BTreeMap<String, Declined>,
+    /// signing pubkey -> the out-of-band confirmation a human performed on it.
+    ///
+    /// Separate from `keys` because they answer different questions. `keys`
+    /// says a key is one you accept mail from; this says somebody compared
+    /// its word-pairs against the other machine over a channel neither
+    /// machine controls. Every route onto `keys` can be driven by software;
+    /// the only thing that writes here is a human typing the pairs back at a
+    /// terminal, which is why `gage confirm` exists as its own command.
+    ///
+    /// Absent for every contact added before this map existed, which
+    /// deliberately drops them to `SENDER ON YOUR LIST, UNCONFIRMED` until
+    /// someone confirms them. That is the honest state: nothing on the
+    /// machine records that anyone ever checked. The same bill was paid when
+    /// the fingerprint began covering the encryption key, and for the same
+    /// reason -- what was confirmed did not cover what it needed to.
+    #[serde(default)]
+    pub confirmed: BTreeMap<String, Confirmed>,
+}
+
+/// A human compared this key's word-pairs and said they matched.
+///
+/// Holds **nothing the other party wrote**, for the reason `Declined` gives:
+/// this file is read by every command. `covers` is derived from key material,
+/// and `how` is written by this program, not by a peer.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Confirmed {
+    pub at: String,
+    /// The observation counter at the moment of confirmation, so a
+    /// confirmation can be placed among the arrivals around it.
+    #[serde(default)]
+    pub seq: u64,
+    /// Which route recorded it, in this program's own words -- never a
+    /// peer's. Shown to a person asking why a contact counts as confirmed.
+    pub how: String,
+    /// **The exact fingerprint string that was compared.**
+    ///
+    /// Checked against the key's current fingerprint on every verdict, which
+    /// is what makes the record mean something rather than merely exist. The
+    /// case it catches is real and was found by review: a key confirmed from
+    /// a bundle carries no encryption key, so what a person compared covers
+    /// the signing half alone. Attach an encryption key later and the
+    /// fingerprint changes -- and the old confirmation does not cover the new
+    /// half, which is precisely the substitution the word-pairs exist to
+    /// stop. So it stops counting, and says so.
+    pub covers: String,
 }
 
 /// A key you looked at and said no to.
@@ -213,12 +303,55 @@ pub struct Declined {
 }
 
 impl Contacts {
+    /// Read the list, or stop the program.
+    ///
+    /// A missing file is an empty list, which is correct: a machine that has
+    /// never added anybody knows nobody. A file that is PRESENT and does not
+    /// parse is not an empty list -- it is a list this program cannot read,
+    /// and treating it as "you know nobody" is the worst possible reading.
+    /// Every contact silently becomes a stranger, every grant stops applying,
+    /// and -- the part that makes it a security bug rather than an
+    /// inconvenience -- `decline`, `add` and `retire` would then write a fresh
+    /// file over the top, destroying the allowlist for good. One stray byte
+    /// in this file used to do all of that without printing anything.
+    ///
+    /// So it stops, with the path and the parse error, and changes nothing.
+    /// Failing closed on an unreadable allowlist is the only safe direction,
+    /// and a caller that could "handle" this error would handle it by
+    /// guessing.
     pub fn load() -> Self {
         let p = crate::identity::home().join("contacts.json");
-        fs::read_to_string(p)
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default()
+        let raw = match fs::read_to_string(&p) {
+            Ok(r) => r,
+            // Any read error, not just not-found: a file that exists and
+            // cannot be read is the same situation as one that cannot be
+            // parsed, and `unwrap_or_default` treated both as "nobody".
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Self::default(),
+            Err(e) => {
+                eprintln!("gage: cannot read your contact list at {}: {e}", p.display());
+                eprintln!(
+                    "      Refusing to continue: an unreadable allowlist is not an empty one,\n\
+                     \x20     and carrying on would treat every contact you have as a stranger\n\
+                     \x20     -- then overwrite the file the moment anything added a key."
+                );
+                std::process::exit(2);
+            }
+        };
+        match serde_json::from_str(&raw) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("gage: your contact list at {} does not parse: {e}", p.display());
+                eprintln!(
+                    "      Refusing to continue, and nothing has been changed. Every verdict\n\
+                     \x20     this program prints is computed from this file, so reading it as\n\
+                     \x20     an empty list would turn every contact you have confirmed into a\n\
+                     \x20     stranger without saying so. Fix the file, or move it aside and\n\
+                     \x20     re-add your contacts -- there is a copy in your backup if you\n\
+                     \x20     made one with `gage export-identity`."
+                );
+                std::process::exit(2);
+            }
+        }
     }
 
     pub fn save(&self) -> std::io::Result<()> {
@@ -229,6 +362,69 @@ impl Contacts {
 
     pub fn knows(&self, pubkey: &str) -> bool {
         self.keys.contains_key(pubkey)
+    }
+
+    /// The fingerprint a person would be asked to compare for this key, over
+    /// whatever halves of it this machine holds.
+    pub fn fingerprint_for(&self, pubkey: &str) -> String {
+        crate::words::fingerprint_of(pubkey, self.box_keys.get(pubkey).map(|s| s.as_str()))
+    }
+
+    /// Has a human confirmed this key's word-pairs, and does what they
+    /// confirmed still cover the key on file?
+    ///
+    /// The second half is the part that earns the record its keep. A
+    /// confirmation is not a flag that stays true; it is a statement about a
+    /// specific value, and when that value changes the statement expires.
+    pub fn is_confirmed(&self, pubkey: &str) -> bool {
+        match self.confirmed.get(pubkey) {
+            Some(c) => c.covers == self.fingerprint_for(pubkey),
+            None => false,
+        }
+    }
+
+    /// Why a confirmation stopped counting, for a person who is about to ask.
+    ///
+    /// `None` when it counts or when there never was one -- this answers only
+    /// "there is a record and it no longer applies", which is the case nobody
+    /// would otherwise work out.
+    pub fn stale_confirmation(&self, pubkey: &str) -> Option<&Confirmed> {
+        self.confirmed
+            .get(pubkey)
+            .filter(|c| c.covers != self.fingerprint_for(pubkey))
+    }
+
+    /// Record that a human compared this key's word-pairs out of band.
+    ///
+    /// Takes the pairs they typed and checks them, so the record cannot be
+    /// written by something that did not do the comparison. Refuses a key
+    /// that is not on the list: confirming is a statement about a contact,
+    /// and a confirmation with nothing to attach to would be a stored claim
+    /// about a stranger.
+    pub fn confirm(&mut self, pubkey: &str, typed: &str, how: &str, seq: u64) -> Result<(), String> {
+        if !self.knows(pubkey) {
+            return Err("that key is not on your list, so there is nothing to confirm.                         Add it first, then confirm it."
+                .to_string());
+        }
+        let real = self.fingerprint_for(pubkey);
+        if !crate::words::echo_matches(typed, &real) {
+            // The expected value is never echoed back here, for the reason
+            // the viewer and the MCP server both give: telling the caller
+            // what it should have said turns a comparison into a two-try
+            // copying exercise.
+            return Err("those are not this key's word-pairs, so nothing was recorded.                         All four pairs must come back as the OTHER machine shows them.                         If nobody has compared them yet, do not retry -- go and compare them."
+                .to_string());
+        }
+        self.confirmed.insert(
+            pubkey.to_string(),
+            Confirmed {
+                at: crate::bundle::now_rfc3339(),
+                seq,
+                how: how.to_string(),
+                covers: real,
+            },
+        );
+        Ok(())
     }
 
     /// Record that a human refused this key.
@@ -332,7 +528,14 @@ impl Contacts {
     /// recorded in the same second. A counter can.
     pub fn verdict(&self, pubkey: &str, witnessed: Option<u64>) -> Trust {
         if self.knows(pubkey) {
-            return Trust::Known;
+            // On the list is two states, not one. See `Trust::Unconfirmed`:
+            // every route onto `keys` can be driven by software, and only a
+            // human typing the pairs back writes `confirmed`.
+            return if self.is_confirmed(pubkey) {
+                Trust::Known
+            } else {
+                Trust::Unconfirmed
+            };
         }
         // Before the retired check and before `Unknown`, but after `knows`:
         // an explicit `gage add` is a later decision than a decline and
@@ -424,6 +627,76 @@ impl Contacts {
     }
 }
 
+/// What the caller is willing to say about an add, beyond the key itself.
+///
+/// Passed explicitly by every caller rather than defaulted, which is the
+/// point: there used to be no way for this function to tell `gage add`
+/// (a key off a web page) from `gage pair --confirm` (a human who compared
+/// four word-pairs) from the MCP server (an agent's say-so), and so all three
+/// produced a contact that printed `SENDER VERIFIED`. A struct with named
+/// fields makes a new caller state its case at the call site, where a reader
+/// of that caller can judge it.
+pub struct AddOpts<'a> {
+    /// Set only when a human has just typed this key's word-pairs back,
+    /// having read them off the other machine. `None` leaves the contact
+    /// unconfirmed, which is a working, useful state and not an error.
+    ///
+    /// Carries the pairs themselves rather than a boolean, so this function
+    /// checks them against the key instead of trusting the caller to have
+    /// done it. That matters most in the case review found: a key confirmed
+    /// from a bundle has no encryption half, so a signing-only comparison
+    /// cannot confirm a sealable contact -- and with a boolean the call site
+    /// would simply assert that it had.
+    pub confirmed: Option<Confirmation<'a>>,
+    /// The caller has been told, by a human, to put back a key this machine
+    /// retired or declined.
+    ///
+    /// Adding over such a record used to happen silently with a `note:` line,
+    /// which meant an agent calling `add` could undo a revocation and the
+    /// only trace was a line in output nobody had to read. Now the add is
+    /// refused unless this is set, and the only thing that sets it is a flag
+    /// a person typed.
+    pub reinstate: bool,
+    /// This machine generated the key itself, moments ago, and there is no
+    /// channel to compare anything over.
+    ///
+    /// The one honest confirmation with no comparison in it, and it exists
+    /// for exactly one caller: `gage agent new`, which makes a second
+    /// identity in a directory beside this one and registers each with the
+    /// other. There is no other party, no channel for anybody to sit on, and
+    /// nothing a word-pair could tell you that this process does not already
+    /// know -- it ran the keygen. Demanding a ceremony there would teach
+    /// people that the ceremony is paperwork.
+    ///
+    /// Narrow on purpose. It must never be set for a key that came from
+    /// anywhere other than this process's own `gage init`.
+    pub same_machine: bool,
+    /// The observation counter to stamp a confirmation with.
+    pub seq: u64,
+}
+
+/// The word-pairs a human just typed back, and how they came to.
+pub struct Confirmation<'a> {
+    /// What they typed. Checked, not trusted.
+    pub echo: &'a str,
+    /// A short phrase naming the route, written by this program and never by
+    /// a peer, shown to someone asking why a contact counts as confirmed.
+    pub how: &'a str,
+}
+
+impl AddOpts<'_> {
+    /// An add that confirms nothing and reinstates nothing: a key arriving
+    /// over a channel this machine cannot vouch for.
+    pub fn plain() -> Self {
+        AddOpts {
+            confirmed: None,
+            reinstate: false,
+            same_machine: false,
+            seq: 0,
+        }
+    }
+}
+
 /// Put a key on the list, with every guard `gage add` has always had.
 ///
 /// Shared rather than duplicated, so `gage add`, `gage pair` and the viewer's
@@ -433,8 +706,8 @@ impl Contacts {
 /// trusted name in one step.
 ///
 /// Returns the lines to show rather than printing them, because one of the
-/// three callers is a web page.
-pub fn add_contact(name: &str, key: &str) -> Result<Vec<String>, String> {
+/// callers is a web page.
+pub fn add_contact(name: &str, key: &str, opts: AddOpts) -> Result<Vec<String>, String> {
     let mut out: Vec<String> = Vec::new();
     let (sign, boxpub) = crate::identity::split_key(key);
     if !crate::bundle::b64_decode_ok(&sign) {
@@ -463,6 +736,12 @@ pub fn add_contact(name: &str, key: &str) -> Result<Vec<String>, String> {
                  again under a name you choose"
         ));
     }
+    // A retirement and a decline are decisions a human took to narrow this
+    // list, and undoing one is a bigger act than "add". Both used to be
+    // cleared here with a `note:` line in the output -- so anything that
+    // could call `add`, the MCP server included, could put a revoked key back
+    // in service and the only record was a line a caller could ignore.
+    // Reversing a decision is now its own, stated act: `--reinstate`.
     if let Some(r) = c.retired_record(&sign) {
         if r.compromised {
             return Err(format!(
@@ -472,20 +751,61 @@ pub fn add_contact(name: &str, key: &str) -> Result<Vec<String>, String> {
                 r.retired_at
             ));
         }
+        if !opts.reinstate {
+            return Err(format!(
+                "you retired this key on {}. Adding it again puts a key you took out \
+                 of service back into it, so it is not something `add` does quietly:\n  \
+                 gage add {name} <key> --reinstate\n  \
+                 If you did not retire it and do not know why it is on that list, do \
+                 not reinstate it -- ask them over another channel first.",
+                r.retired_at
+            ));
+        }
         out.push(format!(
-            "note: you retired this key on {} -- re-adding it puts it back in service",
+            "REINSTATED: you retired this key on {} and it is back in service",
             r.retired_at
         ));
         let k = sign.clone();
         c.retired.remove(&k);
     }
+    // A name you retired is still a name your reader recognises, and
+    // `authority` matches grants by name: `allow alice review-request`
+    // follows whoever holds the name "alice" now. Retiring alice frees the
+    // name, so a different key added under it used to inherit her grants
+    // with nothing said. Found by review, twice over.
+    if let Some((oldk, r)) = c.retired_by_name(name)
+        && oldk != sign
+        && !opts.reinstate
+    {
+        return Err(format!(
+            "you retired a DIFFERENT key under the name {name} on {}. Re-using that \
+             name hands this key anything you granted to the old one -- `gage authority` \
+             matches grants by name, not by key -- and makes every bundle the old key \
+             signed look like this one.\n  \
+             Pick a name you have not used, or, if you mean to re-use it:\n  \
+             gage add {name} <key> --reinstate\n  \
+             Either way, check `gage authority` afterwards.",
+            r.retired_at
+        ));
+    }
     // An explicit add is a later decision than a decline, so it overrides
     // it -- but it says so. A human who declined this key last week and is
     // now adding it should see that, because the ordinary cause of adding a
     // key you refused is being asked twice by something that wants in.
-    if let Some(d) = c.declined.remove(&sign) {
+    if let Some(d) = c.declined.get(&sign).cloned() {
+        if !opts.reinstate {
+            return Err(format!(
+                "you looked at this key on {} and refused it. Adding it now reverses \
+                 that decision, so say so:\n  \
+                 gage add {name} <key> --reinstate\n  \
+                 The ordinary reason to be adding a key you refused is that something \
+                 asked you twice.",
+                d.at
+            ));
+        }
+        c.declined.remove(&sign);
         out.push(format!(
-            "note: you declined this key on {} -- adding it now reverses that",
+            "REINSTATED: you declined this key on {} and that is now reversed",
             d.at
         ));
     }
@@ -499,25 +819,69 @@ pub fn add_contact(name: &str, key: &str) -> Result<Vec<String>, String> {
             "added {name} (verify only -- no encryption key, so you cannot seal to them)"
         )),
     }
+    // Both halves. The value a person is asked to confirm has to cover the
+    // encryption key too, or an attacker substitutes the half nobody checks
+    // and the comparison passes while they read everything.
+    let words = c.key_for_name(name).map(|k| c.fingerprint_for(&k));
+
+    // A caller that watched a human compare the pairs says so, and the record
+    // is written from the key material rather than from the caller's word for
+    // it -- `confirm` recomputes and compares. A caller that did not, does
+    // not, and the contact works while reading `UNCONFIRMED` until somebody
+    // does. That is the whole of the difference the review found missing.
+    if let Some(cf) = &opts.confirmed {
+        let k = c.key_for_name(name).unwrap_or_default();
+        c.confirm(&k, cf.echo, cf.how, opts.seq)?;
+    } else if opts.same_machine {
+        // No echo to check, because there is nothing to compare: see
+        // `AddOpts::same_machine`. The fingerprint is computed here rather
+        // than taken from the caller, so the record still describes the key
+        // actually on file.
+        let k = c.key_for_name(name).unwrap_or_default();
+        let w = c.fingerprint_for(&k);
+        c.confirm(&k, &w, "key generated on this machine", opts.seq)?;
+    }
     c.save().map_err(|e| e.to_string())?;
+
     // Shown AFTER the add, not before, because this is the step where a
     // person checks they added the key they meant to. An out-of-band
     // confirmation is the only thing that makes a key belong to a person, and
     // it is a great deal easier to do when the thing being compared can be
     // read aloud.
-    // Both halves. The value a person is asked to confirm has to cover the
-    // encryption key too, or an attacker substitutes the half nobody checks
-    // and the comparison passes while they read everything.
-    let words = c
-        .key_for_name(name)
-        .map(|k| crate::words::fingerprint_of(&k, c.box_keys.get(&k).map(|s| s.as_str())));
     if let Some(w) = words {
         out.push(String::new());
         out.push(format!("  this key says : {w}"));
-        out.push(format!(
-            "  Check that with {name} over a channel that is not this one."
-        ));
-        out.push("  If their machine says anything else, you have the wrong key.".to_string());
+        match &opts.confirmed.as_ref().map(|cf| cf.how).or(if opts.same_machine {
+            Some("key generated on this machine")
+        } else {
+            None
+        }) {
+            Some(how) => {
+                out.push(format!("  confirmed     : {how}"));
+                out.push(format!(
+                    "  Bundles signed by this key will read SENDER VERIFIED."
+                ));
+            }
+            None => {
+                // Said plainly, because the previous version of these lines
+                // asked for the comparison and then printed `SENDER
+                // VERIFIED` whether or not anyone did it. Asking for
+                // something and not noticing when it does not happen is how
+                // a ceremony becomes decoration.
+                out.push(format!(
+                    "  Read those four pairs to {name} over a channel that is NOT this one \
+                     -- a voice call, in person."
+                ));
+                out.push("  If their machine says anything else, you have the wrong key."
+                    .to_string());
+                out.push(String::new());
+                out.push(format!(
+                    "  Until you do, bundles from this key read SENDER ON YOUR LIST, \
+                     UNCONFIRMED."
+                ));
+                out.push(format!("  Once you have compared them:  gage confirm {name}"));
+            }
+        }
     }
     Ok(out)
 }
@@ -549,7 +913,49 @@ mod tests {
         // The case that gives rotation its meaning. If this were Retired, a
         // key could be rotated away from and keep sending.
         assert_eq!(c.verdict("OLD", Some(11)), Trust::Revoked);
-        assert_eq!(c.verdict("NEW", Some(11)), Trust::Known);
+        // On the list, and nobody compared it: the replacement key arrived
+        // in a rotation notice, which is a channel, not a confirmation.
+        assert_eq!(c.verdict("NEW", Some(11)), Trust::Unconfirmed);
+    }
+
+    #[test]
+    fn on_the_list_is_not_confirmed_until_somebody_confirms_it() {
+        // The property the whole record exists for. Before it, these two
+        // situations produced the same verdict, and every document described
+        // that verdict as meaning the second one.
+        let mut c = Contacts::default();
+        let k = "yomSmC3TalJ5IM+H0yvkhhWVab4ujiAVIQFR4WvdXiM=";
+        c.keys.insert(k.into(), "bob".into());
+        assert_eq!(c.verdict(k, Some(1)), Trust::Unconfirmed);
+        assert!(!c.is_confirmed(k));
+
+        // A confirmation is checked against the key, not taken on trust, so
+        // a caller cannot assert its way to `Known`.
+        assert!(c.confirm(k, "wrong words entirely", "test", 1).is_err());
+        assert_eq!(c.verdict(k, Some(1)), Trust::Unconfirmed);
+
+        let fp = c.fingerprint_for(k);
+        c.confirm(k, &fp, "test", 1).unwrap();
+        assert_eq!(c.verdict(k, Some(1)), Trust::Known);
+        assert!(c.stale_confirmation(k).is_none());
+
+        // And it expires when what was confirmed stops covering the key.
+        // This is the substitution the word-pairs exist to catch: the signing
+        // half was compared, an encryption half was attached afterwards, and
+        // nobody ever looked at the value that now matters.
+        c.box_keys.insert(
+            k.into(),
+            "7amQkpwKszbeF801n5EzMRm4jQlx3BylW8c59lsDcX0=".into(),
+        );
+        assert!(!c.is_confirmed(k));
+        assert_eq!(c.verdict(k, Some(1)), Trust::Unconfirmed);
+        assert!(
+            c.stale_confirmation(k).is_some(),
+            "a confirmation that stopped covering the key must be \
+             distinguishable from never having had one"
+        );
+        // Confirming a key that is not on the list has nothing to attach to.
+        assert!(c.confirm("STRANGER", "anything", "test", 1).is_err());
     }
 
     #[test]

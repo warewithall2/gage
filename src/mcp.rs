@@ -229,24 +229,6 @@ fn str_list(a: &Value, k: &str) -> Vec<std::path::PathBuf> {
         .unwrap_or_default()
 }
 
-/// Compare a word-pair echo against the real fingerprint.
-///
-/// Normalised on separators and case, not on the words: a human reading four
-/// pairs down a phone line and an agent typing them back will differ on
-/// punctuation and will not differ on words. Requiring byte equality would
-/// fail honest confirmations; accepting a subset would accept a guess.
-fn echo_matches(echo: &str, fingerprint: &str) -> bool {
-    let norm = |s: &str| -> Vec<String> {
-        s.to_lowercase()
-            .split(|c: char| !c.is_ascii_alphabetic())
-            .filter(|w| !w.is_empty())
-            .map(|w| w.to_string())
-            .collect()
-    };
-    let a = norm(echo);
-    !a.is_empty() && a == norm(fingerprint)
-}
-
 impl Server {
     fn call(&mut self, name: &str, a: &Value) -> Result<Vec<Value>, ToolError> {
         match name {
@@ -343,7 +325,7 @@ impl Server {
                         crate::manifest::safe_display(&pid, 40)
                     ))
                 })?;
-                if !echo_matches(&echo, &p.fingerprint) {
+                if !crate::words::echo_matches(&echo, &p.fingerprint) {
                     // The expected value is NOT echoed back, for the same
                     // reason the viewer does not: telling the caller what it
                     // should have said turns the check into a two-try copying
@@ -373,7 +355,37 @@ impl Server {
                     Some(b) => format!("{}.{}", p.sign, b),
                     None => p.sign.clone(),
                 };
-                let lines = crate::trust::add_contact(&name, &token).map_err(ToolError::Refused)?;
+                // **Not a confirmation, and this is the fix for the hole a
+                // reviewer drove a stranger's key through.** `gage_pair_start`
+                // hands the caller the word-pairs, because they are derived
+                // from a key the caller already has and are not secret -- so
+                // the echo this tool checks is an echo of something this
+                // server just said. It catches a transcription slip between
+                // two tool calls and it cannot possibly catch an agent that
+                // never asked a human, which is the only attacker that
+                // matters here.
+                //
+                // Two documents used to claim this was the one thing an agent
+                // could not do alone. It always could. What is true now is
+                // narrower and actually holds: an agent can put a key on the
+                // list, and nothing an agent can reach writes a
+                // confirmation, so the key reads SENDER ON YOUR LIST,
+                // UNCONFIRMED and `authority` honours no grant under it.
+                let lines = crate::trust::add_contact(
+                    &name,
+                    &token,
+                    crate::trust::AddOpts {
+                        confirmed: None,
+                        // An agent cannot reverse a revocation either. It is
+                        // told what to tell its user to run.
+                        reinstate: false,
+                        // Not this machine's key, and not something an agent
+                        // may claim about anybody else's.
+                        same_machine: false,
+                        seq: crate::state::LocalState::load().seq,
+                    },
+                )
+                .map_err(ToolError::Refused)?;
                 self.pending.remove(&pid);
                 Ok(vec![text(
                     &json!({"added": name, "key": token, "detail": lines}).to_string(),
@@ -466,7 +478,17 @@ impl Server {
                             | crate::trust::Trust::Revoked
                             | crate::trust::Trust::Unwitnessed
                     ),
-                    "on_your_list": matches!(l.trust, crate::trust::Trust::Known),
+                    // Two fields, because they are two facts and the first
+                    // one used to answer for both. `on_your_list` is true for
+                    // a contact nobody ever compared out of band;
+                    // `confirmed` is the one that means what the documents
+                    // say SENDER VERIFIED means, and it is the one an agent
+                    // should branch on before it acts on anything.
+                    "on_your_list": matches!(
+                        l.trust,
+                        crate::trust::Trust::Known | crate::trust::Trust::Unconfirmed
+                    ),
+                    "confirmed": matches!(l.trust, crate::trust::Trust::Known),
                     "payload_withheld": withheld,
                     "tampered": l.tampered,
                     "bundle_id": crate::manifest::safe_display(&l.manifest.id, 80),
@@ -805,28 +827,28 @@ mod tests {
     #[test]
     fn a_word_pair_echo_is_compared_on_words_not_punctuation() {
         let fp = "humble pillar · ruddy lobster · marine armour · eastern dovecote";
-        assert!(echo_matches(fp, fp));
+        assert!(crate::words::echo_matches(fp, fp));
         // How a person actually types it back.
-        assert!(echo_matches(
+        assert!(crate::words::echo_matches(
             "humble pillar, ruddy lobster, marine armour, eastern dovecote",
             fp
         ));
-        assert!(echo_matches(
+        assert!(crate::words::echo_matches(
             "  HUMBLE PILLAR ruddy lobster marine armour eastern dovecote ",
             fp
         ));
         // And what must not pass.
         assert!(
-            !echo_matches("humble pillar", fp),
+            !crate::words::echo_matches("humble pillar", fp),
             "a prefix is not the fingerprint"
         );
-        assert!(!echo_matches("", fp));
-        assert!(!echo_matches(
+        assert!(!crate::words::echo_matches("", fp));
+        assert!(!crate::words::echo_matches(
             "humble pillar · ruddy lobster · marine armour · eastern dovecot",
             fp
         ));
         assert!(
-            !echo_matches(
+            !crate::words::echo_matches(
                 "eastern dovecote · marine armour · ruddy lobster · humble pillar",
                 fp
             ),

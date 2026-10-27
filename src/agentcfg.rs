@@ -178,10 +178,23 @@ pub fn create(name: &str) -> Result<Agent, String> {
         let my_home = my_home.to_string_lossy().to_string();
         let home_str = home.to_string_lossy().to_string();
 
-        // Each side adds the other. See the module comment for why no
-        // word-pair compare happens here and why that does not generalise.
-        run_in(&crate::identity::home(), &["add", name, &key])?;
-        run_in(&home, &["add", &me.handle, &my_key])?;
+        // Each side adds the other, and each records the confirmation as
+        // what it is: both keys came out of a keygen this process ran
+        // seconds ago, in two directories on one disk. There is no other
+        // party, no channel for anybody to sit on, and nothing a word-pair
+        // comparison could establish that this code does not already know.
+        //
+        // `--same-machine` says exactly that and records it in `how`, so
+        // somebody reading `gage contacts` later can tell this apart from a
+        // confirmation a human performed. Leaving it unconfirmed instead
+        // would have been the other defensible choice and is the worse one:
+        // it would put an UNCONFIRMED verdict on every bundle from your own
+        // agents, which teaches people that the verdict is noise.
+        run_in(
+            &crate::identity::home(),
+            &["add", name, &key, "--same-machine"],
+        )?;
+        run_in(&home, &["add", &me.handle, &my_key, "--same-machine"])?;
         // And a local route each way, so `--to` delivers into the other
         // home directly. An agent on this machine has no reason to go out
         // over a relay to reach the identity sitting beside it.

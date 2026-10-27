@@ -138,11 +138,40 @@ pub fn render(l: &Loaded, reveal: bool) -> Result<String, String> {
             ));
         }
         Some(nm) => {
+            // "name confirmed against your list" was the old wording and it
+            // borrowed a word it had not earned: all it checked was that the
+            // key is a key you hold under that name. Whether anybody ever
+            // compared the key with its owner is a separate fact, and now a
+            // separate line.
             s.push_str(&format!(
-                "  sender     : {} (key {}…), name confirmed against your list\n",
+                "  sender     : {} (key {}…), a name you hold for this key\n",
                 nm,
                 one_line(&m.from.key.chars().take(12).collect::<String>())
             ));
+            if matches!(l.trust, Trust::Unconfirmed) {
+                let stale = contacts.stale_confirmation(&m.from.key).is_some();
+                s.push_str(if stale {
+                    "  !! What you confirmed for this contact no longer covers the key on\n\
+                     \x20              file -- an encryption key was attached after the\n\
+                     \x20              comparison, and the word-pairs that were checked did not\n\
+                     \x20              cover it. That is the exact substitution the pairs exist\n\
+                     \x20              to catch, so it is worth asking them before you act on\n\
+                     \x20              this. Re-confirm:  gage confirm <name>\n"
+                } else {
+                    // Not an alarm. This is the ordinary state of a contact
+                    // added from a pasted token, and the bundle is still
+                    // attributable -- the same key signed it. What is absent
+                    // is any record tying the key to the person, which is
+                    // the claim `SENDER VERIFIED` makes and this one does
+                    // not.
+                    "  \x20             Nobody on this machine has compared this key's word-pairs\n\
+                     \x20             with its owner, so the key is attributable but the NAME\n\
+                     \x20             beside it is only what you typed when you added it. Ask\n\
+                     \x20             them to read you the four pairs their `gage fingerprint`\n\
+                     \x20             shows, over a channel that is not this one, then:\n\
+                     \x20                 gage confirm <name>\n"
+                });
+            }
         }
         None => {
             s.push_str(&format!(
@@ -164,10 +193,13 @@ pub fn render(l: &Loaded, reveal: bool) -> Result<String, String> {
                 "               ask them, over a channel that is not this one, to read",
                 "               you the four word-pairs their `gage whoami` shows. If",
                 "               they match the ones `gage add` prints, that key is",
-                "               theirs. If you do not know who it is, you can leave it",
-                "               or refuse it; refusing is a record, not a block.",
-                "                   gage add <a-name-for-them> <their-key>   -- after confirming",
-                "                   gage decline <their-key>                 -- stop being asked",
+                "               theirs -- and `gage confirm` is what writes that down.",
+                "               Without it the contact reads UNCONFIRMED, which is",
+                "               honest and not a fault. If you do not know who it is,",
+                "               leave it or refuse it; refusing is a record, not a block.",
+                "                   gage add <a-name-for-them> <their-key>",
+                "                   gage confirm <a-name-for-them>            -- after comparing",
+                "                   gage decline <their-key>                  -- stop being asked",
             ] {
                 s.push_str(line);
                 s.push('\n');
