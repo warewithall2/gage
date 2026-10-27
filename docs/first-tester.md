@@ -56,13 +56,13 @@ They may send the binary directly, with its checksum on a **separate**
 channel — two channels on purpose, since tampering with the file would mean
 tampering with both. Check it matches:
 
-    sha256sum gage-0.3.1-linux-x86_64          # Linux
-    shasum -a 256 gage-0.3.1-darwin-arm64      # Mac
+    sha256sum gage-*-linux-x86_64          # Linux
+    shasum -a 256 gage-*-darwin-arm64      # Mac
 
 Compare that to the line they sent; it must match exactly. Then:
 
-    chmod +x gage-0.3.1-*
-    mkdir -p ~/.local/bin && mv gage-0.3.1-* ~/.local/bin/gage
+    chmod +x gage-*
+    mkdir -p ~/.local/bin && mv gage-* ~/.local/bin/gage
     gage --version
 
 **On a Mac the first run will be refused** this way, because the file arrived
