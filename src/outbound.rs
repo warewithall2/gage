@@ -64,6 +64,53 @@ pub struct ReplyTarget {
     pub subject: String,
 }
 
+/// Refuse an `--out` that points inside the directories this machine uses to
+/// record what ARRIVED and what it sent.
+///
+/// Checked lexically rather than by canonicalising, because the target
+/// usually does not exist yet, and `..` is resolved first so that
+/// `inbox/../inbox/accepted` is the same answer as the direct path.
+///
+/// `why` completes the refusal, because the two callers would be forging
+/// different things. `send --out` would manufacture the arrival of a bundle
+/// this machine authored. `unseal --out` would manufacture the ACCEPT of one
+/// somebody really did send -- milder, since the signature is genuine, but it
+/// is still the gate that exists so that crossing it is an act a human
+/// performed. Neither has a legitimate use now that `unseal` with no `--out`
+/// receives properly.
+pub fn refuse_out_in_records(
+    out: &std::path::Path,
+    why: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let home = identity::home();
+    let abs = if out.is_absolute() {
+        out.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(out)
+    };
+    let mut norm = PathBuf::new();
+    for c in abs.components() {
+        match c {
+            std::path::Component::ParentDir => {
+                norm.pop();
+            }
+            std::path::Component::CurDir => {}
+            other => norm.push(other),
+        }
+    }
+    for reserved in ["inbox", "sent", "outbox"] {
+        if norm.starts_with(home.join(reserved)) {
+            return Err(format!(
+                "--out may not write inside {}: that is where this machine records \
+                 what ARRIVED and what it sent. {why}",
+                home.join(reserved).display()
+            )
+            .into());
+        }
+    }
+    Ok(())
+}
+
 pub fn resolve_reply(id: &str) -> Result<ReplyTarget, Box<dyn std::error::Error>> {
     let me = identity::Identity::load()?.public_b64();
     let st = state::LocalState::load();
@@ -422,35 +469,12 @@ pub fn send_bundle(
     // usually does not exist yet, and `..` is resolved first so that
     // `inbox/../inbox/accepted` is the same answer as the direct path.
     if let Some(p) = &out {
-        let home = identity::home();
-        let abs = if p.is_absolute() {
-            p.clone()
-        } else {
-            std::env::current_dir()?.join(p)
-        };
-        let mut norm = PathBuf::new();
-        for c in abs.components() {
-            match c {
-                std::path::Component::ParentDir => {
-                    norm.pop();
-                }
-                std::path::Component::CurDir => {}
-                other => norm.push(other),
-            }
-        }
-        for reserved in ["inbox", "sent", "outbox"] {
-            if norm.starts_with(home.join(reserved)) {
-                return Err(format!(
-                    "--out may not write inside {}: that is where this machine records \
-                     what ARRIVED and what it sent. A bundle you built is not an arrival, \
-                     and putting it there would make it indistinguishable from one. Write \
-                     it anywhere else and hand it over, or drop --out and let gage deliver \
-                     it.",
-                    home.join(reserved).display()
-                )
-                .into());
-            }
-        }
+        refuse_out_in_records(
+            p,
+            "A bundle you built is not an arrival, and putting it there would make it \
+             indistinguishable from one. Write it anywhere else and hand it over, or drop \
+             --out and let gage deliver it.",
+        )?;
     }
     let stage = out
         .clone()

@@ -572,8 +572,30 @@ fine on your own filesystem and not fine on a server, so nothing goes to a
 relay unsealed.
 
     gage seal ./handoff --to dana --out handoff.gageb
-    gage unseal handoff.gageb --out ./incoming
+    gage unseal handoff.gageb          # receives it: inbox, accept gate, reply
+    gage inbox
+
+`unseal` with no `--out` **receives** the envelope: it goes through the same
+gates as mail a relay handed over — a safe id, a verifying signature, the
+replay witness — and lands unread in `inbox/pending`. So a bundle that came to
+you as a file on a USB stick is mail like any other: `gage inbox` lists it,
+`gage accept` stages it, `gage reply` answers it, and the arrival is witnessed
+and journalled.
+
+`--out` is the other thing you might want, and it is deliberately not the
+same:
+
+    gage unseal handoff.gageb --out ./incoming   # inspect, do NOT receive
     gage open ./incoming
+
+That writes the files where you point and records nothing. Use it to look at a
+bundle you just built, or at one you have not decided to accept. `gage open`
+on the result says it did not come through your inbox, and because there is no
+arrival record, a bundle inspected this way reads `ARRIVAL UNRECORDED` once
+the sender retires that key. That is the honest answer rather than a gap: a
+witness is a claim that this machine *received* something, so only receiving
+may write one. If inspecting recorded an arrival, merely peeking at a file
+would later earn a retired key the milder verdict and show its contents.
 
 A sealed box (X25519 + XSalsa20-Poly1305) encrypts to the recipient's public
 key with a fresh ephemeral keypair. The envelope holds three fields: a version,
@@ -1396,9 +1418,11 @@ with the second would be a lie:
 * `SENDER KEY REJECTED` — it reached you afterwards.
 * `ARRIVAL UNRECORDED` — there is no record either way. Contents withheld,
   like a rejection, but it is not one: the ordinary cause is mail sealed
-  before the rotation and collected from a relay after it, or a directory
-  handed over on a stick. Telling someone that is a rejection would tell them
-  a colleague is attacking them.
+  before the rotation and collected from a relay after it, or a bundle you
+  only ever inspected (`gage unseal --out`, or a directory handed over on a
+  stick) rather than received, which by design leaves no arrival record.
+  Telling someone that is a rejection would tell them a colleague is
+  attacking them.
 
 For a key that was actually stolen, `gage retire <name> --compromised` refuses
 everything it signed, old bundles included, consulting no date at all. That

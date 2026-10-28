@@ -56,19 +56,42 @@ first bundle, so read the first section before upgrading.
 
 - **`--out` may not write inside `inbox/`, `sent/` or `outbox/`.** An agent
   calling `gage_send out=<home>/inbox/accepted/<id>` manufactured its own
-  received context: real signature, forged *arrival*.
+  received context: real signature, forged *arrival*. The check now also
+  covers `gage unseal --out`, which never had it: milder, because that bundle
+  really was sealed to you and its signature is genuine, but it forged the
+  *accept* — the gate that exists so that crossing it is an act a human
+  performed. Both callers share `outbound::refuse_out_in_records`.
 
 - **An unreadable `contacts.json` stops the program** (exit 2) instead of
   becoming an empty allowlist — which turned every contact into a stranger and
   then overwrote the file on the next add.
 
-- **`gage open` says when a bundle did not come through your inbox.** "Arrival
-  is not consent" governs `inbox/pending`, and a sealed file handed over never
-  passes through it: `gage unseal --out dir && gage open dir` renders the
-  payload with no accept step and leaves `gage inbox` empty. That is the right
-  behaviour — pointing `open` at a directory *is* the decision — but nothing
-  said so while the README promised nothing is read until it is accepted. The
-  frame now says it, above the payload.
+- **A bundle handed over as a file is now received like any other mail.**
+  `unseal` required `--out`, so such a bundle was written outside every
+  directory the rest of the program looks in — `routes::scan_inbox_knowing`
+  and `outbound::all_manifests` walk `pending`, `accepted` and `sent` and
+  nothing else. The consequences went well past the missing accept step: it
+  was never witnessed, never journalled as an arrival, never listed by `gage
+  inbox`, and **`gage reply` could not find it**, on the path the first-tester
+  packet leads with. Worse, once the sender retired that key the same bundle
+  read `ARRIVAL UNRECORDED` with its contents withheld, although it had been
+  read perfectly well before the retirement and the journal still held the
+  `opened` entry proving it.
+
+  `gage unseal <file>` with no `--out` now **receives**: it goes through
+  `stage_envelope`, the same gates `gage pull` uses, and lands unread in
+  `inbox/pending`. `--out` is unchanged and still means *inspect* — it records
+  nothing, and `gage open` on the result says so. `--out` was a required
+  argument, so no existing invocation changes behaviour.
+
+  Only delivery writes a witness, deliberately. If inspecting wrote one,
+  peeking at a file would later earn a retired key the milder verdict and show
+  its contents; `ARRIVAL UNRECORDED` on the inspect path is the honest answer,
+  not a gap.
+
+- **`gage open` says when a bundle did not come through your inbox.** The
+  frame prints it above the payload, which is now the `--out` inspect path
+  rather than the only path a file could take.
 
 ### Added
 

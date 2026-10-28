@@ -263,11 +263,16 @@ If it came over a relay or your own network, it is already waiting:
 
 `accept` prints the exact `gage open ...` line to run. Run that line.
 
-If your partner sent you a `.gageb` file instead, open it from where you saved
-it:
+If your partner sent you a `.gageb` file instead, receive it from where you
+saved it:
 
-    gage unseal ~/Downloads/pkg.gageb --out /tmp/theirs
-    gage open /tmp/theirs
+    gage unseal ~/Downloads/pkg.gageb
+    gage inbox
+    gage accept <the id it shows>
+
+That is the same three steps as above, because a file handed over is mail like
+any other: it lands unread in your inbox, `accept` prints the `gage open ...`
+line to run, and you can `gage reply <id>` to answer it.
 
 Decrypting it proves only that it was addressed to you. `gage open` is the
 step that tells you who signed it and whether you have confirmed them, and it

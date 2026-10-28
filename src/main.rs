@@ -282,11 +282,14 @@ enum Cmd {
         #[arg(long)]
         out: PathBuf,
     },
-    /// Decrypt an envelope back into a bundle directory
+    /// Receive a sealed envelope into your inbox (or --out to inspect it)
     Unseal {
         file: PathBuf,
+        /// Write the bundle here and do NOT treat it as mail: nothing is
+        /// recorded as having arrived. Omit it to receive the bundle into
+        /// your inbox, behind the accept gate, like any other arrival.
         #[arg(long)]
-        out: PathBuf,
+        out: Option<PathBuf>,
     },
     /// List your contacts and groups
     Contacts,
@@ -840,6 +843,171 @@ fn pull_inner(
     Ok(())
 }
 
+/// What staging one sealed envelope into `inbox/pending` did.
+enum Staged {
+    /// Delivered as a fresh arrival.
+    Arrived {
+        bundle: String,
+        subject: String,
+        verdict: String,
+    },
+    /// Already sitting in `pending` under that id; left untouched.
+    AlreadyHere(String),
+    /// Refused. The reason is already printed.
+    Refused,
+}
+
+/// Unseal one envelope and stage it in `inbox/pending`, or refuse it.
+///
+/// Shared by `gage pull` and `gage unseal`, because an envelope handed over
+/// as a file is the same arrival as one a relay held and has to clear the
+/// same gates: a safe id, a verifying signature, and the replay witness.
+///
+/// The two paths used to differ, and the file one was much the weaker. It
+/// wrote wherever `--out` pointed, which is outside every directory the rest
+/// of the program looks in -- `routes::scan_inbox_knowing` and
+/// `outbound::all_manifests` both walk `pending`, `accepted` and `sent` and
+/// nothing else. So a bundle delivered as a file was never witnessed, never
+/// journalled as an arrival, never listed by `gage inbox`, and `gage reply`
+/// could not find it; and once the sender retired that key it read ARRIVAL
+/// UNRECORDED with its contents withheld, although it had been read
+/// perfectly well before the retirement.
+///
+/// `slot` names the temp directory, so concurrent runs cannot collide.
+fn stage_envelope(
+    env: &seal::Envelope,
+    id: &identity::Identity,
+    pending: &std::path::Path,
+    slot: &str,
+) -> Result<Staged, Box<dyn std::error::Error>> {
+    // Unseal into a temp dir first, read the id from the manifest,
+    // then move it into place: the sender does not get to choose
+    // the directory name an envelope lands in.
+    let tmp = identity::home().join(format!("tmp-{slot}"));
+    let _ = std::fs::remove_dir_all(&tmp);
+    if let Err(e) = seal::unseal_to_dir(env, id, &tmp) {
+        // The ordinary cause is an envelope sealed to somebody else: the
+        // recipient is chosen at seal time and the payload key is wrapped to
+        // it, so another machine's copy does not open here no matter who
+        // signed it.
+        eprintln!("  refused: could not open this envelope -- {e}");
+        let _ = std::fs::remove_dir_all(&tmp);
+        return Ok(Staged::Refused);
+    }
+    let loaded = bundle::load(&tmp)?;
+    // The id becomes a directory name, so its shape is checked before the
+    // join. A signed manifest carrying `id: "../../../../tmp/gage-pwn"`
+    // would otherwise have written a bundle outside the inbox entirely.
+    if !manifest::id_is_safe(&loaded.manifest.id) {
+        eprintln!(
+            "  refused: a bundle whose id is not an id ({}) -- it would have become \
+             a path",
+            // The ONE place in this file where the id has to be escaped,
+            // and the one place it was not: every print below this point
+            // has passed `id_is_safe`, which is 16 lowercase hex digits
+            // and cannot carry a newline. This arm runs precisely because
+            // it did not pass, so the value here is arbitrary
+            // sender-chosen bytes landing on stdout that an agent reads.
+            // `{:?}` escapes a newline but not a frame marker, and it is
+            // not what the rest of the program uses.
+            manifest::safe_display(&loaded.manifest.id, 40)
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+        return Ok(Staged::Refused);
+    }
+    // And a bundle that does not verify never enters the inbox this way.
+    // Local delivery is written by the sender and cannot be gated here,
+    // which is what the trust verdict on read is for -- but mail that
+    // arrived sealed, from a relay or from somebody's USB stick, is ours
+    // to refuse.
+    if !loaded.tampered.is_empty() {
+        eprintln!(
+            "  refused {}: {}",
+            loaded.manifest.id,
+            loaded.tampered.join(", ")
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+        return Ok(Staged::Refused);
+    }
+    let dest = pending.join(&loaded.manifest.id);
+    // Has this machine seen this EXACT manifest before?
+    //
+    // `dest.exists()` below only asks about `pending`, so once a bundle
+    // was accepted that path was gone and the identical envelope was
+    // staged again as a fresh arrival -- for ever, on demand. The
+    // content is genuine, which is what makes it dangerous: a replayed
+    // instruction is a real instruction that was already carried out.
+    // Anyone who can reach the relay, including the relay, can do this --
+    // and anyone who can hand over a file twice.
+    //
+    // The witness is the answer and was already being recorded: it is
+    // `sha256(from.key || 0x1f || manifest bytes)`, so it identifies
+    // this manifest and not merely this id. A sender resending in good
+    // faith produces a new manifest -- different `created` at minimum --
+    // and is unaffected.
+    // Fails CLOSED. The first version was a chain of `.ok()` and
+    // `.and_then`, so an unreadable manifest or an unloadable state file
+    // collapsed to "never seen" and staged the replay -- a reviewer put
+    // it exactly: the protection that matters most on a damaged machine
+    // was the one that silently disabled itself. If this machine cannot
+    // tell whether it has seen a bundle, it does not accept it.
+    let seen_before = match std::fs::read(tmp.join("manifest.json")) {
+        Ok(bytes) => {
+            let w = bundle::witness_of(&loaded.manifest.from.key, &bytes);
+            state::LocalState::load().witnessed(&w).is_some()
+        }
+        Err(e) => {
+            eprintln!(
+                "  refused {}: cannot read its manifest back to check for a replay ({e})",
+                loaded.manifest.id
+            );
+            let _ = std::fs::remove_dir_all(&tmp);
+            return Ok(Staged::Refused);
+        }
+    };
+    if seen_before && !dest.exists() {
+        println!(
+            "  refused {} -- this machine has already seen this exact message.",
+            loaded.manifest.id
+        );
+        println!("    A replayed message is a real one that was already handled.");
+        println!("    If they meant to send it again, ask them to send it again:");
+        println!("    a new message has a new id and arrives normally.");
+        // Recorded against the temp copy, because in a moment there will
+        // not be one -- the same reason `reject` journals before it
+        // deletes.
+        if let Err(e) = journal::record(journal::Event::Duplicate, &tmp) {
+            eprintln!("  (could not journal that refusal: {e})");
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
+        return Ok(Staged::Refused);
+    }
+    if dest.exists() {
+        let _ = std::fs::remove_dir_all(&tmp);
+        return Ok(Staged::AlreadyHere(loaded.manifest.id));
+    }
+    routes::deliver(&tmp, &dest)?;
+    // Observe, then re-read the verdict. The line printed here used to
+    // come from the load of the TEMPORARY directory, before the
+    // delivered copy had been observed at all -- so a valid old-key
+    // bundle pulled after a retirement printed ARRIVAL UNRECORDED
+    // when observing it first would have placed it after the cut and
+    // called it a rejection.
+    observe_or_warn();
+    let verdict = bundle::load(&dest)
+        .map(|l| l.trust.label().to_string())
+        .unwrap_or_else(|e| format!("could not be read back: {e}"));
+    let _ = std::fs::remove_dir_all(&tmp);
+    Ok(Staged::Arrived {
+        bundle: loaded.manifest.id.clone(),
+        // Sender-chosen, and this line is the collect summary an agent
+        // reads after `gage pull`. The id above it is safe by
+        // `id_is_safe`; the subject has never been checked at all.
+        subject: manifest::safe_display(&loaded.manifest.subject, 160),
+        verdict,
+    })
+}
+
 /// Drain one mailbox. Returns (bundles delivered, anything was waiting).
 fn fetch_mailbox(
     addr: &str,
@@ -891,129 +1059,19 @@ fn fetch_mailbox(
                 continue;
             }
         };
-        // Unseal into a temp dir first, read the id from the manifest,
-        // then move it into place: the relay does not get to choose
-        // the directory name an envelope lands in.
-        let tmp = identity::home().join(format!("tmp-pull-{}-{n}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&tmp);
-        if let Err(e) = seal::unseal_to_dir(&env, id, &tmp) {
-            eprintln!("  skipped: {e}");
-            let _ = std::fs::remove_dir_all(&tmp);
-            continue;
-        }
-        let loaded = bundle::load(&tmp)?;
-        // The id becomes a directory name, so its shape is checked before the
-        // join. A signed manifest carrying `id: "../../../../tmp/gage-pwn"`
-        // would otherwise have written a bundle outside the inbox entirely.
-        if !manifest::id_is_safe(&loaded.manifest.id) {
-            eprintln!(
-                "  refused: a bundle whose id is not an id ({}) -- it would have become \
-                 a path",
-                // The ONE place in this file where the id has to be escaped,
-                // and the one place it was not: every print below this point
-                // has passed `id_is_safe`, which is 16 lowercase hex digits
-                // and cannot carry a newline. This arm runs precisely because
-                // it did not pass, so the value here is arbitrary
-                // sender-chosen bytes landing on stdout that an agent reads.
-                // `{:?}` escapes a newline but not a frame marker, and it is
-                // not what the rest of the program uses.
-                manifest::safe_display(&loaded.manifest.id, 40)
-            );
-            let _ = std::fs::remove_dir_all(&tmp);
-            continue;
-        }
-        // And a bundle that does not verify never enters the inbox from the
-        // relay. Local delivery is written by the sender and cannot be gated
-        // here, which is what the trust verdict on read is for -- but mail
-        // the relay handed us is ours to refuse.
-        if !loaded.tampered.is_empty() {
-            eprintln!(
-                "  refused {}: {}",
-                loaded.manifest.id,
-                loaded.tampered.join(", ")
-            );
-            let _ = std::fs::remove_dir_all(&tmp);
-            continue;
-        }
-        let dest = pending.join(&loaded.manifest.id);
-        // Has this machine seen this EXACT manifest before?
-        //
-        // `dest.exists()` below only asks about `pending`, so once a bundle
-        // was accepted that path was gone and the identical envelope was
-        // staged again as a fresh arrival -- for ever, on demand. The
-        // content is genuine, which is what makes it dangerous: a replayed
-        // instruction is a real instruction that was already carried out.
-        // Anyone who can reach the relay, including the relay, can do this.
-        //
-        // The witness is the answer and was already being recorded: it is
-        // `sha256(from.key || 0x1f || manifest bytes)`, so it identifies
-        // this manifest and not merely this id. A sender resending in good
-        // faith produces a new manifest -- different `created` at minimum --
-        // and is unaffected.
-        // Fails CLOSED. The first version was a chain of `.ok()` and
-        // `.and_then`, so an unreadable manifest or an unloadable state file
-        // collapsed to "never seen" and staged the replay -- a reviewer put
-        // it exactly: the protection that matters most on a damaged machine
-        // was the one that silently disabled itself. If this machine cannot
-        // tell whether it has seen a bundle, it does not accept it.
-        let seen_before = match std::fs::read(tmp.join("manifest.json")) {
-            Ok(bytes) => {
-                let w = bundle::witness_of(&loaded.manifest.from.key, &bytes);
-                state::LocalState::load().witnessed(&w).is_some()
-            }
-            Err(e) => {
-                eprintln!(
-                    "  refused {}: cannot read its manifest back to check for a replay ({e})",
-                    loaded.manifest.id
-                );
-                let _ = std::fs::remove_dir_all(&tmp);
-                continue;
-            }
-        };
-        if seen_before && !dest.exists() {
-            println!(
-                "  refused {} -- this machine has already seen this exact message.",
-                loaded.manifest.id
-            );
-            println!("    A replayed message is a real one that was already handled.");
-            println!("    If they meant to send it again, ask them to send it again:");
-            println!("    a new message has a new id and arrives normally.");
-            // Recorded against the temp copy, because in a moment there will
-            // not be one -- the same reason `reject` journals before it
-            // deletes.
-            if let Err(e) = journal::record(journal::Event::Duplicate, &tmp) {
-                eprintln!("  (could not journal that refusal: {e})");
-            }
-            let _ = std::fs::remove_dir_all(&tmp);
-            continue;
-        }
-        if dest.exists() {
-            println!("  already have {} -- left in place", loaded.manifest.id);
-        } else {
-            routes::deliver(&tmp, &dest)?;
-            // Observe, then re-read the verdict. The line printed here used to
-            // come from the load of the TEMPORARY directory, before the
-            // delivered copy had been observed at all -- so a valid old-key
-            // bundle pulled after a retirement printed ARRIVAL UNRECORDED
-            // when observing it first would have placed it after the cut and
-            // called it a rejection.
-            observe_or_warn();
-            let verdict = bundle::load(&dest)
-                .map(|l| l.trust.label().to_string())
-                .unwrap_or_else(|e| format!("could not be read back: {e}"));
-            println!(
-                "  {}  {}  ({}){}",
-                loaded.manifest.id,
-                // Sender-chosen, and this line is the collect summary an
-                // agent reads after `gage pull`. The id above it is safe by
-                // `id_is_safe`; the subject has never been checked at all.
-                manifest::safe_display(&loaded.manifest.subject, 160),
+        let slot = format!("pull-{}-{n}", std::process::id());
+        match stage_envelope(&env, id, &pending, &slot)? {
+            Staged::Arrived {
+                bundle,
+                subject,
                 verdict,
-                label
-            );
-            n += 1;
+            } => {
+                println!("  {bundle}  {subject}  ({verdict}){label}");
+                n += 1;
+            }
+            Staged::AlreadyHere(b) => println!("  already have {b} -- left in place"),
+            Staged::Refused => {}
         }
-        let _ = std::fs::remove_dir_all(&tmp);
     }
     // Witness the arrivals now, in the same run that collected them. Waiting
     // for the next listing would leave a window in which a retirement could
@@ -2027,10 +2085,68 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         Cmd::Unseal { file, out } => {
             let id = identity::Identity::load()?;
             let env: seal::Envelope = serde_json::from_slice(&std::fs::read(&file)?)?;
-            seal::unseal_to_dir(&env, &id, &out)?;
-            println!("unsealed -> {}", out.display());
-            println!("  decryption proves nothing about the sender; run gage open to see the");
-            println!("  signature verdict, which is what attributes it");
+            match out {
+                // `--out` means INSPECT: hand over the files and do not treat
+                // this as mail. Nothing is witnessed and nothing is journalled
+                // as an arrival, which is why `gage open` on the result says it
+                // did not come through the inbox.
+                //
+                // That is deliberate, and it is the half of this split that is
+                // easy to get wrong. If inspecting recorded an arrival, then
+                // merely peeking at a file somebody sent would, after they
+                // retired that key, earn it the milder SENDER KEY RETIRED
+                // verdict and show its contents. A witness is a claim that
+                // this machine RECEIVED something, so only delivery may write
+                // one. On this path ARRIVAL UNRECORDED is the honest verdict,
+                // not a gap.
+                Some(out) => {
+                    outbound::refuse_out_in_records(
+                        &out,
+                        "Writing a decrypted bundle there would stage it as though a human \
+                         had accepted it. Drop --out to receive it properly: it lands unread \
+                         in inbox/pending, behind the accept gate.",
+                    )?;
+                    seal::unseal_to_dir(&env, &id, &out)?;
+                    println!("unsealed -> {}", out.display());
+                    println!(
+                        "  decryption proves nothing about the sender; run gage open to see the"
+                    );
+                    println!("  signature verdict, which is what attributes it");
+                    println!();
+                    println!("  this did NOT arrive: --out means inspect. Nothing was recorded,");
+                    println!("  gage inbox will not list it, and gage reply cannot find it.");
+                    println!("  To receive it instead:  gage unseal {}", file.display());
+                }
+                // No `--out` means RECEIVE: into the inbox, behind the accept
+                // gate, through the same gates as everything a relay hands
+                // over. `--out` has always been a required argument, so this
+                // form used to be an error and no existing invocation changes
+                // behaviour.
+                None => {
+                    let pending = routes::pending_dir(&identity::home());
+                    std::fs::create_dir_all(&pending)?;
+                    let slot = format!("unseal-{}", std::process::id());
+                    match stage_envelope(&env, &id, &pending, &slot)? {
+                        Staged::Arrived {
+                            bundle,
+                            subject,
+                            verdict,
+                        } => {
+                            println!("  {bundle}  {subject}  ({verdict})");
+                            println!(
+                                "\n1 bundle in inbox/pending -- gage inbox, then accept or reject"
+                            );
+                        }
+                        Staged::AlreadyHere(b) => {
+                            println!("  already have {b} -- left in place");
+                            println!("  gage inbox");
+                        }
+                        // The reason is printed; the exit code is what a
+                        // script reads.
+                        Staged::Refused => std::process::exit(1),
+                    }
+                }
+            }
         }
         Cmd::Contacts => {
             let c = trust::Contacts::load();

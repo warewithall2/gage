@@ -88,7 +88,7 @@ listening() {
   fi
 }
 
-mkdir -p "$T"/{a,b,c,w}
+mkdir -p "$T"/{a,b,c,w,ka,kb,kc}
 CTX_HOME=$T/a $CTX init alice >/dev/null
 CTX_HOME=$T/b $CTX init bob   >/dev/null
 CTX_HOME=$T/c $CTX init carol >/dev/null
@@ -312,6 +312,102 @@ CTX_HOME=$T/b $CTX open "$T/un" > "$T/so" 2>&1
 want "$T/so" "SENDER VERIFIED"
 want "$T/so" "ZEBRACROSSING"
 
+echo "unseal with no --out receives the bundle into the inbox"
+# The other half of the split above. `--out` inspects; bare `unseal` RECEIVES,
+# and until it did, a bundle handed over as a file was outside every directory
+# the rest of the program looks in -- `routes::scan_inbox_knowing` and
+# `outbound::all_manifests` walk pending, accepted and sent and nothing else.
+# So it was never witnessed, never journalled as an arrival, never listed by
+# `gage inbox`, and `gage reply` could not find it. Note that `$T/env.ctxb`
+# was already inspected into `$T/un` above and this still works: inspecting
+# records nothing, by design, so it cannot consume an arrival.
+CTX_HOME=$T/b $CTX unseal "$T/env.ctxb" > "$T/kcv" 2>&1; code receive $? 0
+want "$T/kcv" "inbox/pending"
+if CTX_HOME=$T/b $CTX inbox 2>/dev/null | grep -qF GIRAFFEHOUSE; then ok; else
+  bad "a received bundle is not in the inbox"; fi
+rid=$(CTX_HOME=$T/b $CTX inbox 2>/dev/null | grep -oE '[0-9a-f]{16}' | head -1)
+pend1=$(nfiles "$T/b/inbox/pending")
+if [ -n "$rid" ]; then ok; else bad "no id for the received bundle"; fi
+# Behind the accept gate, like every other arrival: it lands in pending and
+# staging is a separate act. Not asserted on the unread marker, which is keyed
+# by bundle id -- the same bundle was inspected into `$T/un` further up, and
+# reading it there is reading it.
+if [ -d "$T/b/inbox/pending/$rid" ]; then ok; else
+  bad "a received bundle did not land in pending"; fi
+if [ -d "$T/b/inbox/accepted/$rid" ]; then
+  bad "a received bundle was accepted without being accepted"; else ok; fi
+
+echo "a bundle received as a file can be replied to"
+# It could not before: `gage reply` resolves through `outbound::all_manifests`,
+# so a bundle sitting outside the inbox stages was unanswerable. This was the
+# path the first-tester packet leads with.
+CTX_HOME=$T/b $CTX reply "$rid" --text "on it" --out "$T/rep" > "$T/rpl" 2>&1; code reply $? 0
+want "$T/rpl" "replying to"
+
+echo "handing the same envelope over twice does not restage it"
+# While the bundle is still in pending, the second handover is the one you
+# already have and is left alone -- the same answer `gage pull` gives.
+CTX_HOME=$T/b $CTX unseal "$T/env.ctxb" > "$T/kdup" 2>&1; code again $? 0
+want "$T/kdup" "already have"
+if [ "$(nfiles "$T/b/inbox/pending")" = "$pend1" ]; then ok; else
+  bad "re-receiving changed what is in pending"; fi
+
+echo "re-receiving an envelope after accepting it is refused as a replay"
+# This is the case that matters, and the one `dest.exists()` alone could not
+# see: once accepted, the pending path is gone, so without the witness the
+# identical envelope would stage again as a fresh arrival, for ever, on
+# demand. A replayed instruction is a real instruction that was already
+# carried out.
+CTX_HOME=$T/b $CTX accept "$rid" >/dev/null 2>&1
+CTX_HOME=$T/b $CTX unseal "$T/env.ctxb" > "$T/kdup2" 2>&1; code replay $? 1
+want "$T/kdup2" "already seen this exact message"
+
+echo "an envelope sealed to someone else is refused on the receive path too"
+n0=$(nfiles "$T/c/inbox/pending")
+CTX_HOME=$T/c $CTX unseal "$T/env.ctxb" > "$T/wr" 2>&1; code wrongrecv $? 1
+want "$T/wr" "not sealed to your key"
+if [ "$(nfiles "$T/c/inbox/pending")" = "$n0" ]; then ok; else
+  bad "a refused envelope left something in the inbox"; fi
+
+echo "inspecting with --out says it did not arrive"
+CTX_HOME=$T/b $CTX unseal "$T/env.ctxb" --out "$T/un3" > "$T/un2x" 2>&1
+want "$T/un2x" "did NOT arrive"
+want "$T/un2x" "gage inbox will not list it"
+
+echo "a bundle received as a file stays attributable after the sender rotates"
+# The headline of the whole split, and the reason witnessing had to follow
+# delivery rather than inspection. A bundle you received and read keeps its
+# verdict when the sender later retires that key: it is RETIRED, contents
+# shown, because this machine has a record of it arriving before the cut.
+# Inspect-only leaves no such record, so the same bundle reads ARRIVAL
+# UNRECORDED with its contents withheld -- which is the honest answer there,
+# not a gap. A separate pair of homes, because retiring a key poisons every
+# later check against it.
+CTX_HOME=$T/ka $CTX init rot-alice >/dev/null
+CTX_HOME=$T/kb $CTX init rot-bob   >/dev/null
+rak=$(CTX_HOME=$T/ka $CTX whoami | cut -f2)
+rbk=$(CTX_HOME=$T/kb $CTX whoami | cut -f2)
+addc $T/ka rbob "$rbk"; addc $T/kb ralice "$rak"
+printf 'OKAPIFENCE body\n' > "$T/w/rot.md"
+CTX_HOME=$T/ka $CTX send --to rbob --subject rot --decision "$T/w/rot.md" --out "$T/rsb" >/dev/null
+CTX_HOME=$T/ka $CTX seal "$T/rsb" --to rbob --out "$T/renv.ctxb" >/dev/null
+# Received, so there is an arrival record.
+CTX_HOME=$T/kb $CTX unseal "$T/renv.ctxb" >/dev/null 2>&1; code rotrecv $? 0
+rrid=$(CTX_HOME=$T/kb $CTX inbox 2>/dev/null | grep -oE '[0-9a-f]{16}' | head -1)
+CTX_HOME=$T/kb $CTX retire ralice >/dev/null 2>&1
+CTX_HOME=$T/kb $CTX open "$T/kb/inbox/pending/$rrid" > "$T/krot1" 2>&1
+want "$T/krot1" "SENDER KEY RETIRED"
+want "$T/krot1" "OKAPIFENCE"
+wantno "$T/krot1" "ARRIVAL UNRECORDED"
+# Inspect-only, on a second machine that never received it: no record, so
+# the contents are withheld.
+CTX_HOME=$T/kc $CTX init rot-carol >/dev/null
+addc $T/kc ralice "$rak"
+CTX_HOME=$T/kc $CTX retire ralice >/dev/null 2>&1
+CTX_HOME=$T/kc $CTX open "$T/rsb" > "$T/krot2" 2>&1
+want "$T/krot2" "ARRIVAL UNRECORDED"
+wantno "$T/krot2" "OKAPIFENCE"
+
 echo "sealing to a contact with no encryption key is refused, not downgraded"
 addc $T/a legacy "$(CTX_HOME=$T/c $CTX whoami | cut -f2 | cut -d. -f1)"
 CTX_HOME=$T/a $CTX seal "$T/sb" --to legacy --out "$T/nope.ctxb" > "$T/leg" 2>&1; code legacy $? 1
@@ -401,6 +497,22 @@ CTX_HOME=$T/a $CTX send --to carol --subject forge2 --decision "$T/w/rl.md" \
   --out "$T/a/inbox/../inbox/accepted/cafecafecafecafe" > "$T/outforge2" 2>&1
 code outforge2 $? 1
 want "$T/outforge2" "may not write inside"
+# `unseal --out` is the other way in and did not have the check. Milder than
+# the send case, because the bundle really was sealed to you and the signature
+# is genuine -- but it forges the ACCEPT, which is the gate that exists so
+# that crossing it is an act a human performed. There is no legitimate use for
+# it now that bare `unseal` receives properly.
+CTX_HOME=$T/b $CTX unseal "$T/env.ctxb" \
+  --out "$T/b/inbox/accepted/beefbeefbeefbeef" > "$T/unforge" 2>&1
+code unforge $? 1
+want "$T/unforge" "may not write inside"
+want "$T/unforge" "as though a human had accepted it"
+if [ -d "$T/b/inbox/accepted/beefbeefbeefbeef" ]; then
+  bad "unseal --out wrote into the inbox anyway"; else ok; fi
+CTX_HOME=$T/b $CTX unseal "$T/env.ctxb" \
+  --out "$T/b/inbox/../inbox/pending/beefbeefcafecafe" > "$T/unforge2" 2>&1
+code unforge2 $? 1
+want "$T/unforge2" "may not write inside"
 
 bbox=$(CTX_HOME=$T/c $CTX whoami | cut -f2 | cut -d. -f2)
 abox=$(CTX_HOME=$T/a $CTX whoami | cut -f2 | cut -d. -f2)

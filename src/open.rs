@@ -454,9 +454,12 @@ pub fn render(l: &Loaded, reveal: bool) -> Result<String, String> {
             s.push_str(
                 "  arrived as : a directory you pointed at, NOT through your inbox. The\n\
                  \x20              accept gate applies to inbox/pending; this bundle has not\n\
-                 \x20              crossed it and will not appear in `gage inbox`. That is\n\
-                 \x20              normal for a sealed file somebody handed you, and it means\n\
-                 \x20              reading it was the whole of the decision.\n",
+                 \x20              crossed it, will not appear in `gage inbox`, cannot be\n\
+                 \x20              replied to, and has no arrival record -- so if the sender\n\
+                 \x20              retires this key it will read ARRIVAL UNRECORDED and its\n\
+                 \x20              contents will be withheld. Reading it was the whole of the\n\
+                 \x20              decision. To RECEIVE a sealed file instead, so that it is\n\
+                 \x20              mail like any other:  gage unseal <file>   (no --out)\n",
             );
         }
     }

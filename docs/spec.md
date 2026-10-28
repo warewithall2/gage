@@ -300,7 +300,13 @@ and then appending is a race two watchers can both win.
 Nothing reaches a relay unsealed.
 
     gage seal ./handoff --to dana --out handoff.gageb
-    gage unseal handoff.gageb --out ./incoming
+    gage unseal handoff.gageb                    # receive into inbox/pending
+    gage unseal handoff.gageb --out ./incoming   # inspect, recording nothing
+
+`unseal` with no `--out` stages the bundle through `stage_envelope`, the same
+function `gage pull` uses, so a handed-over file clears the same gates and
+earns the same arrival record as relay mail. With `--out` it writes the files
+and records nothing; see §4 on why only delivery may write a witness.
 
 A sealed box is `crypto_box` (**X25519 + XSalsa20-Poly1305**) to the
 recipient's public key with a fresh ephemeral keypair. The envelope has three

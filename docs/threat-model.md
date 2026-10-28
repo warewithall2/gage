@@ -40,7 +40,7 @@ adversary**, and the one gage is actually built against.
 | **Write a line of the frame via a newline in a path, subject or handle** | **Fixed 2026-10-18.** `path_is_safe` rejects control characters, `U+2028/9` and bidi overrides; `one_line` escapes every sender-controlled string the frame prints. This worked before the fix, and gage printed the real nonce onto the attacker's line |
 | Swap payload beside a signed manifest | Each item's sha256 is checked against the manifest; a mismatch withholds contents |
 | Choose an id that collides with a real message | The id covers author key, subject and time as well as digests, and is recomputed rather than trusted |
-| Replay a message you already acted on | The witness (`sha256(from_key ␟ manifest bytes)`) is recorded; `pull` refuses a repeat and journals `duplicate` |
+| Replay a message you already acted on | The witness (`sha256(from_key ␟ manifest bytes)`) is recorded; `pull` and `unseal` both refuse a repeat and journal `duplicate` |
 | Reuse an old key after you rotated away | Verdict distinguishes `KEY RETIRED` (witnessed before retirement, attributable) from `KEY REJECTED` (arrived after, contents withheld) using this machine's own record, not any date the sender wrote |
 | Name a trusted third party as the author of a forwarded bundle | Only the last hop signs. `chain[0]` is shown as a **claim by the forwarder**, explicitly, even when the key named is one you know |
 | Post into someone else's thread to collect a reply | `reply` resolves the recipient from the key that **signed** the parent; a thread with two correspondents is refused rather than guessed |
@@ -209,6 +209,27 @@ different from each other:
 - **`accept` / `reject`.** The accept gate exists so that crossing it is an
   act a human performed. An agent able to accept its own arrivals would have
   removed it. `gage_open` reads a pending bundle without accepting it.
+
+### Why only delivery writes a witness
+
+A witness record is this machine's claim that it **received** a bundle, and the
+retired-key verdicts above are decided by it: witnessed before the retirement
+means `KEY RETIRED` and the contents are shown, no record means `ARRIVAL
+UNRECORDED` and they are withheld. So what may write one is a security
+question, not a convenience one.
+
+`gage unseal` with no `--out` receives, and writes a witness. `gage unseal
+--out <dir>` inspects, and does not. If inspecting wrote one, then looking at
+a file somebody sent you — before deciding anything about it — would, after
+they retired that key, promote it to the milder verdict and reveal its
+contents. The weaker verdict on the inspect path is the correct one.
+
+Until 0.3.4 there was no receive path for a handed-over file at all: `unseal`
+required `--out`, so such a bundle was outside every directory the program
+looks in. It was never witnessed, never journalled as an arrival, never listed
+by `gage inbox`, and `gage reply` could not find it — and it degraded to
+`ARRIVAL UNRECORDED` the moment the sender rotated, although it had been read
+perfectly well beforehand.
 
 ---
 
