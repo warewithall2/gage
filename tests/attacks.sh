@@ -414,6 +414,18 @@ CTX_HOME=$T/a $CTX seal "$T/sb" --to legacy --out "$T/nope.ctxb" > "$T/leg" 2>&1
 want "$T/leg" "no encryption key"
 if [ -f "$T/nope.ctxb" ]; then bad "wrote an envelope despite refusing"; else ok; fi
 
+echo "sealing a directory of your own files says how to build a bundle first"
+# `seal <DIR>` wants a bundle `send --out` made. Handing it a payload directory
+# is the natural first guess and used to fail with a bare os error 2 that named
+# neither the missing file nor the command that makes one.
+mkdir -p "$T/rawpay"; printf 'plan\n' > "$T/rawpay/plan.md"
+CTX_HOME=$T/a $CTX seal "$T/rawpay" --to bob --out "$T/raw.ctxb" > "$T/rawo" 2>&1; code rawseal $? 1
+want "$T/rawo" "is not a bundle"
+want "$T/rawo" "gage send --to bob"
+if [ -f "$T/raw.ctxb" ]; then bad "wrote an envelope from a non-bundle"; else ok; fi
+CTX_HOME=$T/a $CTX seal "$T/nosuchdir" --to bob --out "$T/raw2.ctxb" > "$T/rawo2" 2>&1; code rawseal2 $? 1
+want "$T/rawo2" "there is no directory at"
+
 echo "a filename that looks like a secret is skipped, and says so"
 printf 'KEY=1\n' > "$T/w/.env"
 printf 'tok\n' > "$T/w/my_secret.md"

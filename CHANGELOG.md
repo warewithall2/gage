@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- **`gage seal` says what a bundle directory is when you hand it something
+  else.** Found by walking the first-tester packet with the *published* 0.3.4
+  binary: sealing a directory of your own files -- the natural guess -- failed
+  with a bare `No such file or directory (os error 2)` that named neither the
+  missing manifest nor the `gage send --out` step that writes one.
+
 ## 0.3.4 — 2026-10-28
 
 **A verdict that means what the documents said it meant.** Three independent

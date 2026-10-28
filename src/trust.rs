@@ -858,9 +858,7 @@ pub fn add_contact(name: &str, key: &str, opts: AddOpts) -> Result<Vec<String>, 
         }) {
             Some(how) => {
                 out.push(format!("  confirmed     : {how}"));
-                out.push(format!(
-                    "  Bundles signed by this key will read SENDER VERIFIED."
-                ));
+                out.push("  Bundles signed by this key will read SENDER VERIFIED.".to_string());
             }
             None => {
                 // Said plainly, because the previous version of these lines
@@ -875,10 +873,11 @@ pub fn add_contact(name: &str, key: &str, opts: AddOpts) -> Result<Vec<String>, 
                 out.push("  If their machine says anything else, you have the wrong key."
                     .to_string());
                 out.push(String::new());
-                out.push(format!(
+                out.push(
                     "  Until you do, bundles from this key read SENDER ON YOUR LIST, \
                      UNCONFIRMED."
-                ));
+                        .to_string(),
+                );
                 out.push(format!("  Once you have compared them:  gage confirm {name}"));
             }
         }

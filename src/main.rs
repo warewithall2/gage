@@ -2128,6 +2128,24 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 )
                 .into());
             };
+            // `seal <DIR>` takes a bundle directory that `gage send --out` built,
+            // not a directory of your own files -- which is the natural guess, and
+            // used to fail with a bare "No such file or directory (os error 2)"
+            // naming nothing. The missing file is always the manifest.
+            if !dir.join("manifest.json").exists() {
+                let what = if dir.is_dir() {
+                    format!("{} has no manifest.json, so it is not a bundle", dir.display())
+                } else {
+                    format!("there is no directory at {}", dir.display())
+                };
+                return Err(format!(
+                    "{what}. `gage seal` seals a bundle that `gage send` already \
+                     built; it does not bundle your files for you. Two steps:\n\
+                     \n    gage send --to {to} --subject '<what it is>' --dir <your files> --out <pkg>\
+                     \n    gage seal <pkg> --to {to} --out <name>.gageb"
+                )
+                .into());
+            }
             let env = seal::seal_dir(&dir, boxpub)?;
             std::fs::write(&out, serde_json::to_vec(&env)?)?;
             let n = std::fs::metadata(&out).map(|m| m.len()).unwrap_or(0);
