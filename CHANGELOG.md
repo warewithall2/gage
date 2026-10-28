@@ -122,9 +122,20 @@ first bundle, so read the first section before upgrading.
   frame" as the frame working. The one trial that went the other way is the
   only one where anything contested it, which is the realistic condition.
 
+- **`AGENTS.md` listed five of the verdicts and `docs/agents.md` six**, one
+  of the missing ones being a verdict that withholds contents. Both are
+  complete now, and a unit test reads all three tabulating documents and
+  fails if any of them omits a verdict — this mistake had been made three
+  times and was caught by a human reading each time, which is not a mechanism.
+- **The demo was re-recorded.** `scripts/demo.sh` had gone stale in substance,
+  not just in its output: it paired two identities and narrated the ceremony
+  without ever confirming anything, so it would now print UNCONFIRMED under a
+  caption claiming otherwise. It runs `gage confirm` now, and `demo.cast`,
+  `demo.gif` and `docs/demo.md` are a fresh capture of it.
+
 ### Tests
 
-961 attack checks (was 928), 167 unit tests (was 165), 55 MCP end-to-end
+962 attack checks (was 928), 168 unit tests (was 165), 55 MCP end-to-end
 checks (was 48), 16 restore-drill checks, viewer end-to-end green. New
 regression coverage for every item above that can be driven from a shell,
 including the MCP self-pairing path, the push scan, `--out` into the inbox,

@@ -1039,6 +1039,44 @@ mod tests {
     }
 
     #[test]
+    fn every_verdict_is_listed_in_the_documents_that_tabulate_them() {
+        // A cross-file drift test, and it is here because this exact mistake
+        // has now been made three times: `spec.md` listed six verdicts when
+        // the code had seven, `docs/agents.md` listed six and was missing two
+        // (one of which WITHHOLDS CONTENTS), and `AGENTS.md` listed five.
+        // Each was found by a human reading, which is not a mechanism.
+        //
+        // A reader checking a verdict against one of these tables and not
+        // finding it does not conclude the table is wrong -- they conclude
+        // they misread the verdict, or they guess. For an agent branching on
+        // the label, a missing row is a branch that falls through to whatever
+        // the catch-all does.
+        //
+        // So every document that claims to enumerate verdicts must contain
+        // every one. `ALL` is kept complete by `index`'s exhaustive match, so
+        // adding a variant fails to build until it is listed, and then fails
+        // this test until it is documented.
+        for doc in [
+            ("docs/spec.md", include_str!("../docs/spec.md")),
+            ("docs/agents.md", include_str!("../docs/agents.md")),
+            ("AGENTS.md", include_str!("../AGENTS.md")),
+        ] {
+            let (name, body) = doc;
+            for t in ALL {
+                // The label up to its parenthetical, which is the part these
+                // tables print and the part a reader matches on.
+                let key = t.label().split(" (").next().unwrap_or(t.label());
+                assert!(
+                    body.contains(key),
+                    "{name} does not mention the verdict {key:?}. Every document that \
+                     tabulates verdicts has to carry all of them -- a short list reads as \
+                     a complete one."
+                );
+            }
+        }
+    }
+
+    #[test]
     fn no_verdict_label_is_a_prefix_of_another() {
         // Stronger than the substring check it replaces, because the viewer
         // classifies with startsWith: a new label beginning with an old one

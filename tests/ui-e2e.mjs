@@ -24,6 +24,13 @@
 //     `WORDS <...>` so the shell can check them against the key the CLI
 //     sees.
 //
+//   confirmgate <base> <name> <wantWords> <wrongWords>
+//     a contact that is on the list and NOT confirmed: the card says so, it
+//     does not show the four pairs, a wrong echo records nothing and reveals
+//     nothing, and the right one flips the card to confirmed. The only
+//     browser coverage of `/api/confirm`, which is the viewer's half of
+//     `gage confirm` and the only route through the page to SENDER VERIFIED.
+//
 //   receive  <base> <subject> <sender>
 //     the second fixture's console: the bundle that arrived renders with the
 //     verified verdict and as pending, and accepting it is a separate act.
@@ -112,6 +119,76 @@ async function buddies([base, key, wantPair, wrongPair]) {
       }
     }
   }
+}
+
+// The viewer's half of `gage confirm`.
+//
+// Added because the confirmation record shipped with no browser coverage at
+// all: the endpoint and the card were written together, the Rust side
+// compiled, and nothing drove a person through the one path in the page that
+// can produce SENDER VERIFIED. The property it guards is the same one the
+// request gate guards and is easier to lose here, because this card sits in a
+// list that re-renders on a 2s poll: **the four pairs must not be on the page
+// while they are being asked for.**
+async function confirmgate([base, name, wantWords, wrongWords]) {
+  await page.goto(base + '/#buddies');
+  if (!(await waitFor('.dev', 'the buddy list never rendered'))) return;
+
+  // Find the card for this contact. `.dev` covers nearby devices and
+  // requests too, so it is selected by the name it shows.
+  const card = page.locator('.dev').filter({ hasText: name }).first();
+  if (await card.count() === 0) {
+    failed++; console.log('  FAIL: no card for ' + name);
+    return;
+  }
+
+  // Read from the TAG, not from the card's whole text: the first version of
+  // this scenario named its fixture contact "u3unconfirmed", so the card
+  // contained the word it was grepping for and the final assertion could
+  // never pass. Scoping to the tag means the contact's NAME cannot answer a
+  // question about its state.
+  const tags = () => card.locator('.devtag');
+  const tagText = async () => (await tags().allTextContents()).join(' ');
+  ok(/unconfirmed/i.test(await tagText()),
+     'an unconfirmed contact is not tagged unconfirmed');
+  // The whole point. If this fails, the page is showing the answer to the
+  // question it is asking.
+  ok(!(await has(wantWords)),
+     'the four word-pairs were on the page before they were typed');
+
+  // A wrong echo records nothing, reveals nothing, and does not say what the
+  // right answer was.
+  await card.locator('input.lanin').first().fill(wrongWords);
+  await card.getByText('Confirm', { exact: true }).click();
+  if (await waitFor('.lanerr', 'a wrong echo produced no error')) {
+    ok(!(await has(wantWords)),
+       'a wrong echo revealed or echoed the expected words');
+    ok(/unconfirmed/i.test(await tagText()),
+       'a wrong echo confirmed the contact anyway');
+  }
+
+  // The right one flips it.
+  await card.locator('input.lanin').first().fill(wantWords);
+  await card.getByText('Confirm', { exact: true }).click();
+  try {
+    await page.waitForFunction(
+      n => {
+        const d = [...document.querySelectorAll('.dev')]
+          .find(e => (e.textContent || '').includes(n));
+        if (!d) return false;
+        const t = [...d.querySelectorAll('.devtag')].map(x => x.textContent).join(' ');
+        return /confirmed/.test(t) && !/unconfirmed/.test(t);
+      },
+      name, { timeout: 10000 });
+  } catch {
+    failed++;
+    console.log('  FAIL: the right word-pairs did not confirm the contact');
+    return;
+  }
+  // And only now are the pairs shown, which is what the card is for: a
+  // confirmed contact's fingerprint is something you re-check later.
+  ok(await has(wantWords),
+     'a confirmed contact does not show the words that were confirmed');
 }
 
 // A stranger with only the binary, going from nothing to a sent bundle in
@@ -491,7 +568,7 @@ async function agentrm([base, keep, kill]) {
      + JSON.stringify(said.slice(0, 200)));
 }
 
-const SCENARIOS = { buddies, firstrun, receive, settled, nocreate, agentrm, setup };
+const SCENARIOS = { buddies, confirmgate, firstrun, receive, settled, nocreate, agentrm, setup };
 
 try {
   const run = SCENARIOS[mode];

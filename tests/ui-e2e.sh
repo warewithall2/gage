@@ -87,6 +87,32 @@ scenario() { CHROME="$CHROME" node ui-e2e.mjs "$@" || fail=$((fail+1)); }
 scenario buddies "http://127.0.0.1:$PORT" "$K" "$WANT" "wrong words"
 
 # ---------------------------------------------------------------------------
+# Scenario 1b: the confirm gate on a contact that is on the list and has
+# never been confirmed -- the viewer's half of `gage confirm`, and the only
+# route through the page that can produce SENDER VERIFIED.
+#
+# `u3` is added here WITHOUT confirming, deliberately: `uic_addc` is for the
+# ordinary working state and this scenario is about the state before it.
+# ---------------------------------------------------------------------------
+cd "$HERE/.." || exit 1
+CTX_HOME=$T/u1 $CTX add u3fresh \
+  "$(CTX_HOME=$T/u3 $CTX whoami | cut -f2)" >/dev/null 2>&1
+CWANT=$(CTX_HOME=$T/u1 $CTX fingerprint u3fresh 2>/dev/null | cut -f2)
+if [ -z "$CWANT" ]; then
+  echo "ui-e2e: could not read the contact's word-pairs; fixture failure"
+  exit 1
+fi
+# A wrong echo that is the right SHAPE -- four pairs of real words -- so the
+# check being tested is the comparison and not an input validator.
+CWRONG="humble pillar · ruddy lobster · marine armour · eastern dovecote"
+if [ "$CWRONG" = "$CWANT" ]; then
+  echo "ui-e2e: the wrong-words fixture collided with the real value"
+  exit 1
+fi
+cd "$RUN" || exit 1
+scenario confirmgate "http://127.0.0.1:$PORT" u3fresh "$CWANT" "$CWRONG"
+
+# ---------------------------------------------------------------------------
 # Scenario 2 and 3: the front door. `fa` has NO identity and never touches a
 # terminal -- everything on that side happens in the page, which is the claim
 # the first-run work makes. `fb` is the buddy on the other end of the voice
@@ -97,7 +123,21 @@ CTX_HOME=$T/fb $CTX init buddyb >/dev/null 2>&1
 BTOK=$(CTX_HOME=$T/fb $CTX whoami 2>/dev/null | cut -f2)
 # The short label is what a nearby list shows, and `whoami` prints it in the
 # block it writes to stderr.
-BLAB=$(CTX_HOME=$T/fb $CTX whoami 2>&1 | sed -n 's/^ *shown as *: *//p')
+#
+# Matched on "device label", which is what that line says now. It used to say
+# "shown as", and when the wording changed to stop implying the label is the
+# fingerprint's first pair, this `sed` silently produced an EMPTY string --
+# which the suite then passed an empty label into `nearby.json` and went green
+# with. Hence the guard below: a fixture value that can go missing has to be
+# checked, or the scenario it feeds is testing nothing.
+BLAB=$(CTX_HOME=$T/fb $CTX whoami 2>&1 | sed -n 's/^ *device label *: *//p' \
+       | sed 's/  *(.*//' | head -1)
+if [ -z "$BLAB" ]; then
+  echo "ui-e2e: could not read the device label out of \`gage whoami\`;"
+  echo "  the firstrun scenario pairs by that label, so this is a fixture"
+  echo "  failure and not a skip."
+  exit 1
+fi
 
 # `gage listen` on loopback, so the bundle the page sends has somewhere real
 # to land: the send path is the CLI's own and it ends in a TCP delivery. Its

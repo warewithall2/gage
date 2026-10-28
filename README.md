@@ -27,7 +27,7 @@ gage is that channel built the other way round. It is three things:
   are withheld rather than annotated, because an annotation is something the
   payload can argue with.
 
-![Twenty-one seconds of real terminal output: two identities going from gage init to a rendered trust verdict, pairing with word-pairs, sending through a relay, and the frame the receiving agent is shown before any content.](docs/screenshots/demo.gif)
+![Twenty-five seconds of real terminal output: two identities going from gage init to a rendered trust verdict, pairing with word-pairs and confirming them, sending through a relay, and the frame the receiving agent is shown before any content.](docs/screenshots/demo.gif)
 
 *Every line of that recording is genuine output.* The same capture is
 [docs/demo.md](docs/demo.md) as annotated text and
@@ -1486,7 +1486,7 @@ in the message. See [Authority](#authority-the-one-thing-that-says-you-may-act).
     cargo build --release && cargo test --release && bash tests/attacks.sh
     bash tests/ui-e2e.sh      # optional: drives the viewer in a real browser
 
-961 checks plus 167 Rust unit tests, 55 MCP end-to-end checks, a 16-check
+962 checks plus 168 Rust unit tests, 55 MCP end-to-end checks, a 16-check
 identity restore drill, and one end-to-end test that opens the viewer in a
 browser and completes a connection request. `tests/selfcheck.sh` runs the lot
 and is the only number worth quoting — this line said 680 and 106 for long

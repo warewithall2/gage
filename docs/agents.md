@@ -75,22 +75,32 @@ deliberately coarse in two directions at once:
 
     gage open "$dir" | grep -m1 '^  trust      :'
 
-Six verdicts exist, and none is a shorter way of saying another:
+Eight verdicts exist, and none is a shorter way of saying another. This table
+said six and was missing two, including one that withholds contents -- a
+reader checking against it would have found a real verdict absent and guessed.
 
 | line contains | meaning | contents shown |
 |---|---|---|
-| `SENDER VERIFIED` | signature valid, key is on your list | yes |
-| `SENDER NOT ON YOUR LIST` | signature valid, you have never confirmed this key | **yes** |
+| `SENDER VERIFIED` | signature valid, key is on your list, and a human here compared its word-pairs | yes |
+| `SENDER ON YOUR LIST, UNCONFIRMED` | signature valid, key is on your list, nobody ever compared it | **yes** |
+| `SENDER NOT ON YOUR LIST` | signature valid, you have never accepted this key | **yes** |
 | `SENDER REFUSED BEFORE` | signature valid, you declined this key | yes |
 | `SENDER UNVERIFIABLE` | signature missing or invalid | no |
 | `SENDER KEY RETIRED` | valid, and seen before you retired that key | yes |
 | `SENDER KEY REJECTED` | valid, but arrived after you retired that key | no |
+| `ARRIVAL UNRECORDED` | valid under a retired key, and no record of it arriving either side of the retirement | no |
+
+The first two are the distinction worth programming against. Both are
+attributable -- the same key signed it -- and they differ on whether anybody
+ever tied that key to a person. A key an agent added through the MCP server is
+always the second.
 
 A usable shape:
 
     out=$(gage open "$dir"); rc=$?
     case "$out" in
-      *"SENDER VERIFIED"*)          ;;  # attributable to a key you confirmed
+      *"SENDER VERIFIED"*)          ;;  # attributable to a key a human confirmed
+      *"SENDER ON YOUR LIST, UNC"*) ;;  # attributable; nobody ever checked it
       *"SENDER NOT ON YOUR LIST"*)  ;;  # attributable to a stranger
       *)                            ;;  # everything else: report, do not act
     esac
