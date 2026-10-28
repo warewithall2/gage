@@ -1,6 +1,6 @@
 [package]
 name = "gage"
-version = "0.3.3"
+version = "0.3.4"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "Hand context between agents — files, prompts and decisions — with a trust boundary that survives the hop."

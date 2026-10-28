@@ -1644,6 +1644,53 @@ want "$T/au11" "allow alice question in-reply-only"
 printf 'allow nobody any\n' > "$AUTH"
 CTX_HOME=$T/b $CTX authority > "$T/au12" 2>&1
 want "$T/au12" "NO SUCH CONTACT"
+want "$T/au12" "INERT, grants nothing"
+rm -f "$AUTH"
+# 10a. A grant naming a contact who is merely ADDED is just as inert, because
+# `authority::lookup` grants only to Trust::Known and that now means confirmed.
+# Found by dogfooding: upgrading drops every contact to unconfirmed and so
+# inerts every grant at once, and the listing showed them as though they were
+# live. The general note at the foot of the listing was true but asked the
+# reader to join it to a verdict printed by a different command.
+mkdir -p "$T/giu"
+CTX_HOME=$T/giu $CTX init unconf >/dev/null
+uk=$(CTX_HOME=$T/giu $CTX whoami | cut -f2)
+CTX_HOME=$T/b $CTX add unconf "$uk" >/dev/null 2>&1
+printf 'allow unconf any\n' > "$AUTH"
+CTX_HOME=$T/b $CTX authority > "$T/au12b" 2>&1
+want "$T/au12b" "INERT, grants nothing: unconf is UNCONFIRMED"
+want "$T/au12b" "gage confirm unconf"
+want "$T/au12b" "1 of 1 grant(s) currently grant NOTHING"
+# and a confirmed contact is NOT marked inert
+ufp=$(CTX_HOME=$T/b $CTX fingerprint unconf 2>/dev/null | cut -f2)
+CTX_HOME=$T/b $CTX confirm unconf "$ufp" >/dev/null 2>&1
+CTX_HOME=$T/b $CTX authority > "$T/au12c" 2>&1
+wantno "$T/au12c" "INERT"
+wantno "$T/au12c" "grant NOTHING"
+want "$T/au12c" "allow unconf any"
+# 10b. A grant by raw KEY needs the confirmation too -- naming the key rather
+# than the contact must not be a way around it.
+printf 'allow %s any\n' "$(echo "$uk" | cut -d. -f1)" > "$AUTH"
+CTX_HOME=$T/b $CTX authority > "$T/au12d" 2>&1
+wantno "$T/au12d" "INERT"
+# the same key, confirmation withdrawn by hand: the record no longer covers
+# the key it names, which is the case `stale_confirmation` exists for and is
+# answered differently, because it means the key CHANGED under the name.
+cp "$T/b/contacts.json" "$T/b/contacts.json.bak"
+python3 - "$T/b/contacts.json" <<'PYEOF'
+import json,sys
+p=sys.argv[1]; d=json.load(open(p))
+for k,v in d.get("confirmed",{}).items():
+    v["covers"]="stale lantern \u00b7 stale lantern \u00b7 stale lantern \u00b7 stale lantern"
+json.dump(d,open(p,"w"))
+PYEOF
+CTX_HOME=$T/b $CTX authority > "$T/au12e" 2>&1
+want "$T/au12e" "INERT, grants nothing"
+want "$T/au12e" "the key has changed since"
+# Restored, or every later check in this file runs against a deliberately
+# corrupted confirmation record -- which is exactly what happened the first
+# time and showed up as an unrelated whitespace failure 200 lines later.
+mv "$T/b/contacts.json.bak" "$T/b/contacts.json"
 rm -f "$AUTH"
 # 11. No authority line carries doubled whitespace, same rule as the request
 # block above and for the same reason.

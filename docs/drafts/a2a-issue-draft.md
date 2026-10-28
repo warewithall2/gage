@@ -8,14 +8,18 @@ and is the one to post first. **Version B** is a new issue, worth opening only
 if A gets a response, because it asks the spec for something rather than
 adding to someone else's request.
 
-## The landscape, read 2026-10-27
+## The landscape, read 2026-10-27 and re-checked 2026-10-28
+
+Re-checked before posting: #388 is still open with zero comments, and #1829 is
+still open, still unaccepted, last active 2026-08-08. The argument below
+stands as written.
 
 Check these again before posting; they move, and the previous draft of this
 file was written against a picture that has since changed.
 
 | | | |
 |---|---|---|
-| [#388][388] "Data labeling" | open, **0 comments**, untouched since 2025-06-23 | sender-supplied annotations in `metadata`, including "untrusted data which may lead to prompt injection" |
+| [#388][388] "Data labeling" | open, **0 comments**, untouched since 2025-06-03 (an assignment; no comment ever) | sender-supplied annotations in `metadata`, including "untrusted data which may lead to prompt injection" |
 | [#1672][1672] "Agent Identity Verification for Agent Cards" | open, **661 comments**, last activity 2026-08-19 | vendor-heavy; AgentID, APS, qntm, OATR. Someone has already argued "reliance policy is out of scope, by design" |
 | [#1829][1829] "minimal Ed25519 + RFC 9421 signing extension for A2A messages" | open, 143 comments, last 2026-08-08 | **per-message** signing — the payload-integrity gap `docs/a2a.md` names as missing |
 | [#2133][2133] "Exact-message authorization envelope for consequential actions" | open, last 2026-08-18 | adjacent |

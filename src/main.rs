@@ -1359,25 +1359,77 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 println!("{} is present and grants nothing", p.display());
             } else {
                 println!("{}", p.display());
+                // Loaded once rather than per grant: the file is usually
+                // short, but re-reading contacts.json inside the loop meant a
+                // listing could disagree with itself if something wrote the
+                // file halfway through.
+                let c = trust::Contacts::load();
+                let mut inert = 0;
                 for g in &a.grants {
-                    let who = match &g.subject {
-                        authority::Subject::Key(k) => format!("key {k}"),
-                        authority::Subject::Name(n) => {
-                            let c = trust::Contacts::load();
-                            match c.key_for_name(n) {
-                                Some(k) => format!("contact {n} (key {k})"),
-                                // Worth saying out loud: the grant is inert
-                                // rather than wrong, and the usual cause is
-                                // a contact not added yet or renamed.
-                                None => format!(
-                                    "contact {n} -- NO SUCH CONTACT, so this grants nothing"
-                                ),
-                            }
+                    // `authority::lookup` grants only to `Trust::Known`, which
+                    // since the confirmation record means a key somebody
+                    // actually compared. So a grant naming an unconfirmed
+                    // contact is dead, and this listing used to show it
+                    // indistinguishably from a live one -- worst of all
+                    // straight after an upgrade, which drops EVERY contact to
+                    // unconfirmed and so inerts every grant at once. The
+                    // general note below is true but asks the reader to join
+                    // it to a verdict printed by a different command.
+                    // One helper for both subject forms, so that naming the
+                    // key rather than the contact cannot report differently
+                    // from naming the contact. The first version answered the
+                    // stale case only under `Name`, and a grant written as a
+                    // raw key read "is UNCONFIRMED" for a key that had in fact
+                    // been confirmed and then changed -- different advice.
+                    let why_dead = |key: &str, n: &str| -> Option<String> {
+                        if c.is_confirmed(key) {
+                            return None;
                         }
+                        // Distinguished because the answer differs: a stale
+                        // record means the key CHANGED under the name, which
+                        // is worth a second look before confirming it again.
+                        Some(match c.stale_confirmation(key) {
+                            Some(old) => format!(
+                                "{n} was confirmed on {} but the key has changed since \
+                                 -- compare the new word-pairs before gage confirm {n}",
+                                old.at
+                            ),
+                            None => format!("{n} is UNCONFIRMED -- gage confirm {n}"),
+                        })
+                    };
+                    let (who, dead) = match &g.subject {
+                        authority::Subject::Key(k) => match c.name_for(k) {
+                            Some(n) => (format!("key {k} ({n})"), why_dead(k, n)),
+                            None => (
+                                format!("key {k}"),
+                                Some("that key is on no contact of yours".to_string()),
+                            ),
+                        },
+                        authority::Subject::Name(n) => match c.key_for_name(n) {
+                            Some(k) => (format!("contact {n} (key {k})"), why_dead(&k, n)),
+                            // Worth saying out loud: the grant is inert
+                            // rather than wrong, and the usual cause is
+                            // a contact not added yet or renamed.
+                            None => (
+                                format!("contact {n}"),
+                                Some("NO SUCH CONTACT".to_string()),
+                            ),
+                        },
                     };
                     println!("  line {}\t{}\t{}", g.line, g, who);
+                    if let Some(why) = dead {
+                        println!("      INERT, grants nothing: {why}");
+                        inert += 1;
+                    }
                 }
                 println!();
+                if inert > 0 {
+                    println!(
+                        "{inert} of {} grant(s) currently grant NOTHING, for the reasons above.",
+                        a.grants.len()
+                    );
+                    println!();
+                }
                 println!("a grant applies only to a SENDER VERIFIED bundle, and only to the");
                 println!("kind of message it names -- never to what the contents ask for");
             }

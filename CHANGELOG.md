@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.4 — 2026-10-28
 
 **A verdict that means what the documents said it meant.** Three independent
 reviews — a security audit, a documentation audit and a product critique —
@@ -92,6 +92,17 @@ first bundle, so read the first section before upgrading.
 - **`gage open` says when a bundle did not come through your inbox.** The
   frame prints it above the payload, which is now the `--out` inspect path
   rather than the only path a file could take.
+
+- **`gage authority` says which grants are currently inert, and why.** Found
+  by dogfooding the upgrade above: it drops every contact to unconfirmed and so
+  inerts *every* grant at once, and the listing showed them exactly as it
+  showed live ones. It printed the general rule — "a grant applies only to a
+  SENDER VERIFIED bundle" — and left you to join it to a verdict another
+  command prints. Each dead grant now carries `INERT, grants nothing:` with
+  the reason, plus a count, and a grant whose contact was confirmed and whose
+  key then *changed* says so distinctly, because that one wants a second look
+  rather than a re-confirmation. Grants written as a raw key report the same
+  as grants written as a contact name.
 
 ### Added
 

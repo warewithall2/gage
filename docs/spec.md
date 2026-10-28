@@ -1,6 +1,6 @@
 # gage — the wire reality
 
-What is actually on disk and on the network in **v0.3.3**, derived from the
+What is actually on disk and on the network in **v0.3.4**, derived from the
 code rather than from intent. Where this document and the code disagree, the
 code wins and this document is wrong; please report it.
 
