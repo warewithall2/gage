@@ -1123,7 +1123,15 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             eprintln!("  Those words come from the key, so nobody picks their own.");
             eprintln!("  When you pair with another machine, both screens must show");
             eprintln!("  the same four pairs. The short label is only for telling");
-            eprintln!("  devices apart in a list -- never confirm against it alone.");
+            // "never confirm against it alone" was the old wording, and
+            // "alone" invited the reading that it counts for something
+            // alongside another check. It does not: one pair is 16 bits and
+            // an attacker grinds keypairs until theirs renders whichever
+            // pair it likes, in well under a second. The module note in
+            // `words.rs` has always said "never confirmed against", flatly,
+            // and this line is the place a person actually reads it.
+            eprintln!("  devices apart in a list. Never confirm against it: one pair is 16");
+            eprintln!("  bits, and an attacker can grind keys until theirs renders yours.");
         }
         Cmd::Mcp => {
             mcp::run()?;

@@ -35,6 +35,9 @@ command and its own output.
 > - `gage fingerprint`'s second line no longer calls the label "the label
 >   only" without saying what it covers: for a contact you can seal to it is
 >   the signing key's label and **not** a prefix of the four pairs above it.
+>   `gage whoami`'s closing line likewise now reads "Never confirm against
+>   it" rather than "never confirm against it alone", since the label counts
+>   for nothing alongside another check either.
 
 ---
 

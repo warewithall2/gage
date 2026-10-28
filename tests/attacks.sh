@@ -1731,7 +1731,10 @@ if [ "$k" = "$AK" ]; then ok; else bad "whoami no longer yields alice's key"; fi
 # The words themselves are on stderr, where a human still sees them.
 CTX_HOME=$T/a $CTX whoami 2>"$T/whoerr" >/dev/null
 want "$T/whoerr" "this key says"
-want "$T/whoerr" "never confirm against it alone"
+want "$T/whoerr" "Never confirm against it"
+# And not the old wording, whose "alone" invited the reading that the label
+# counts for something alongside another check. It does not.
+wantno "$T/whoerr" "against it alone"
 
 # alice's own fingerprint, and the one bob is shown when he adds her, must be
 # the same string. If they are not, the only out-of-band check in the tool is
