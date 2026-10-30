@@ -10,8 +10,8 @@
 //! element. The `xmlns` is a namespace, not a request. Fills are written
 //! out as black on white so a dark page cannot invert the modules.
 
-use qrcode::render::svg;
 use qrcode::QrCode;
+use qrcode::render::svg;
 
 /// SVG markup for `payload`.
 ///
@@ -57,7 +57,7 @@ pub fn svg(payload: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use base64::{engine::general_purpose::STANDARD as B64, Engine};
+    use base64::{Engine, engine::general_purpose::STANDARD as B64};
     use ed25519_dalek::SigningKey;
 
     // `include!` is relative to this file. `#[path]` is relative to a
@@ -71,7 +71,11 @@ mod tests {
         let picture = svg(line).unwrap_or_else(|e| panic!("encode {line:?}: {e}"));
         let sym = qr_decode::symbol(&picture).unwrap_or_else(|e| panic!("parse: {e}"));
         let code = QrCode::new(line.as_bytes()).unwrap();
-        let painted: Vec<bool> = code.to_colors().iter().map(|c| c.select(true, false)).collect();
+        let painted: Vec<bool> = code
+            .to_colors()
+            .iter()
+            .map(|c| c.select(true, false))
+            .collect();
         assert_eq!(
             sym.dark, painted,
             "the path is not the symbol the encoder stored"
@@ -95,7 +99,10 @@ mod tests {
         assert!(!picture.contains("<!DOCTYPE"));
         assert!(!picture.to_ascii_lowercase().contains("<script"));
         let bare = picture.replace("http://www.w3.org/2000/svg", "");
-        assert!(!bare.contains("http:") && !bare.contains("https:"), "{bare}");
+        assert!(
+            !bare.contains("http:") && !bare.contains("https:"),
+            "{bare}"
+        );
         // The pin. Defaults pull `image`, which this tree does not want.
         let manifest = include_str!("../Cargo.toml");
         assert!(
@@ -155,8 +162,14 @@ mod tests {
         let line = crate::identity::add_line("cheerful kingfisher", &public);
         // The line is safe to read aloud: the handle and the public token.
         // The seeds that `identity.key` stores are not it.
-        assert!(!line.contains(&secret_sign), "add line contains the signing seed");
-        assert!(!line.contains(&secret_box), "add line contains the encryption seed");
+        assert!(
+            !line.contains(&secret_sign),
+            "add line contains the signing seed"
+        );
+        assert!(
+            !line.contains(&secret_box),
+            "add line contains the encryption seed"
+        );
         assert!(!line.contains(passphrase));
         assert!(!line.contains("passphrase"));
         let picture = svg(&line).unwrap();
@@ -171,10 +184,7 @@ mod tests {
             "identity.key",
             &public,
         ] {
-            assert!(
-                !picture.contains(secret),
-                "svg markup contains {secret}"
-            );
+            assert!(!picture.contains(secret), "svg markup contains {secret}");
         }
     }
 

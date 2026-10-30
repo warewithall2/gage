@@ -33,7 +33,10 @@ fn free_port() -> u16 {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     // The live services own these. An ephemeral port should not be either.
-    assert!(port != 7777 && port != 7791, "ephemeral port landed on a live service");
+    assert!(
+        port != 7777 && port != 7791,
+        "ephemeral port landed on a live service"
+    );
     port
 }
 
@@ -124,23 +127,37 @@ fn field<'a>(raw: &'a str, key: &str) -> &'a str {
     let rest = rest
         .strip_prefix('"')
         .unwrap_or_else(|| panic!("{key} is not a string"));
-    let end = rest.find('"').unwrap_or_else(|| panic!("{key} is not closed"));
+    let end = rest
+        .find('"')
+        .unwrap_or_else(|| panic!("{key} is not closed"));
     &rest[..end]
 }
 
 #[test]
 fn the_served_svg_is_the_add_line_and_not_the_key_file() {
-    let home = std::env::temp_dir().join(format!("gage-invite-{}-{}", std::process::id(), free_port()));
+    let home = std::env::temp_dir().join(format!(
+        "gage-invite-{}-{}",
+        std::process::id(),
+        free_port()
+    ));
     let _ = std::fs::remove_dir_all(&home);
     std::fs::create_dir_all(&home).unwrap();
     let init = gage(&home, &["init", "icy dune"]);
-    assert!(init.status.success(), "init: {}", String::from_utf8_lossy(&init.stderr));
+    assert!(
+        init.status.success(),
+        "init: {}",
+        String::from_utf8_lossy(&init.stderr)
+    );
     let key_file = std::fs::read_to_string(home.join("identity.key")).unwrap();
     let sign_seed = field(&key_file, "sign_seed");
     let box_secret = field(&key_file, "box_secret");
     assert!(sign_seed.len() >= 40 && box_secret.len() >= 40);
     let who = gage(&home, &["whoami"]);
-    assert!(who.status.success(), "whoami: {}", String::from_utf8_lossy(&who.stderr));
+    assert!(
+        who.status.success(),
+        "whoami: {}",
+        String::from_utf8_lossy(&who.stderr)
+    );
     let line = String::from_utf8_lossy(&who.stdout);
     let (handle, full_key) = line
         .lines()
@@ -158,13 +175,23 @@ fn the_served_svg_is_the_add_line_and_not_the_key_file() {
     };
     let (status, head, body) = http(port, "/api/invite");
     assert_eq!(status, 200, "{head}\n{body}");
-    assert!(head.to_ascii_lowercase().contains("content-type: image/svg+xml"));
+    assert!(
+        head.to_ascii_lowercase()
+            .contains("content-type: image/svg+xml")
+    );
     assert!(body.starts_with("<svg ") && body.ends_with("</svg>"));
     assert!(!body.contains("<?xml") && !body.contains("<!DOCTYPE"));
     assert!(!body.to_ascii_lowercase().contains("<script"));
     let bare = body.replace("http://www.w3.org/2000/svg", "");
     assert!(!bare.contains("http:") && !bare.contains("https:"));
-    for secret in [sign_seed, box_secret, "passphrase", "sign_seed", "box_secret", full_key] {
+    for secret in [
+        sign_seed,
+        box_secret,
+        "passphrase",
+        "sign_seed",
+        "box_secret",
+        full_key,
+    ] {
         assert!(!body.contains(secret), "served svg contains {secret}");
     }
     assert!(!body.contains(&key_file));
@@ -179,7 +206,8 @@ fn the_served_svg_is_the_add_line_and_not_the_key_file() {
     assert!(!page.contains("<img"));
 
     // A home with no identity does not invent a code, and does not name the path.
-    let empty = std::env::temp_dir().join(format!("gage-invite-empty-{}-{}", std::process::id(), port));
+    let empty =
+        std::env::temp_dir().join(format!("gage-invite-empty-{}-{}", std::process::id(), port));
     let _ = std::fs::remove_dir_all(&empty);
     std::fs::create_dir_all(&empty).unwrap();
     let empty_port = free_port();

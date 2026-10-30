@@ -64,7 +64,9 @@ pub struct Anchor {
 /// the chain -- and since this string becomes part of a filename and part of
 /// a line a person reads, "looks like a digest" is the only shape allowed.
 fn digest_ok(d: &str) -> bool {
-    d.len() == 64 && d.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+    d.len() == 64
+        && d.chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
 }
 
 /// A timestamp is kept only if it parses as one, and dropped otherwise.
@@ -78,7 +80,11 @@ fn clean_at(at: &str) -> String {
         && at
             .chars()
             .all(|c| c.is_ascii_digit() || matches!(c, '-' | ':' | 'T' | 'Z' | '+' | '.'));
-    if ok { at.to_string() } else { "unstated".to_string() }
+    if ok {
+        at.to_string()
+    } else {
+        "unstated".to_string()
+    }
 }
 
 impl Anchor {
@@ -288,7 +294,10 @@ mod tests {
         assert!(digest_ok(D));
         assert!(!digest_ok(""), "empty");
         assert!(!digest_ok(&D[..63]), "too short");
-        assert!(!digest_ok(&D.to_uppercase()), "uppercase is not what we emit");
+        assert!(
+            !digest_ok(&D.to_uppercase()),
+            "uppercase is not what we emit"
+        );
         assert!(!digest_ok(&format!("{}g", &D[..63])), "non-hex");
     }
 
@@ -310,8 +319,10 @@ mod tests {
             Anchor::parse(&format!(r#"{{"n":1,"digest":"{}"}}"#, &D[..10])).is_err(),
             "short digest"
         );
-        let a = Anchor::parse(&format!(r#"{{"n":7,"digest":"{D}","at":"2026-10-22T00:00:00Z"}}"#))
-            .expect("a well-formed anchor");
+        let a = Anchor::parse(&format!(
+            r#"{{"n":7,"digest":"{D}","at":"2026-10-22T00:00:00Z"}}"#
+        ))
+        .expect("a well-formed anchor");
         assert_eq!(a.n, 7);
         assert_eq!(a.digest, D);
     }

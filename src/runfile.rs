@@ -339,7 +339,10 @@ mod tests {
     #[test]
     fn argv_matching_is_about_the_subcommand_not_a_substring() {
         // The eras of the binary's name, all still that service.
-        assert!(argv_is_service("/usr/local/bin/gage lan --port 7791", "lan"));
+        assert!(argv_is_service(
+            "/usr/local/bin/gage lan --port 7791",
+            "lan"
+        ));
         assert!(argv_is_service("gage lan", "lan"));
         assert!(argv_is_service("/home/o/.local/bin/ctx lan", "lan"));
         assert!(argv_is_service("countersign watch --every 120", "watch"));

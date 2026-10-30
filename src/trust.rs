@@ -328,7 +328,10 @@ impl Contacts {
             // parsed, and `unwrap_or_default` treated both as "nobody".
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Self::default(),
             Err(e) => {
-                eprintln!("gage: cannot read your contact list at {}: {e}", p.display());
+                eprintln!(
+                    "gage: cannot read your contact list at {}: {e}",
+                    p.display()
+                );
                 eprintln!(
                     "      Refusing to continue: an unreadable allowlist is not an empty one,\n\
                      \x20     and carrying on would treat every contact you have as a stranger\n\
@@ -340,7 +343,10 @@ impl Contacts {
         match serde_json::from_str(&raw) {
             Ok(c) => c,
             Err(e) => {
-                eprintln!("gage: your contact list at {} does not parse: {e}", p.display());
+                eprintln!(
+                    "gage: your contact list at {} does not parse: {e}",
+                    p.display()
+                );
                 eprintln!(
                     "      Refusing to continue, and nothing has been changed. Every verdict\n\
                      \x20     this program prints is computed from this file, so reading it as\n\
@@ -401,7 +407,13 @@ impl Contacts {
     /// that is not on the list: confirming is a statement about a contact,
     /// and a confirmation with nothing to attach to would be a stored claim
     /// about a stranger.
-    pub fn confirm(&mut self, pubkey: &str, typed: &str, how: &str, seq: u64) -> Result<(), String> {
+    pub fn confirm(
+        &mut self,
+        pubkey: &str,
+        typed: &str,
+        how: &str,
+        seq: u64,
+    ) -> Result<(), String> {
         if !self.knows(pubkey) {
             return Err("that key is not on your list, so there is nothing to confirm.                         Add it first, then confirm it."
                 .to_string());
@@ -851,11 +863,15 @@ pub fn add_contact(name: &str, key: &str, opts: AddOpts) -> Result<Vec<String>, 
     if let Some(w) = words {
         out.push(String::new());
         out.push(format!("  this key says : {w}"));
-        match &opts.confirmed.as_ref().map(|cf| cf.how).or(if opts.same_machine {
-            Some("key generated on this machine")
-        } else {
-            None
-        }) {
+        match &opts
+            .confirmed
+            .as_ref()
+            .map(|cf| cf.how)
+            .or(if opts.same_machine {
+                Some("key generated on this machine")
+            } else {
+                None
+            }) {
             Some(how) => {
                 out.push(format!("  confirmed     : {how}"));
                 out.push("  Bundles signed by this key will read SENDER VERIFIED.".to_string());
@@ -870,15 +886,18 @@ pub fn add_contact(name: &str, key: &str, opts: AddOpts) -> Result<Vec<String>, 
                     "  Read those four pairs to {name} over a channel that is NOT this one \
                      -- a voice call, in person."
                 ));
-                out.push("  If their machine says anything else, you have the wrong key."
-                    .to_string());
+                out.push(
+                    "  If their machine says anything else, you have the wrong key.".to_string(),
+                );
                 out.push(String::new());
                 out.push(
                     "  Until you do, bundles from this key read SENDER ON YOUR LIST, \
                      UNCONFIRMED."
                         .to_string(),
                 );
-                out.push(format!("  Once you have compared them:  gage confirm {name}"));
+                out.push(format!(
+                    "  Once you have compared them:  gage confirm {name}"
+                ));
             }
         }
     }

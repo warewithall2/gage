@@ -149,10 +149,10 @@ fn attr_usize(svg: &str, name: &str) -> Result<usize, String> {
     let key = format!(" {name}=\"");
     let i = svg.find(&key).ok_or_else(|| format!("no {name}"))?;
     let rest = &svg[i + key.len()..];
-    let end = rest.find('"').ok_or_else(|| format!("{name} is not quoted"))?;
-    rest[..end]
-        .parse()
-        .map_err(|_| format!("bad {name}"))
+    let end = rest
+        .find('"')
+        .ok_or_else(|| format!("{name} is not quoted"))?;
+    rest[..end].parse().map_err(|_| format!("bad {name}"))
 }
 
 fn path_data(svg: &str) -> Result<&str, String> {
@@ -364,17 +364,62 @@ fn blocks(version: i16, ec: u8) -> Result<(usize, usize, usize, usize, usize), S
         [(34, 1, 0, 0), (28, 1, 0, 0), (22, 1, 0, 0), (16, 1, 0, 0)],
         [(55, 1, 0, 0), (44, 1, 0, 0), (17, 2, 0, 0), (13, 2, 0, 0)],
         [(80, 1, 0, 0), (32, 2, 0, 0), (24, 2, 0, 0), (9, 4, 0, 0)],
-        [(108, 1, 0, 0), (43, 2, 0, 0), (15, 2, 16, 2), (11, 2, 12, 2)],
+        [
+            (108, 1, 0, 0),
+            (43, 2, 0, 0),
+            (15, 2, 16, 2),
+            (11, 2, 12, 2),
+        ],
         [(68, 2, 0, 0), (27, 4, 0, 0), (19, 4, 0, 0), (15, 4, 0, 0)],
         [(78, 2, 0, 0), (31, 4, 0, 0), (14, 2, 15, 4), (13, 4, 14, 1)],
-        [(97, 2, 0, 0), (38, 2, 39, 2), (18, 4, 19, 2), (14, 4, 15, 2)],
-        [(116, 2, 0, 0), (36, 3, 37, 2), (16, 4, 17, 4), (12, 4, 13, 4)],
-        [(68, 2, 69, 2), (43, 4, 44, 1), (19, 6, 20, 2), (15, 6, 16, 2)],
-        [(81, 4, 0, 0), (50, 1, 51, 4), (22, 4, 23, 4), (12, 3, 13, 8)],
-        [(92, 2, 93, 2), (36, 6, 37, 2), (20, 4, 21, 6), (14, 7, 15, 4)],
-        [(107, 4, 0, 0), (37, 8, 38, 1), (20, 8, 21, 4), (11, 12, 12, 4)],
-        [(115, 3, 116, 1), (40, 4, 41, 5), (16, 11, 17, 5), (12, 11, 13, 5)],
-        [(87, 5, 88, 1), (41, 5, 42, 5), (24, 5, 25, 7), (12, 11, 13, 7)],
+        [
+            (97, 2, 0, 0),
+            (38, 2, 39, 2),
+            (18, 4, 19, 2),
+            (14, 4, 15, 2),
+        ],
+        [
+            (116, 2, 0, 0),
+            (36, 3, 37, 2),
+            (16, 4, 17, 4),
+            (12, 4, 13, 4),
+        ],
+        [
+            (68, 2, 69, 2),
+            (43, 4, 44, 1),
+            (19, 6, 20, 2),
+            (15, 6, 16, 2),
+        ],
+        [
+            (81, 4, 0, 0),
+            (50, 1, 51, 4),
+            (22, 4, 23, 4),
+            (12, 3, 13, 8),
+        ],
+        [
+            (92, 2, 93, 2),
+            (36, 6, 37, 2),
+            (20, 4, 21, 6),
+            (14, 7, 15, 4),
+        ],
+        [
+            (107, 4, 0, 0),
+            (37, 8, 38, 1),
+            (20, 8, 21, 4),
+            (11, 12, 12, 4),
+        ],
+        [
+            (115, 3, 116, 1),
+            (40, 4, 41, 5),
+            (16, 11, 17, 5),
+            (12, 11, 13, 5),
+        ],
+        [
+            (87, 5, 88, 1),
+            (41, 5, 42, 5),
+            (24, 5, 25, 7),
+            (12, 11, 13, 7),
+        ],
     ];
     const EC: [[usize; 4]; 15] = [
         [7, 10, 13, 17],
@@ -402,13 +447,7 @@ fn blocks(version: i16, ec: u8) -> Result<(usize, usize, usize, usize, usize), S
     Ok((d1, c1, d2, c2, EC[v - 1][e]))
 }
 
-fn deinterleave(
-    raw: &[u8],
-    d1: usize,
-    c1: usize,
-    d2: usize,
-    c2: usize,
-) -> Result<Vec<u8>, String> {
+fn deinterleave(raw: &[u8], d1: usize, c1: usize, d2: usize, c2: usize) -> Result<Vec<u8>, String> {
     let n = c1 + c2;
     if n == 0 {
         return Err("no blocks".into());
@@ -418,7 +457,10 @@ fn deinterleave(
     lens.extend(std::iter::repeat_n(d2, c2));
     let total: usize = lens.iter().sum();
     if raw.len() < total {
-        return Err(format!("have {} data bytes, blocks need {total}", raw.len()));
+        return Err(format!(
+            "have {} data bytes, blocks need {total}",
+            raw.len()
+        ));
     }
     let mut blocks: Vec<Vec<u8>> = lens.iter().map(|&len| Vec::with_capacity(len)).collect();
     let max = lens.iter().copied().max().unwrap_or(0);
@@ -475,7 +517,7 @@ fn read_payload(data: &[u8], version: i16) -> Result<Vec<u8>, String> {
                     } else {
                         (4, 1)
                     };
-                    let v = bit(data, &mut i, nbits).ok_or("truncated numeric")? ;
+                    let v = bit(data, &mut i, nbits).ok_or("truncated numeric")?;
                     let s = format!("{:0width$}", v, width = width);
                     out.extend(s.into_bytes());
                     left_digits -= width;
@@ -503,7 +545,11 @@ fn read_payload(data: &[u8], version: i16) -> Result<Vec<u8>, String> {
                     out.push(bit(data, &mut i, 8).ok_or("truncated byte")? as u8);
                 }
             }
-            other => return Err(format!("mode {other:#x} is not numeric, alphanumeric, or byte")),
+            other => {
+                return Err(format!(
+                    "mode {other:#x} is not numeric, alphanumeric, or byte"
+                ));
+            }
         }
     }
     Ok(out)

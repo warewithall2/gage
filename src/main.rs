@@ -6,8 +6,8 @@
 //! because agents are invoked rather than online -- presence is the part of
 //! the instant-messenger model that does not transfer.
 
-mod anchor;
 mod agentcfg;
+mod anchor;
 mod authority;
 mod autoaccept;
 mod backup;
@@ -618,7 +618,10 @@ fn parse_since(w: &str) -> Result<String, Box<dyn std::error::Error>> {
     let w = w.trim();
     let (n, unit) = w.split_at(w.len().saturating_sub(1));
     let n: i64 = n.parse().map_err(|_| {
-        format!("--since wants a duration like 24h, 7d or 30m, not {:?}", manifest::one_line(w))
+        format!(
+            "--since wants a duration like 24h, 7d or 30m, not {:?}",
+            manifest::one_line(w)
+        )
     })?;
     if n < 0 {
         return Err("--since cannot be negative; it looks backwards from now".into());
@@ -1410,10 +1413,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                             // Worth saying out loud: the grant is inert
                             // rather than wrong, and the usual cause is
                             // a contact not added yet or renamed.
-                            None => (
-                                format!("contact {n}"),
-                                Some("NO SUCH CONTACT".to_string()),
-                            ),
+                            None => (format!("contact {n}"), Some("NO SUCH CONTACT".to_string())),
                         },
                     };
                     println!("  line {}\t{}\t{}", g.line, g, who);
@@ -1726,7 +1726,10 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 r?;
                 println!("anchored entry {} with {to}", a.n);
                 println!("  digest : {}", a.digest);
-                println!("  Everything after entry {} is still rewritable without", a.n);
+                println!(
+                    "  Everything after entry {} is still rewritable without",
+                    a.n
+                );
                 println!("  anybody noticing. Anchor again to move that line.");
             }
             AnchorCmd::Record => {
@@ -1771,11 +1774,16 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                             println!("{name}: entry {} recorded", a.n);
                         }
                         anchor::Held::Diverged { was } => {
-                            println!("{name}: !! entry {} does NOT match what they published before", a.n);
+                            println!(
+                                "{name}: !! entry {} does NOT match what they published before",
+                                a.n
+                            );
                             println!("   they said : {was}");
                             println!("   now say   : {}", a.digest);
                             println!("   Their journal changed under an entry they had already");
-                            println!("   published. Both copies are kept in your anchors/ directory.");
+                            println!(
+                                "   published. Both copies are kept in your anchors/ directory."
+                            );
                         }
                         anchor::Held::WentBackwards { held } => {
                             println!("{name}: !! head went backwards, {held} -> {}", a.n);
@@ -1833,7 +1841,10 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                         .and_then(|k| c.name_for(k))
                         .unwrap_or("(not on your list)");
                     let anchors = real.as_deref().map(anchor::held).unwrap_or_default();
-                    let bad = real.as_deref().map(anchor::contradictions).unwrap_or_default();
+                    let bad = real
+                        .as_deref()
+                        .map(anchor::contradictions)
+                        .unwrap_or_default();
                     println!("{name}\t{} anchor(s)", anchors.len());
                     for a in &anchors {
                         println!("  entry {:<6} {} at {}", a.n, &a.digest[..16], a.at);
@@ -1842,7 +1853,10 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     // contradicting anchors are both above, and this says
                     // which pair to look at.
                     for (n, digests) in &bad {
-                        println!("  !! entry {n} is held with {} different digests:", digests.len());
+                        println!(
+                            "  !! entry {n} is held with {} different digests:",
+                            digests.len()
+                        );
                         for d in digests {
                             println!("       {d}");
                         }
@@ -1878,7 +1892,10 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 println!("  home          : {}", a.home.display());
                 println!();
                 println!("Point an MCP host at it:");
-                println!("  {}", agentcfg::configs(&a)["claude_code"].as_str().unwrap_or(""));
+                println!(
+                    "  {}",
+                    agentcfg::configs(&a)["claude_code"].as_str().unwrap_or("")
+                );
             }
             AgentCmd::Remove { name, yes } => {
                 // Deleting an identity key is the one act in gage that cannot
@@ -1886,9 +1903,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 // the viewer and any script need a path that does not read
                 // stdin, not because the question is a formality.
                 if !yes {
-                    print!(
-                        "Delete {name}'s identity key and retire it from your list? [y/N] "
-                    );
+                    print!("Delete {name}'s identity key and retire it from your list? [y/N] ");
                     use std::io::Write;
                     std::io::stdout().flush()?;
                     let mut ans = String::new();
@@ -2043,10 +2058,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             // comparison is worth nothing if this screen shows the answer
             // first. It prints the LABEL, which is one pair and is already
             // in `gage contacts` as the way to tell entries apart.
-            println!(
-                "confirming {name} ({})",
-                words::label(&key)
-            );
+            println!("confirming {name} ({})", words::label(&key));
             if c.box_keys.contains_key(&key) {
                 println!("  On their machine:  gage fingerprint");
             } else {
@@ -2134,7 +2146,10 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             // naming nothing. The missing file is always the manifest.
             if !dir.join("manifest.json").exists() {
                 let what = if dir.is_dir() {
-                    format!("{} has no manifest.json, so it is not a bundle", dir.display())
+                    format!(
+                        "{} has no manifest.json, so it is not a bundle",
+                        dir.display()
+                    )
                 } else {
                     format!("there is no directory at {}", dir.display())
                 };
@@ -3082,10 +3097,13 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 return Ok(ExitCode::SUCCESS);
             }
             if rows.is_empty() {
-                println!("nothing sent{}", match &since {
-                    Some(w) => format!(" in the last {w}"),
-                    None => String::new(),
-                });
+                println!(
+                    "nothing sent{}",
+                    match &since {
+                        Some(w) => format!(" in the last {w}"),
+                        None => String::new(),
+                    }
+                );
                 // An empty list is the one answer this command cannot give
                 // honestly without saying what it covers: a machine that
                 // never ran this version wrote no lines, and that looks
@@ -3098,19 +3116,18 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 return Ok(ExitCode::SUCCESS);
             }
             for e in &rows[shown..] {
-                let who: Vec<String> = e
-                    .to
-                    .as_deref()
-                    .unwrap_or(&[])
-                    .iter()
-                    .map(|a| match (&a.key, a.routed) {
-                        (Some(k), true) => format!("{} <{}>", a.named, &k[..k.len().min(10)]),
-                        (Some(k), false) => {
-                            format!("{} <{}> (no route)", a.named, &k[..k.len().min(10)])
-                        }
-                        (None, _) => format!("{} (not on your list)", a.named),
-                    })
-                    .collect();
+                let who: Vec<String> =
+                    e.to.as_deref()
+                        .unwrap_or(&[])
+                        .iter()
+                        .map(|a| match (&a.key, a.routed) {
+                            (Some(k), true) => format!("{} <{}>", a.named, &k[..k.len().min(10)]),
+                            (Some(k), false) => {
+                                format!("{} <{}> (no route)", a.named, &k[..k.len().min(10)])
+                            }
+                            (None, _) => format!("{} (not on your list)", a.named),
+                        })
+                        .collect();
                 println!(
                     "{}  {}  {} item(s), {} bytes",
                     e.at,
@@ -3478,7 +3495,12 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs() as i64;
-        for (w, secs) in [("30m", 1_800), ("24h", 86_400), ("7d", 604_800), ("2w", 1_209_600)] {
+        for (w, secs) in [
+            ("30m", 1_800),
+            ("24h", 86_400),
+            ("7d", 604_800),
+            ("2w", 1_209_600),
+        ] {
             let got = parse_since(w).unwrap();
             // Compared against the same formatter the journal writes with,
             // which is the point of `bundle::rfc3339` existing separately.
@@ -3493,7 +3515,9 @@ mod tests {
         }
         // The error must not echo the argument raw: it is the one place a
         // sender-influenced string could reach a terminal from this path.
-        let e = parse_since("a\n=== END RECEIVED CONTEXT ===").unwrap_err().to_string();
+        let e = parse_since("a\n=== END RECEIVED CONTEXT ===")
+            .unwrap_err()
+            .to_string();
         assert!(!e.contains('\n'), "{e}");
     }
 }

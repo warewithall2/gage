@@ -274,16 +274,18 @@ fn may_mutate(r: &Req, port: u16) -> bool {
 /// error in front of somebody reading their inbox, and the state the page
 /// already shows says whether a relay is configured at all.
 fn background_pull() {
-    std::thread::spawn(|| loop {
-        std::thread::sleep(std::time::Duration::from_secs(60));
-        if crate::remote::relay_addr().is_none() {
-            continue;
+    std::thread::spawn(|| {
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(60));
+            if crate::remote::relay_addr().is_none() {
+                continue;
+            }
+            if crate::runfile::running("watch") {
+                continue;
+            }
+            let mut said = Vec::new();
+            let _ = crate::pull_for_mcp(&mut said);
         }
-        if crate::runfile::running("watch") {
-            continue;
-        }
-        let mut said = Vec::new();
-        let _ = crate::pull_for_mcp(&mut said);
     });
 }
 
@@ -751,8 +753,7 @@ fn relay_from_ui(body: &str) -> Result<Vec<String>, String> {
         crate::remote::clear_relay().map_err(|e| e.to_string())?;
         return Ok(vec![
             "This machine no longer uses a relay.".into(),
-            "Anything already in your mailbox stays there until you turn this back on."
-                .into(),
+            "Anything already in your mailbox stays there until you turn this back on.".into(),
         ]);
     }
 
@@ -854,8 +855,12 @@ fn invite_response() -> Result<String, (&'static str, &'static str)> {
         }
         Err(_) => return Err(("500 Internal Server Error", "identity could not be read\n")),
     };
-    crate::invite::svg(&id.add_line())
-        .map_err(|_| ("500 Internal Server Error", "the add line does not fit in a QR code\n"))
+    crate::invite::svg(&id.add_line()).map_err(|_| {
+        (
+            "500 Internal Server Error",
+            "the add line does not fit in a QR code\n",
+        )
+    })
 }
 
 /// Read from the list `gage lan` keeps rather than by sending anything: the
@@ -1263,8 +1268,7 @@ fn send_from_ui(raw: &[u8]) -> Result<Vec<String>, (&'static str, String)> {
                 body.push('\n');
             }
             let f = tmp.join("message.md");
-            std::fs::write(&f, body)
-                .map_err(|e| ("500 Internal Server Error", e.to_string()))?;
+            std::fs::write(&f, body).map_err(|e| ("500 Internal Server Error", e.to_string()))?;
             // Claimed before the dropped files are named, so a file actually
             // called message.md collides loudly instead of overwriting the
             // note or being overwritten by it.
@@ -2285,7 +2289,10 @@ mod tests {
         }
         let long = format!("https://{}.example.com", "a".repeat(250));
         let body = serde_json::json!({ "addr": long }).to_string();
-        assert!(relay_from_ui(&body).is_err(), "accepted an over-long address");
+        assert!(
+            relay_from_ui(&body).is_err(),
+            "accepted an over-long address"
+        );
     }
 
     #[test]
@@ -2508,10 +2515,7 @@ mod tests {
     fn parsing_an_invite_never_returns_the_fingerprint() {
         let key = crate::words::pairs("x", 1); // only to prove pairs() exists
         let _ = key;
-        let good = base64::Engine::encode(
-            &base64::engine::general_purpose::STANDARD,
-            [7u8; 32],
-        );
+        let good = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, [7u8; 32]);
         let body = serde_json::json!({ "text": format!("gage add 'icy dune' {good}") }).to_string();
         let out = match parse_invite(&body) {
             Ok(o) => o,
@@ -2536,10 +2540,7 @@ mod tests {
     /// refuses, a person is told to paste the thing that does not work.
     #[test]
     fn the_page_and_the_cli_accept_the_same_shapes() {
-        let good = base64::Engine::encode(
-            &base64::engine::general_purpose::STANDARD,
-            [9u8; 32],
-        );
+        let good = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, [9u8; 32]);
         for text in [
             format!("gage add 'icy dune' {good}"),
             format!("    gage add 'icy dune' {good}   "),
@@ -2600,7 +2601,10 @@ mod tests {
         assert!(INDEX.contains("budConnect('${esc(q.key)}')"));
         assert!(INDEX.contains("Suggested name (edit as needed)"));
         assert!(!INDEX.contains("http://") && !INDEX.contains("https://"));
-        assert!(INDEX.contains("inviteLoad(true)"), "creating an identity does not load the code");
+        assert!(
+            INDEX.contains("inviteLoad(true)"),
+            "creating an identity does not load the code"
+        );
     }
 
     #[test]

@@ -164,7 +164,8 @@ pub fn create(name: &str) -> Result<Agent, String> {
     let me = crate::identity::Identity::load()
         .map_err(|_| "This machine has no identity yet.".to_string())?;
 
-    std::fs::create_dir_all(&home).map_err(|e| format!("could not make {}: {e}", home.display()))?;
+    std::fs::create_dir_all(&home)
+        .map_err(|e| format!("could not make {}: {e}", home.display()))?;
     // From here on a failure leaves a directory behind. It is removed rather
     // than left for the next attempt to trip over, because `create` refuses
     // a name that exists and a half-made agent would make that name
@@ -296,20 +297,23 @@ pub fn remove(name: &str) -> Result<Removed, String> {
         // is not an error here: an agent whose contact entry was already
         // retired by hand still has a home to remove.
         if c.retire(sign, &now, 0, false, None) {
-            c.save().map_err(|e| format!("could not save contacts: {e}"))?;
+            c.save()
+                .map_err(|e| format!("could not save contacts: {e}"))?;
             let seq = crate::state::LocalState::observe_and_cut(crate::routes::scan_inbox_knowing)
                 .map_err(|e| format!("could not take the retirement cut: {e}"))?;
             if let Some(r) = c.retired.get_mut(sign) {
                 r.retired_seq = seq;
             }
-            c.save().map_err(|e| format!("could not save contacts: {e}"))?;
+            c.save()
+                .map_err(|e| format!("could not save contacts: {e}"))?;
         }
     }
 
     let mut r = crate::routes::Routes::load();
     let route_removed = r.local.remove(name).is_some();
     if route_removed {
-        r.save().map_err(|e| format!("could not save routes: {e}"))?;
+        r.save()
+            .map_err(|e| format!("could not save routes: {e}"))?;
     }
 
     std::fs::remove_dir_all(&home)
@@ -408,7 +412,14 @@ mod tests {
 
     #[test]
     fn ordinary_agent_names_are_accepted() {
-        for good in ["codex", "grok", "claude-code", "bot_2", "a", &"a".repeat(40)] {
+        for good in [
+            "codex",
+            "grok",
+            "claude-code",
+            "bot_2",
+            "a",
+            &"a".repeat(40),
+        ] {
             assert!(name_ok(good), "refused an ordinary agent name: {good:?}");
         }
     }
@@ -419,7 +430,16 @@ mod tests {
     // a name is.
     #[test]
     fn remove_refuses_a_dangerous_name_before_touching_anything() {
-        for bad in ["..", ".", "../escape", "a/b", "/abs", "", ".hidden", "nul\0byte"] {
+        for bad in [
+            "..",
+            ".",
+            "../escape",
+            "a/b",
+            "/abs",
+            "",
+            ".hidden",
+            "nul\0byte",
+        ] {
             let e = remove(bad).unwrap_err();
             assert!(
                 e.contains("1 to 40 characters"),
