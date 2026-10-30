@@ -21,18 +21,24 @@
    No webfont. This page is served under a CSP with no network access and
    loosening that for typography would be a poor trade -- so the system stack
    is tuned instead, with tabular numerals where figures must line up.
+
+   Rethemed 2026-10-30 to the finish gage.sh shipped the same day: Apple
+   neutrals, the system face first in the stack, larger radii, deeper
+   shadows, pill buttons, a frosted top bar. The token layer is what made
+   it a palette change rather than a rewrite -- and the invariant above
+   still governs: the accent asserts nothing, and green stays a verdict.
 --------------------------------------------------------------------------- */
 :root{
   /* Type: 11 / 12.5 / 14 / 16 / 20. Five steps, each distinguishable at a
      glance. Anything needing a sixth is a sign the hierarchy is wrong. */
-  --t1:11px; --t2:12.5px; --t3:14px; --t4:16px; --t5:20px;
+  --t1:11px; --t2:13px; --t3:14.5px; --t4:17px; --t5:24px;
   /* Weight: three. Regular reads, medium orients, semibold names things. */
   --w1:400; --w2:550; --w3:680;
   /* Space: a 4px base. */
   --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:24px; --s6:32px; --s7:48px;
   /* Radius: small controls, cards, pills. Three, and a circle is the pill
      taken to its limit rather than a fourth value spelled `50%`. */
-  --r1:6px; --r2:10px; --r3:999px;
+  --r1:8px; --r2:16px; --r3:999px;
   --r:var(--r2);
   /* One rail width, fixed. It used to be minmax(348px,clamp(348px,26vw,440px))
      -- three numbers for one column, and the column that grew was the one
@@ -41,8 +47,8 @@
   /* One reading measure. There were three: 58ch, 62ch and a 760px column. */
   --measure:62ch;
 
-  --bg:#fbfaf8; --sheet:#ffffff; --sunk:#f3f1ec; --line:#e7e3dc; --line2:#d6d1c7;
-  --fg:#191815; --dim:#5b5751; --faint:#8b867d;
+  --bg:#f5f5f7; --sheet:#ffffff; --sunk:#ececf0; --line:#dedee3; --line2:#c9c9ce;
+  --fg:#1d1d1f; --dim:#6e6e73; --faint:#86868b;
   /* Green is reserved. It is the colour of a verdict -- SENDER VERIFIED, a
      paired device, a settled thread -- and nothing a person can merely click
      may borrow it. Until 25 October the interactive accent was a green two
@@ -53,18 +59,18 @@
      verdict set keeps the traffic-light hues it has to keep.
      The mark stays green -- see packaging/icon -- because a logo is not a
      claim about a bundle. */
-  --accent:#26608f; --accent-ink:#ffffff; --accent-soft:#e5eef6;
+  --accent:#0066cc; --accent-ink:#ffffff; --accent-soft:#e6f0fb;
   /* The mark's own green, from packaging/icon: the logo is not chrome and
      not a verdict, and it has to go on matching the thing in the dock. */
   --brand:#1D6E47; --brand-ink:#f4f1e8;
-  --ok:#2c6650; --warn:#8a5712; --bad:#9a2b2b;
+  --ok:#248a3d; --warn:#b25000; --bad:#d70015;
   /* A bundle's kind is a fact about its contents, not a judgement of it, so
      --file is a slate: the same hue family as the accent at a fifth of its
      saturation. It was the accent green, which made a FILE tag read as a
      verified one. */
-  --prompt:#8a5712; --memory:#9a2b2b; --decision:#45458a; --file:#5c6672;
-  --shadow:0 1px 2px rgba(25,24,21,.04), 0 10px 28px -20px rgba(25,24,21,.30);
-  --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --prompt:#b25000; --memory:#d70015; --decision:#5453c9; --file:#5f6b7a;
+  --shadow:0 2px 6px rgba(0,0,0,.05), 0 20px 48px -20px rgba(0,0,0,.25);
+  --sans:-apple-system,BlinkMacSystemFont,ui-sans-serif,system-ui,"Segoe UI",Roboto,sans-serif;
   --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
   --ease:140ms cubic-bezier(.2,.6,.3,1);
 }
@@ -73,23 +79,23 @@
    neutrals keep a trace of warmth -- a pure grey dark theme looks clinical,
    which is the wrong register for something whose whole subject is trust. */
 @media (prefers-color-scheme:dark){:root:not([data-theme=light]){
-  --bg:#121316; --sheet:#1b1d21; --sunk:#232529; --line:#2b2e34; --line2:#3a3e45;
-  --fg:#edebe7; --dim:#a8a49d; --faint:#7a766f;
-  --accent:#8bbce2; --accent-ink:#0c1a26; --accent-soft:#1d2a36;
+  --bg:#000000; --sheet:#1c1c1e; --sunk:#2c2c2e; --line:#333336; --line2:#48484a;
+  --fg:#f5f5f7; --dim:#aeaeb2; --faint:#8e8e93;
+  --accent:#2997ff; --accent-ink:#ffffff; --accent-soft:#10283f;
   --brand:#1D6E47; --brand-ink:#f4f1e8;
-  --ok:#86c7b1; --warn:#dcac60; --bad:#e8908a;
-  --prompt:#dcac60; --memory:#e8908a; --decision:#a8a8e4; --file:#9aa6b4;
-  --shadow:0 1px 2px rgba(0,0,0,.45), 0 12px 32px -22px rgba(0,0,0,.9);
+  --ok:#30d158; --warn:#ffb340; --bad:#ff6961;
+  --prompt:#ffb340; --memory:#ff6961; --decision:#a8a8e4; --file:#a1a1a6;
+  --shadow:0 2px 6px rgba(0,0,0,.5), 0 20px 48px -20px rgba(0,0,0,.85);
   color-scheme:dark;
 }}
 :root[data-theme=dark]{
-  --bg:#121316; --sheet:#1b1d21; --sunk:#232529; --line:#2b2e34; --line2:#3a3e45;
-  --fg:#edebe7; --dim:#a8a49d; --faint:#7a766f;
-  --accent:#8bbce2; --accent-ink:#0c1a26; --accent-soft:#1d2a36;
+  --bg:#000000; --sheet:#1c1c1e; --sunk:#2c2c2e; --line:#333336; --line2:#48484a;
+  --fg:#f5f5f7; --dim:#aeaeb2; --faint:#8e8e93;
+  --accent:#2997ff; --accent-ink:#ffffff; --accent-soft:#10283f;
   --brand:#1D6E47; --brand-ink:#f4f1e8;
-  --ok:#86c7b1; --warn:#dcac60; --bad:#e8908a;
-  --prompt:#dcac60; --memory:#e8908a; --decision:#a8a8e4; --file:#9aa6b4;
-  --shadow:0 1px 2px rgba(0,0,0,.45), 0 12px 32px -22px rgba(0,0,0,.9);
+  --ok:#30d158; --warn:#ffb340; --bad:#ff6961;
+  --prompt:#ffb340; --memory:#ff6961; --decision:#a8a8e4; --file:#a1a1a6;
+  --shadow:0 2px 6px rgba(0,0,0,.5), 0 20px 48px -20px rgba(0,0,0,.85);
   color-scheme:dark;
 }
 *{box-sizing:border-box;margin:0;padding:0}
@@ -128,7 +134,7 @@ button{background:none;border:0;cursor:pointer}
    the window. */
 .topbar{grid-column:1/-1;grid-row:1;display:flex;align-items:center;gap:var(--s3);
   flex-wrap:wrap;min-width:0;
-  padding:var(--s3) var(--s4);border-bottom:1px solid var(--line);background:var(--sheet)}
+  padding:var(--s3) var(--s4);border-bottom:1px solid var(--line);background:color-mix(in srgb,var(--sheet) 80%,transparent);backdrop-filter:saturate(180%) blur(20px);-webkit-backdrop-filter:saturate(180%) blur(20px)}
 .stale{grid-column:1/-1;grid-row:2}
 .left{grid-column:1;grid-row:3}
 .right{grid-column:2;grid-row:3}
@@ -171,7 +177,7 @@ button{background:none;border:0;cursor:pointer}
   border:1px solid transparent;background:transparent;color:var(--dim);display:flex;
   align-items:center;gap:var(--s2);transition:background var(--ease),color var(--ease)}
 .tab:hover{background:var(--sunk);color:var(--fg)}
-.tab.on{background:var(--accent-soft);border-color:transparent;color:var(--accent);
+.tab.on{background:var(--accent);border-color:transparent;color:var(--accent-ink);
   font-weight:var(--w2)}
 .tab .bdg{font-size:var(--t1);min-width:var(--s4);height:var(--s4);border-radius:var(--r3);
   padding:0 var(--s1);
@@ -226,7 +232,7 @@ button{background:none;border:0;cursor:pointer}
 .head h1{font-size:var(--t4);font-weight:var(--w3);overflow:hidden;text-overflow:ellipsis;
   white-space:nowrap;letter-spacing:-.012em}
 .head .sp{flex:1}
-.headbtn{font-size:var(--t2);color:var(--dim);padding:var(--s1) var(--s3);border-radius:var(--r1);
+.headbtn{font-size:var(--t2);color:var(--dim);padding:var(--s2) var(--s3);border-radius:var(--r3);
   border:1px solid var(--line2);white-space:nowrap;transition:border-color var(--ease),color var(--ease)}
 .headbtn:hover{border-color:var(--accent);color:var(--accent)}
 
@@ -280,7 +286,7 @@ button{background:none;border:0;cursor:pointer}
 .fb{color:var(--faint);flex:none}
 .acts{display:flex;gap:var(--s2);align-items:center;flex-wrap:wrap;
   padding:var(--s3) var(--s4);border-top:1px solid var(--line)}
-.btn{font-size:var(--t2);padding:var(--s1) var(--s3);border-radius:var(--r1);
+.btn{font-size:var(--t2);padding:var(--s2) var(--s4);border-radius:var(--r3);
   border:1px solid var(--line2);white-space:nowrap;
   transition:border-color var(--ease),color var(--ease),background var(--ease)}
 .btn:hover{border-color:var(--accent);color:var(--accent)}
@@ -305,7 +311,7 @@ textarea{width:100%;min-height:64px;max-height:40vh;resize:vertical;
   background:var(--bg);border:1px solid var(--line2);border-radius:var(--r2);
   padding:var(--s3);font-size:var(--t3);line-height:1.6;
   transition:border-color var(--ease)}
-textarea:focus{outline:none;border-color:var(--accent)}
+textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 4px var(--accent-soft)}
 .crow{display:flex;gap:var(--s3);align-items:center}
 .chint{font-size:var(--t1);color:var(--faint)}
 .cerr{font-size:var(--t2);color:var(--bad)}
@@ -362,7 +368,7 @@ textarea:focus{outline:none;border-color:var(--accent)}
 .devfp{font-size:var(--t2);color:var(--fg);margin-top:var(--s2);line-height:1.6;
   font-family:var(--mono);word-break:break-word;letter-spacing:-.01em}
 .devrow{display:flex;gap:var(--s2);margin-top:var(--s3);flex-wrap:wrap}
-.devbtn{font-size:var(--t2);padding:var(--s1) var(--s3);border-radius:var(--r1);cursor:pointer;
+.devbtn{font-size:var(--t2);padding:var(--s2) var(--s4);border-radius:var(--r3);cursor:pointer;
   border:1px solid var(--line2);background:transparent;color:var(--fg);
   transition:border-color var(--ease),color var(--ease)}
 .devbtn:hover{border-color:var(--accent);color:var(--accent)}
@@ -397,7 +403,7 @@ textarea:focus{outline:none;border-color:var(--accent)}
 .lanin{font:inherit;font-size:var(--t2);padding:var(--s2);border-radius:var(--r1);
   border:1px solid var(--line2);background:var(--bg);color:var(--fg);margin-top:var(--s2);
   transition:border-color var(--ease)}
-.lanin:focus{outline:none;border-color:var(--accent)}
+.lanin:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 4px var(--accent-soft)}
 .lanerr{font-size:var(--t2);color:var(--bad);margin-top:var(--s2);line-height:1.55}
 .lanok{font-size:var(--t2);color:var(--ok);margin-top:var(--s2);line-height:1.55}
 .drop{border:1px dashed var(--line2);border-radius:var(--r2);padding:var(--s4) var(--s3);
