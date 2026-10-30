@@ -464,8 +464,6 @@ textarea:focus{outline:none;border-color:var(--accent)}
 .bsect:hover{color:var(--fg)}
 .bgate{margin-top:var(--s3);padding-top:var(--s3);border-top:1px dashed var(--line2)}
 .bwhy{font-size:var(--t2);color:var(--dim);line-height:1.65;margin-bottom:var(--s2)}
-.bpair{font-family:var(--mono);font-size:var(--t2);color:var(--fg);background:var(--sunk);
-  border:1px solid var(--line);border-radius:var(--r1);padding:var(--s1) var(--s2)}
 .bdots{display:flex;gap:var(--s3);margin-top:var(--s2);flex-wrap:wrap}
 .breach{font-size:var(--t1);color:var(--faint);display:flex;align-items:center;gap:var(--s1)}
 .breach.on{color:var(--ok)}
@@ -619,7 +617,7 @@ function avatar(m){
 const nameOf=m=>m.mine?'you':(m.known_as?m.known_as:`"${m.claimed_name}"`);
 
 let DATA={threads:[],contacts:[]}, LERR='', SEL=null, FILTER='all', DRAFT={}, CERR='', SENDING=false;
-let PASTED='', PNAME='', PKEY='', PPAIR=0, PCONF='', PREVEAL=null;
+let PASTED='', PNAME='', PKEY='', PPAIR=0;
 
 function alerts(m){
   const out=[];
@@ -1197,11 +1195,11 @@ async function pasteClipboard(){
   try{if(navigator.clipboard&&navigator.clipboard.readText){const t=await navigator.clipboard.readText();if(t){PASTED=t;budRender(true);}}}catch(e){/* Keep the editable paste field as the fallback. */}
 }
 async function pasteInvite(){
-  AERR='';AOK='';PREVEAL=null;PKEY='';
+  AERR='';AOK='';PKEY='';
   try{
     const r=await fetch('/api/parse-invite',{method:'POST',headers:{'X-Gage':'1','Content-Type':'application/json'},body:JSON.stringify({text:PASTED})});
     const j=await r.json().catch(()=>({}));if(!r.ok)throw Error(j.error||('HTTP '+r.status));
-    PKEY=j.key;PNAME=j.suggested_name||'';PPAIR=j.ask_pair;PCONF='';ASK=PKEY;ANAME=PNAME;ACONF='';REVEAL=null;
+    PKEY=j.key;PNAME=j.suggested_name||'';PPAIR=j.ask_pair;ASK=PKEY;ANAME=PNAME;ACONF='';REVEAL=null;
   }catch(e){AERR=e&&e.message?e.message:String(e)}
   if(TAB==='buddies')budRender(true);
 }
