@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- **Documented: a gage older than 0.3.4 silently erases confirmations.** The
+  confirmation record is a field those versions do not know, so any command
+  that writes `contacts.json` — one `gage add` will do it — rewrites the file
+  without it, and every affected contact drops back to `SENDER ON YOUR LIST,
+  UNCONFIRMED` with its `gage authority` grants inert. Found by testing a
+  0.3.3 binary against a 0.3.4 home, after an 0.3.0 binary turned up still
+  installed on the second machine. No code can fix this in the old version;
+  the honest fix is to say so, and `scripts/release.sh --audit` now makes a
+  stale channel visible instead of letting one sit for four releases.
+- **`scripts/release.sh` reports where a version actually is** — tag, GitHub
+  release page, crates.io — and `--audit` exits non-zero while any of them
+  trails. crates.io had been four releases behind, which mattered because
+  `install.sh` tells unsupported platforms to `cargo install gage`.
+
 - **`gage seal` says what a bundle directory is when you hand it something
   else.** Found by walking the first-tester packet with the *published* 0.3.4
   binary: sealing a directory of your own files -- the natural guess -- failed

@@ -143,6 +143,16 @@ record stores the fingerprint that was compared and is re-checked on every
 verdict, so attaching an encryption key after a signing-only comparison
 expires it. Only a human typing four word-pairs back writes one.
 
+**Running a gage older than 0.3.4 against the same home erases every
+confirmation.** The record is a field those versions never knew, and any
+command that writes `contacts.json` rewrites the file without it — one
+`gage add` is enough. Nothing warns, because the old binary has nothing to
+warn with: the contacts silently read `SENDER ON YOUR LIST, UNCONFIRMED`
+again and every `gage authority` grant naming them goes inert. Measured, not
+inferred. Two machines that share a home directory, or one `~/.local/bin`
+left behind by an installer, is all it takes, so upgrade or remove the old
+binary rather than keeping it as a rollback.
+
 **`SENDER NOT ON YOUR LIST` renders its contents.** A stranger must be able to
 send you a first message; the protection is the accept gate and the frame, not
 non-delivery.
