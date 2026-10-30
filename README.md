@@ -492,6 +492,7 @@ everything you have already exchanged was built on.
 
     scripts/release.sh my-laptop     # build on every machine reachable
     cat dist/SHA256SUMS
+    scripts/release.sh --audit       # is this version actually out?
 
 Binaries land in `dist/`, one per platform, each built on the machine it runs
 on — cross-compiling needs a C toolchain per target because rustls brings C,
