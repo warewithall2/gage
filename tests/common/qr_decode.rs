@@ -107,7 +107,7 @@ pub fn symbol(svg: &str) -> Result<Symbol, String> {
         return Err("svg is smaller than a quiet zone".into());
     }
     let n = cells - QZ * 2;
-    if n < 21 || (n - 17) % 4 != 0 {
+    if n < 21 || !(n - 17).is_multiple_of(4) {
         return Err(format!("{n} modules is not a QR version"));
     }
     if pixels[0] {
@@ -129,7 +129,7 @@ pub fn decode_modules(n: usize, dark: &[bool]) -> Result<String, String> {
     if dark.len() != n * n {
         return Err("module grid has the wrong length".into());
     }
-    if n < 21 || (n - 17) % 4 != 0 {
+    if n < 21 || !(n - 17).is_multiple_of(4) {
         return Err(format!("{n} is not a QR width"));
     }
     let version = ((n - 17) / 4) as i16;
@@ -198,11 +198,11 @@ fn format_info(dark: &[bool], n: usize) -> Result<(u8, u8), String> {
         (8, 0),
     ];
     let mut side = [(0i32, 0i32); 15];
-    for i in 0..7 {
-        side[i] = (8, n - 1 - i as i32);
+    for (i, cell) in side.iter_mut().take(7).enumerate() {
+        *cell = (8, n - 1 - i as i32);
     }
-    for i in 0..8 {
-        side[7 + i] = (n - 8 + i as i32, 8);
+    for (i, cell) in side.iter_mut().skip(7).enumerate() {
+        *cell = (n - 8 + i as i32, 8);
     }
     let a = format_value(dark, n as usize, &main);
     let b = format_value(dark, n as usize, &side);
