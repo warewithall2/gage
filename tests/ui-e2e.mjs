@@ -512,6 +512,36 @@ async function setup([fresh, bare, ready, person, agent]) {
 async function agentrm([base, keep, kill]) {
   await page.goto(base + '/');
   if (!(await waitFor('#list', 'the console never loaded'))) return;
+
+  // `agentcfg::create` puts every agent on the contact list, so both of
+  // these are buddies as far as `contacts.json` is concerned. Buddies used
+  // to render them as people: a card each, with the word-pair box and "ask
+  // them to run gage fingerprint and read them out over a call" -- about a
+  // key this machine generated itself. They belong on the Agents tab, and
+  // Buddies says so and counts them rather than dropping them silently.
+  await page.locator('button.tab', { hasText: 'Buddies' }).first().click();
+  if (!(await waitFor('#budpane', 'the buddies page never rendered'))) return;
+  await settle();
+  const budcards = (await page.locator('#budpane .dev').allTextContents()).join(' ');
+  ok(!budcards.includes(keep) && !budcards.includes(kill),
+     'Buddies still lists this machine\'s own agents as people: '
+     + JSON.stringify(budcards.slice(0, 200)));
+  const budtext = (await page.locator('#budpane').textContent()) || '';
+  ok(/2 agents on this machine/.test(budtext),
+     'Buddies did not count the agents on the list: '
+     + JSON.stringify(budtext.slice(0, 300)));
+  ok(budtext.includes(keep) && budtext.includes(kill),
+     'the agent line did not name both agents');
+  ok(/nobody to compare pairs with/.test(budtext),
+     'the agent line did not say why there is no word-pair compare');
+
+  // The way out has to go somewhere, or it is a sentence pretending to be a
+  // route.
+  await page.locator('#budpane button.blink').first().click();
+  await settle();
+  ok(await page.locator('button.tab.on', { hasText: 'Agents' }).count() === 1,
+     'the Agents link on the buddies page did not switch tabs');
+
   await page.locator('button.tab', { hasText: 'Agents' }).first().click();
   if (!(await waitFor('#budpane .dev', 'the agents page showed no agent'))) return;
   await settle();
@@ -566,6 +596,20 @@ async function agentrm([base, keep, kill]) {
   ok(/retired, not forgotten/.test(said),
      'the page did not say the key was retired rather than forgotten: '
      + JSON.stringify(said.slice(0, 200)));
+
+  // A removed agent's key is retired, not forgotten, so it is still in
+  // `contacts.json` -- and a filter keyed on the agent HOMES, which is what
+  // this is, must stop counting it the moment the home goes. Counting it
+  // would be the old bug back again, one card late.
+  await page.locator('button.tab', { hasText: 'Buddies' }).first().click();
+  await settle();
+  const after = (await page.locator('#budpane').textContent()) || '';
+  ok(/One agent on this machine/.test(after),
+     'after removing one of two agents, Buddies did not say one was left: '
+     + JSON.stringify(after.slice(0, 300)));
+  const aftercards = (await page.locator('#budpane .dev').allTextContents()).join(' ');
+  ok(!aftercards.includes(kill),
+     'the removed agent came back as a person on the buddies list');
 }
 
 const SCENARIOS = { buddies, confirmgate, firstrun, receive, settled, nocreate, agentrm, setup };

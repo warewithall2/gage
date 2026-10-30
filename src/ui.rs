@@ -1029,9 +1029,21 @@ pub fn buddies_json() -> String {
         })
     };
 
+    // The agents this machine made for itself. `agentcfg::create` adds each
+    // one to the contact list -- it has to, or their bundles would arrive
+    // from a stranger -- so every agent is also a buddy, and "Your list" grew
+    // a card inviting you to phone your own Codex and compare word-pairs with
+    // it. Keyed by signing key rather than by name, because the name on the
+    // list is the one thing either side could have changed since.
+    let agent_keys: std::collections::BTreeMap<String, String> = crate::agentcfg::list()
+        .iter()
+        .map(|a| (crate::identity::split_key(&a.key).0, a.name.clone()))
+        .collect();
+
     let buddies: Vec<serde_json::Value> = contacts
         .keys
         .iter()
+        .filter(|(k, _)| !agent_keys.contains_key(*k))
         .map(|(k, n)| {
             serde_json::json!({
                 "name": n,
@@ -1119,10 +1131,25 @@ pub fn buddies_json() -> String {
         })
         .collect();
 
+    // Not hidden, just not people: the page says how many there are and
+    // sends you to the tab that can actually do something with them. Unread
+    // is carried so that moving them off this list cannot bury a message.
+    let agents_on_list: Vec<serde_json::Value> = agent_keys
+        .iter()
+        .filter(|(k, _)| contacts.keys.contains_key(*k))
+        .map(|(k, name)| {
+            serde_json::json!({
+                "name": name,
+                "unread": unread.get(k).copied().unwrap_or(0),
+            })
+        })
+        .collect();
+
     serde_json::json!({
         "verdicts_stale": !observed,
         "relay": relay,
         "buddies": buddies,
+        "agents_on_list": agents_on_list,
         "requests": requests,
         "refused": refused,
     })

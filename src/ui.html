@@ -457,6 +457,10 @@ textarea:focus{outline:none;border-color:var(--accent)}
   align-items:baseline;gap:var(--s2)}
 .bsec:first-child{margin-top:var(--s3)}
 .bsect{color:inherit;font:inherit;letter-spacing:inherit;text-transform:inherit}
+/* A button that reads as a link because it navigates rather than acts. The
+   global reset already strips the chrome; this only adds the underline that
+   says it can be clicked. */
+.blink{color:var(--accent);text-decoration:underline;padding:0}
 .bsect:hover{color:var(--fg)}
 .bgate{margin-top:var(--s3);padding-top:var(--s3);border-top:1px dashed var(--line2)}
 .bwhy{font-size:var(--t2);color:var(--dim);line-height:1.65;margin-bottom:var(--s2)}
@@ -1563,6 +1567,20 @@ function budRender(force){
   h+=`<div class="bsec">Your list<span class="bnum">${BUD.buddies.length}</span></div>`;
   if(!BUD.buddies.length){
     h+=`<div class="lansub budnote">Nobody yet. Pair with a buddy on this network to add their key, then confirm its word-pairs with them.</div>`;
+  }
+  // The agents this machine made are on the contact list too -- they have to
+  // be -- but they are not people to compare word-pairs with over a call, and
+  // showing them here asked you to. Counted rather than hidden, with their
+  // unread, so nothing goes quiet.
+  const ags=BUD.agents_on_list||[];
+  if(ags.length){
+    const un=ags.reduce((t,a)=>t+a.unread,0);
+    h+=`<div class="lansub budnote">${ags.length===1?'One agent on this machine is':
+      `${ags.length} agents on this machine are`} also on your list
+      (${ags.map(a=>esc(a.name)).join(', ')}) &mdash; their keys came out of a keygen this
+      machine ran, so there is nobody to compare pairs with. They are on
+      <button class="blink" onclick="setTab('agents')">the Agents tab</button>.${
+      un?` <b>${un} unread</b> from them, in Chats.`:''}</div>`;
   }
   h+=`<div class="budgrid">`;
   for(const b of BUD.buddies){
