@@ -1,4 +1,9 @@
-# Draft: posting to A2A, not yet posted
+# Draft: posting to A2A
+
+**Version A was POSTED on 2026-10-30** as
+https://github.com/a2aproject/A2A/issues/388#issuecomment-6530231447 (the
+first comment on that issue). Version B stays unposted — open it only if A
+lands, per the note below.
 
 **Status: drafts for Owen to review, edit and post under his own account.
 Nothing here has been sent anywhere.**
@@ -35,7 +40,7 @@ not an implementation detail, and it is the gap.
 
 ---
 
-## Version A — a comment on #388
+## Version A — a comment on #388 (POSTED 2026-10-30)
 
 *Why here: #388 asks for labels that include "untrusted data which may lead to
 prompt injection". It has sat with zero comments since May 2025. It is the
