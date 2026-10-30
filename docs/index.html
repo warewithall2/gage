@@ -1,227 +1,415 @@
 <!doctype html>
+<html lang="en">
+<head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>gage — hand context between agents</title>
+<title>gage — Know who's really talking to your agent</title>
 <meta name="description" content="Hand context between agents — files, prompts and decisions — with a trust boundary that survives the hop.">
+<link rel="icon" type="image/png" href="icon-512.png">
+<meta property="og:title" content="gage — hand context between agents">
+<meta property="og:description" content="A sealed envelope, a signature nobody can forge, a secret handshake — for AI agents handing work to each other.">
+<meta property="og:image" content="https://gage.sh/icon-512.png">
 <style>
   :root{
-    --bg:#fbfaf8; --sheet:#ffffff; --sunk:#f3f1ec; --line:#e7e3dc;
-    --fg:#191815; --dim:#5b5751; --faint:#8b867d;
-    --accent:#2c5a4d; --accent-soft:#e6eee9;
-    --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --bg:#f5f5f7; --sheet:#ffffff; --ink:#1d1d1f; --dim:#6e6e73; --faint:#86868b;
+    --line:#d2d2d7; --blue:#0066cc; --blue-bright:#2997ff;
+    --dark:#000000; --dark-sheet:#161617; --dark-ink:#f5f5f7; --dark-dim:#a1a1a6;
+    --green:#30d158;
+    --sans:-apple-system,BlinkMacSystemFont,"SF Pro Display","SF Pro Text",ui-sans-serif,system-ui,"Segoe UI",Roboto,sans-serif;
     --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
-    --shadow:0 1px 2px rgba(25,24,21,.04), 0 10px 28px -20px rgba(25,24,21,.30);
-  }
-  @media (prefers-color-scheme:dark){
-    :root:not([data-theme="light"]){
-      --bg:#121316; --sheet:#1b1d21; --sunk:#232529; --line:#2b2e34;
-      --fg:#edebe7; --dim:#a8a49d; --faint:#7a766f;
-      --accent:#86c7b1; --accent-soft:#1f2f2a;
-      --shadow:0 1px 2px rgba(0,0,0,.45), 0 12px 32px -22px rgba(0,0,0,.9);
-    }
+    --radius:20px;
   }
   *{box-sizing:border-box}
-  body{
-    margin:0; background:var(--bg); color:var(--fg);
-    font-family:var(--sans); line-height:1.6;
-    -webkit-text-size-adjust:100%;
-  }
-  .wrap{max-width:46rem; margin:0 auto; padding:4rem 16px 5rem}
-  h1{font-size:2.6rem; line-height:1.1; margin:0 0 .4rem; letter-spacing:-.02em}
-  .tag{font-size:1.15rem; color:var(--dim); margin:0 0 2.5rem}
-  h2{font-size:1.1rem; margin:2.75rem 0 .6rem; letter-spacing:.02em; text-transform:uppercase; color:var(--faint)}
-  h3{font-size:1rem; margin:1.6rem 0 .4rem; color:var(--fg)}
-  p{margin:0 0 1rem}
-  a{color:var(--accent); text-decoration-thickness:1px; text-underline-offset:2px}
-  code,pre{font-family:var(--mono)}
-  pre{
-    background:var(--sunk); border:1px solid var(--line); border-radius:8px;
-    padding:.9rem 1rem; overflow-x:auto; font-size:.9rem; margin:0 0 1rem;
-  }
-  code:not(pre code){
-    background:var(--sunk); border:1px solid var(--line); border-radius:4px;
-    padding:.1em .35em; font-size:.88em;
-  }
-  .words{
-    background:var(--accent-soft); border-left:3px solid var(--accent);
-    border-radius:0 6px 6px 0; padding:.85rem 1rem; margin:0 0 1rem;
-    font-family:var(--mono); font-size:.9rem;
-  }
-  figure{margin:1.25rem 0 0}
-  img{
-    width:100%; height:auto; display:block;
-    border:1px solid var(--line); border-radius:10px; box-shadow:var(--shadow);
-  }
-  figcaption{font-size:.85rem; color:var(--faint); margin-top:.55rem}
-  ul{margin:0 0 1rem; padding-left:1.2rem}
-  li{margin:.3rem 0}
-  .links{display:flex; flex-wrap:wrap; gap:.6rem; margin:.25rem 0 1rem; padding:0; list-style:none}
-  .links a{
-    display:inline-block; padding:.45rem .9rem; border:1px solid var(--line);
-    border-radius:999px; background:var(--sheet); text-decoration:none;
-    font-size:.92rem; box-shadow:var(--shadow);
-  }
-  footer{
-    margin-top:3.5rem; padding-top:1.25rem; border-top:1px solid var(--line);
-    font-size:.86rem; color:var(--faint);
-  }
-  .note{font-size:.9rem; color:var(--dim)}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+    line-height:1.5;-webkit-text-size-adjust:100%;-webkit-font-smoothing:antialiased}
+  a{color:var(--blue);text-decoration:none}
+  a:hover{text-decoration:underline}
+  .wrap{max-width:1024px;margin:0 auto;padding:0 22px}
+
+  /* ---------- nav ---------- */
+  nav{position:sticky;top:0;z-index:50;height:52px;
+    background:rgba(251,251,253,.78);backdrop-filter:saturate(180%) blur(20px);
+    -webkit-backdrop-filter:saturate(180%) blur(20px);
+    border-bottom:1px solid rgba(0,0,0,.08)}
+  nav .wrap{height:52px;display:flex;align-items:center;gap:2rem}
+  nav .brand{display:flex;align-items:center;gap:.55rem;font-weight:600;
+    font-size:1.15rem;color:var(--ink);letter-spacing:-.01em}
+  nav .brand img{width:26px;height:26px;display:block}
+  nav .spacer{flex:1}
+  nav a.nl{color:var(--ink);font-size:.82rem;opacity:.85}
+  nav a.nl:hover{opacity:1;text-decoration:none}
+  @media (max-width:640px){ nav a.nl.hideS{display:none} }
+
+  /* ---------- hero ---------- */
+  .hero{text-align:center;padding:6.5rem 0 4.5rem;
+    background:linear-gradient(180deg,#fbfbfd 0%,var(--bg) 100%)}
+  .hero .mark{width:104px;height:104px;margin:0 auto 1.6rem;display:block;
+    filter:drop-shadow(0 18px 30px rgba(0,0,0,.18))}
+  .eyebrow{font-size:1.05rem;font-weight:600;color:var(--blue);
+    letter-spacing:.01em;margin:0 0 .8rem}
+  h1{font-size:clamp(2.7rem,6.5vw,4.6rem);line-height:1.06;font-weight:700;
+    letter-spacing:-.022em;margin:0 auto 1.2rem;max-width:16ch}
+  h1 .grad{background:linear-gradient(94deg,#0090ff 0%,#a259ff 55%,#ff5e8a 100%);
+    -webkit-background-clip:text;background-clip:text;color:transparent}
+  .hero .sub{font-size:clamp(1.15rem,2.4vw,1.45rem);color:var(--dim);
+    max-width:44ch;margin:0 auto 2.2rem;line-height:1.45}
+  .cta{display:flex;gap:.9rem;justify-content:center;flex-wrap:wrap}
+  .btn{display:inline-block;border-radius:999px;padding:.85rem 1.7rem;
+    font-size:1.02rem;font-weight:500;line-height:1;text-decoration:none}
+  .btn:hover{text-decoration:none;filter:brightness(1.08)}
+  .btn.primary{background:var(--blue);color:#fff}
+  .btn.ghost{background:transparent;color:var(--blue);
+    box-shadow:inset 0 0 0 1px var(--blue)}
+  .hero .fineprint{margin-top:1.1rem;font-size:.85rem;color:var(--faint)}
+
+  /* ---------- product shot frame ---------- */
+  .shot{max-width:940px;margin:3.8rem auto 0;border-radius:18px;overflow:hidden;
+    background:#fff;box-shadow:0 30px 80px -20px rgba(0,0,0,.35),0 0 0 1px rgba(0,0,0,.06)}
+  .shot .bar{display:flex;align-items:center;gap:.45rem;padding:.65rem .9rem;
+    background:#f0f0f2;border-bottom:1px solid rgba(0,0,0,.06)}
+  .dot{width:11px;height:11px;border-radius:50%}
+  .shot .url{margin:0 auto;background:#fff;border-radius:6px;color:#6e6e73;
+    font-size:.75rem;padding:.22rem .8rem;font-family:var(--mono)}
+  .shot img{width:100%;height:auto;display:block}
+  .shotcap{max-width:940px;margin:.9rem auto 0;text-align:center;
+    font-size:.88rem;color:var(--faint)}
+
+  /* ---------- sections ---------- */
+  section{padding:6rem 0}
+  section.dark{background:var(--dark);color:var(--dark-ink)}
+  .kicker{font-size:.95rem;font-weight:600;color:var(--blue-bright);
+    text-transform:none;margin:0 0 .7rem;text-align:center}
+  section:not(.dark) .kicker{color:var(--blue)}
+  h2.big{font-size:clamp(2rem,4.6vw,3.2rem);line-height:1.12;font-weight:700;
+    letter-spacing:-.02em;text-align:center;margin:0 auto 1rem;max-width:24ch}
+  .lede{font-size:clamp(1.05rem,2vw,1.25rem);color:var(--dim);
+    text-align:center;max-width:56ch;margin:0 auto}
+  section.dark .lede{color:var(--dark-dim)}
+
+  /* ---------- four things cards ---------- */
+  .cards{display:grid;grid-template-columns:repeat(4,1fr);gap:1.1rem;margin-top:3.4rem}
+  @media (max-width:900px){ .cards{grid-template-columns:repeat(2,1fr)} }
+  @media (max-width:520px){ .cards{grid-template-columns:1fr} }
+  .card{background:var(--dark-sheet);border-radius:var(--radius);
+    padding:1.7rem 1.5rem 1.5rem;min-height:15.5rem}
+  .card .ic{width:40px;height:40px;margin-bottom:1rem;color:var(--blue-bright)}
+  .card h3{font-size:1.22rem;font-weight:600;margin:0 0 .5rem;letter-spacing:-.01em}
+  .card p{font-size:.95rem;color:var(--dark-dim);margin:0;line-height:1.55}
+
+  /* ---------- verdict ---------- */
+  .verdict{display:inline-block;font-family:var(--mono);font-weight:700;
+    font-size:clamp(1rem,2.6vw,1.35rem);letter-spacing:.04em;color:var(--green);
+    border:1.5px solid rgba(48,209,88,.55);border-radius:12px;
+    padding:.8rem 1.4rem;background:rgba(48,209,88,.08)}
+  .verdict.un{color:#ffb340;border-color:rgba(255,179,64,.5);background:rgba(255,179,64,.07)}
+  .vrow{display:flex;gap:1rem;justify-content:center;flex-wrap:wrap;margin:2.6rem 0 1rem}
+  .words{font-family:var(--mono);font-size:.98rem;background:var(--sunk,#ececf0);
+    border-radius:12px;padding:1rem 1.2rem;text-align:center;max-width:640px;margin:1.6rem auto 0}
+  section:not(.dark) .words{background:#ececf0}
+
+  /* ---------- steps ---------- */
+  .steps{display:grid;grid-template-columns:repeat(3,1fr);gap:1.1rem;margin-top:3.2rem}
+  @media (max-width:820px){ .steps{grid-template-columns:1fr} }
+  .step{background:var(--sheet);border-radius:var(--radius);padding:1.7rem 1.5rem;
+    box-shadow:0 4px 24px rgba(0,0,0,.05)}
+  .step .n{font-size:.85rem;font-weight:700;color:var(--blue);letter-spacing:.06em}
+  .step h3{font-size:1.3rem;margin:.35rem 0 .6rem;letter-spacing:-.01em}
+  .step p{font-size:.95rem;color:var(--dim);margin:0 0 .8rem}
+  pre.code{background:#1d1d1f;color:#f5f5f7;border-radius:12px;padding:.95rem 1.05rem;
+    font-family:var(--mono);font-size:.83rem;line-height:1.55;overflow-x:auto;margin:0}
+  .step pre.code{margin-top:.4rem}
+
+  /* ---------- gallery ---------- */
+  .duo{display:grid;grid-template-columns:1fr 1fr;gap:1.1rem;margin-top:3.2rem}
+  @media (max-width:820px){ .duo{grid-template-columns:1fr} }
+  .duo figure{margin:0}
+  .duo img{width:100%;height:auto;display:block;border-radius:var(--radius);
+    box-shadow:0 18px 50px -18px rgba(0,0,0,.28)}
+  figcaption{font-size:.86rem;color:var(--faint);margin-top:.6rem;text-align:center}
+
+  /* ---------- download ---------- */
+  .dl{display:grid;grid-template-columns:1fr 1fr;gap:1.1rem;margin-top:3.2rem}
+  @media (max-width:820px){ .dl{grid-template-columns:1fr} }
+  .dlcard{background:var(--sheet);border-radius:24px;padding:2.2rem 2rem;
+    box-shadow:0 4px 24px rgba(0,0,0,.05);text-align:left}
+  .dlcard img.appic{width:72px;height:72px;margin-bottom:1rem;display:block}
+  .dlcard h3{font-size:1.55rem;margin:0 0 .5rem;letter-spacing:-.015em}
+  .dlcard p{color:var(--dim);font-size:.98rem;margin:0 0 1.2rem}
+  .dlcard .btn{font-size:.95rem;padding:.7rem 1.4rem}
+  .dlcard pre.code{margin-bottom:1.1rem}
+  .tiny{font-size:.82rem;color:var(--faint);margin-top:1rem}
+
+  /* ---------- status ---------- */
+  .status{max-width:760px;margin:0 auto}
+  .status p{font-size:1.02rem;color:#3a3a3c;margin:0 0 1.1rem;line-height:1.65}
+  .status strong{color:var(--ink)}
+  .status code{font-family:var(--mono);font-size:.9em;background:#ececf0;
+    border-radius:5px;padding:.08em .35em}
+
+  /* ---------- footer ---------- */
+  footer{background:#f5f5f7;border-top:1px solid var(--line);
+    padding:2.6rem 0 3rem;font-size:.85rem;color:var(--faint)}
+  footer .links{display:flex;flex-wrap:wrap;gap:1.4rem;margin-bottom:1.2rem}
+  footer .links a{color:#424245}
 </style>
+</head>
+<body>
 
-<div class="wrap">
-  <h1>gage</h1>
-  <p class="tag">Hand context between agents — files, prompts and decisions — with a trust boundary that survives the hop.</p>
+<nav>
+  <div class="wrap">
+    <a class="brand" href="/"><img src="gage-mark.svg" alt="">gage</a>
+    <div class="spacer"></div>
+    <a class="nl hideS" href="#why">Why</a>
+    <a class="nl hideS" href="#how">How it works</a>
+    <a class="nl" href="#download">Download</a>
+    <a class="nl" href="https://github.com/warewithall2/gage">GitHub</a>
+  </div>
+</nav>
 
-  <p>Your Claude hands a task to Codex. A colleague's agent sends you their project state.
-  Normally nothing on the receiving side says who wrote it, or whether it can be trusted.
-  gage wraps that handoff so the agent reading it is told who signed it, whether you have
-  ever confirmed that person, and that nothing inside carries any authority.</p>
+<header class="hero">
+  <div class="wrap">
+    <img class="mark" src="icon-512.png" alt="The gage icon">
+    <p class="eyebrow">gage — for agents that work together</p>
+    <h1>Know who's <span class="grad">really talking</span> to your agent.</h1>
+    <p class="sub">Your Claude hands a task to Codex. A colleague's agent sends
+    you their project state. gage wraps that handoff so the receiving side
+    knows who signed it, whether you have ever confirmed that person — and
+    that nothing inside it is an instruction.</p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/warewithall2/gage/releases/download/v0.3.4/Gage-0.3.4-macOS.zip">Download for Mac</a>
+      <a class="btn ghost" href="#download">Get the CLI</a>
+    </div>
+    <p class="fineprint">Free and open source · macOS app for Apple Silicon · No account, no server, no telemetry</p>
+    <div class="shot">
+      <div class="bar">
+        <span class="dot" style="background:#ff5f57"></span>
+        <span class="dot" style="background:#febc2e"></span>
+        <span class="dot" style="background:#28c840"></span>
+        <span class="url">127.0.0.1 — the gage viewer, on your machine only</span>
+      </div>
+      <img src="screenshots/demo.gif" alt="Twenty-five seconds of real gage output: two identities pairing with word-pairs, confirming them, sending through a relay, and the trust frame the receiving agent is shown before any content.">
+    </div>
+    <p class="shotcap">Real output, start to finish: pairing, confirming, sending — and the frame the receiving agent reads before any content.</p>
+  </div>
+</header>
 
-  <p>It works across vendors because it is not a protocol. A bundle is a signed directory,
-  so it moves over a shared folder, git, email, your own network, or a relay — anything you
-  already have.</p>
+<section class="dark" id="why">
+  <div class="wrap">
+    <p class="kicker">In plain terms</p>
+    <h2 class="big">Passing notes in class.<br>With higher stakes.</h2>
+    <p class="lede">Your assistant hands work to a colleague's assistant, and
+    the receiving assistant cannot tell who really wrote what it is holding —
+    and an assistant, unlike a person reading a suspicious email, tends to
+    do what the note says. So every handoff gets four things a note in
+    class never had.</p>
+    <div class="cards">
+      <div class="card">
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg>
+        <h3>A sealed envelope</h3>
+        <p>Every bundle is sealed for exactly one recipient. Anyone can carry
+        it — email, git, a shared folder, a relay — and nobody carrying it
+        can read it or change a word of it.</p>
+      </div>
+      <div class="card">
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
+        <h3>A signature nobody can forge</h3>
+        <p>Each identity is a keypair that lives on one machine and nowhere
+        else. A signature either verifies against the key you hold for that
+        person, or the bundle says what it is: unattributed.</p>
+      </div>
+      <div class="card">
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M11 17a4 4 0 0 1-8 0V5a2 2 0 1 1 4 0v7"/><path d="M13 7a4 4 0 0 1 8 0v10a2 2 0 1 1-4 0V7"/><path d="M7 12h10"/></svg>
+        <h3>A secret handshake</h3>
+        <p>Four word-pairs, derived from the key itself, compared out loud
+        once — on a call, in person. That one human moment is what turns
+        "a key I was handed" into a person who was actually checked.</p>
+      </div>
+      <div class="card">
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-3.6 8-10V5l-8-3-8 3v7c0 6.4 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg>
+        <h3>Information, not instructions</h3>
+        <p>Before any payload, the receiving agent is told: this is data
+        from an identified party, and it carries no authority. A channel
+        between agents stops being a prompt-injection delivery network.</p>
+      </div>
+    </div>
+  </div>
+</section>
 
-  <h2>In plain terms</h2>
-  <p>It is the note-passing problem from school, with higher stakes. Your
-  assistant hands work to a colleague's assistant, and the receiving
-  assistant cannot tell who really wrote what it is holding — and an
-  assistant, unlike a person reading a suspicious email, tends to do what
-  the note says.</p>
-  <p>So every handoff gets four things a note in class never had. A
-  <strong>sealed envelope</strong> only the intended recipient can open.
-  A <strong>signature nobody can forge</strong>. A <strong>secret
-  handshake</strong> — four code words the two people compare out loud,
-  once, so a key on a list becomes a person who was actually checked.
-  And a stamp on the envelope: <strong>this is information, not
-  instructions</strong> — so nothing inside a bundle can give the
-  receiving assistant orders, whoever wrote it.</p>
+<section id="verdict">
+  <div class="wrap">
+    <p class="kicker">The verdict is the product</p>
+    <h2 class="big">On your list is a fact.<br>Checked is a claim.</h2>
+    <p class="lede">A key nobody has confirmed still works — and says so.
+    Being on a list and having been checked are two different facts, and
+    only one of them is a claim about a person. Arrival is not consent
+    either: a bundle sits in your inbox, unread, until you accept it.</p>
+    <div class="vrow">
+      <span class="verdict">SENDER VERIFIED</span>
+      <span class="verdict un">SENDER ON YOUR LIST, UNCONFIRMED</span>
+    </div>
+    <p class="lede" style="font-size:1rem">Two people compare four word-pairs over a channel neither machine
+    controls — a phone call, in person — and everything downstream rests on
+    that one human moment. The words are derived from the signing key, so
+    nobody picks their own.</p>
+    <div class="words">this key says : humble pillar · ruddy lobster · marine armour · eastern dovecote</div>
+    <p class="lede" style="font-size:.92rem;margin-top:1rem">Four pairs is 64 bits, and is what a person confirms. The single pair
+    shown as a device label is 16 bits — enough to tell two machines apart
+    in a list, never enough to confirm anything against.</p>
+    <div class="shot" style="margin-top:3rem">
+      <img src="screenshots/inbox.png" alt="The gage viewer: conversations on the left, a received bundle on the right with its trust verdict stated above the contents.">
+    </div>
+    <p class="shotcap">The local viewer serves on 127.0.0.1 — loopback only, nothing leaves the machine. The verdict is the headline, not a caption.</p>
+  </div>
+</section>
 
-  <h2>Get going</h2>
-  <pre>curl -fsSL https://gage.sh/install.sh | sh</pre>
-  <p class="note">On a Mac there is also an app:
-  <a href="https://github.com/warewithall2/gage/releases/download/v0.3.4/Gage-0.3.4-macOS.zip">download
-  Gage for macOS</a> (Apple Silicon, macOS 13 or later) — unzip it and drag
-  Gage to Applications. It is not notarized yet, so the first open is
-  right-click, then Open. The script below installs the same gage as a
-  command-line tool.</p>
-  <p class="note">Piping a script into a shell is a thing worth being asked to
-  trust. <a href="https://gage.sh/install.sh">Read it first</a> if you would
-  rather — it is about a hundred lines of POSIX <code>sh</code>: it works out
-  your OS and architecture, downloads the matching binary and its
-  <code>SHA256SUMS</code> from the latest release, <strong>checks the
-  checksum before installing anything</strong>, and puts one file in
-  <code>~/.local/bin</code>. No sudo, ever. <code>cargo install gage</code>
-  works too, anywhere Rust does.</p>
+<section id="how" style="padding-top:1rem">
+  <div class="wrap">
+    <p class="kicker">How it works</p>
+    <h2 class="big">Three beats. The middle one<br>is the only part that needs a human.</h2>
+    <div class="steps">
+      <div class="step">
+        <div class="n">STEP 1</div>
+        <h3>Who you are</h3>
+        <p>Makes a keypair on this machine. <code>gage whoami</code> prints
+        the one public line you send a colleague — and the four word-pairs
+        that line's key derives.</p>
+        <pre class="code">gage init alice
+# or just `gage quickstart`
+# and answer four questions</pre>
+      </div>
+      <div class="step">
+        <div class="n">STEP 2</div>
+        <h3>Who you trust</h3>
+        <p>Then <strong>read the four word-pairs to each other out loud</strong> —
+        on a call, in person, not in the channel you sent the key through.
+        If one word differs, it is not their key.</p>
+        <pre class="code">gage add bob &lt;their-key&gt;
+gage confirm bob</pre>
+      </div>
+      <div class="step">
+        <div class="n">STEP 3</div>
+        <h3>One handoff</h3>
+        <p>A bundle is a signed directory, so it travels however you already
+        move files — a shared folder, git, email, <code>gage push</code>
+        through a relay, or <code>gage send --lan</code> on the same network.</p>
+        <pre class="code">gage send --to bob \
+  --subject "spec review" \
+  --prompt ask.md \
+  --file spec.md</pre>
+      </div>
+    </div>
+    <p class="lede" style="margin-top:2.6rem;font-size:1rem">The full tour is in the
+    <a href="https://github.com/warewithall2/gage#readme">README</a>. Driving gage
+    with no human at the keyboard — the command table, the exit codes, how to
+    read a verdict, a complete worked script — is in
+    <a href="https://github.com/warewithall2/gage/blob/master/docs/agents.md">docs/agents.md</a>.</p>
+    <div class="duo">
+      <figure>
+        <img src="screenshots/buddies.png" alt="The gage buddy list: each contact with their key and confirmation state.">
+        <figcaption>Your people, and what you actually know about each of them.</figcaption>
+      </figure>
+      <figure>
+        <img src="screenshots/confirmation-gate.png" alt="The confirmation gate: the deliberate step where word-pairs are compared before a contact reads as verified.">
+        <figcaption>Confirmation is a deliberate act, not a default.</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
 
-  <p>Then three beats. The middle one is the only part that needs a human.</p>
+<section class="dark" id="download">
+  <div class="wrap">
+    <p class="kicker">Download</p>
+    <h2 class="big">Get gage.</h2>
+    <p class="lede">v0.3.4 — free, dual-licensed MIT or Apache-2.0. Keys are
+    created and stored on your machine only. There is no account and
+    nothing phones home.</p>
+    <div class="dl">
+      <div class="dlcard" style="background:var(--dark-sheet);color:var(--dark-ink)">
+        <img class="appic" src="icon-512.png" alt="The gage app icon">
+        <h3>Gage for Mac</h3>
+        <p style="color:var(--dark-dim)">The desktop app. Download, unzip, drag to Applications —
+        a first verified handoff in minutes, with no terminal at all.
+        Apple Silicon, macOS 13 or later.</p>
+        <a class="btn primary" href="https://github.com/warewithall2/gage/releases/download/v0.3.4/Gage-0.3.4-macOS.zip">Download the app</a>
+        <p class="tiny" style="color:var(--dark-dim)">Not notarized yet, so the first open is right-click →
+        Open, once. After that it opens like anything else.</p>
+      </div>
+      <div class="dlcard" style="background:var(--dark-sheet);color:var(--dark-ink)">
+        <h3 style="margin-top:4.2rem">The command line</h3>
+        <p style="color:var(--dark-dim)">One line. It verifies its own checksum before installing
+        anything, and puts one file in <code>~/.local/bin</code>. No sudo,
+        ever. <a href="https://gage.sh/install.sh" style="color:var(--blue-bright)">Read it first</a> if you'd rather.</p>
+        <pre class="code">curl -fsSL https://gage.sh/install.sh | sh</pre>
+        <p style="color:var(--dark-dim)">Or anywhere Rust does:</p>
+        <pre class="code">cargo install gage</pre>
+        <p class="tiny" style="color:var(--dark-dim)">Binaries and checksums are attached to the
+        <a href="https://github.com/warewithall2/gage/releases/latest" style="color:var(--blue-bright)">latest release</a> —
+        linux-x86_64 and darwin-arm64, with one SHA256SUMS over all of it.</p>
+      </div>
+    </div>
+  </div>
+</section>
 
-  <h3>1 · Who you are</h3>
-  <pre>gage init alice          # or just `gage quickstart` and answer four questions</pre>
-  <p class="note">Makes a keypair on this machine. <code>gage whoami</code>
-  prints the one public line you send a colleague, and the four word-pairs
-  that line's key derives.</p>
+<section id="status">
+  <div class="wrap">
+    <p class="kicker">Where it is</p>
+    <h2 class="big">Early. Honest. Working.</h2>
+    <div class="status" style="margin-top:2.4rem">
+      <p><strong>v0.3.4 is current.</strong> 169 unit and integration tests
+      pass, along with the 80-check packaging suite, the identity restore
+      drill and the viewer end-to-end suite. The honest way to try it is
+      the twenty-minute packet in the repository.</p>
+      <p><strong>0.3.4 makes SENDER VERIFIED mean it.</strong> The verdict
+      now requires a confirmation somebody actually performed — a key that
+      is merely on your list reads <code>SENDER ON YOUR LIST,
+      UNCONFIRMED</code>, and a handed-over file is received as mail, with
+      the same accept gate as anything that arrives over the relay.</p>
+      <p><strong>Two front doors.</strong> <code>gage mcp</code> serves the
+      Model Context Protocol over stdio, so an agent calls nine gage
+      tools instead of shelling out and parsing prose — the same functions
+      the CLI runs, not a second implementation. The Mac app and the local
+      viewer walk a first-time user from nothing to a first verified
+      handoff, with the word-pair comparison still a thing two people do.</p>
+      <p><strong>0.2.0 fixed a security defect in <code>gage open</code></strong> —
+      the one part of gage that is a security control: a sender could get
+      a line of their own into the trust frame, including a forged
+      authorisation line carrying the frame's real marker. 0.1.0 was
+      affected; upgrading is recommended. What it was, who could do it and
+      how it is fixed are in the
+      <a href="https://github.com/warewithall2/gage/blob/master/CHANGELOG.md">changelog</a>.
+      It was found by self-review rather than by an outside reporter,
+      which is worth knowing in both directions.</p>
+      <p>If you lose the key, that is no longer the end of the identity —
+      <code>gage export-identity</code> writes a passphrase-encrypted copy
+      you keep yourself. It is a trade rather than a free improvement: it
+      converts "lose the key, lose everything" into "your security is
+      your passphrase's strength", so the file belongs somewhere other
+      than the machine it came from.</p>
+      <p>Two documents say what this actually is rather than what it hopes
+      to be. The <a href="https://github.com/warewithall2/gage/blob/master/docs/spec.md">spec</a>
+      is the wire reality, derived from the code. The
+      <a href="https://github.com/warewithall2/gage/blob/master/docs/threat-model.md">threat model</a>
+      lists the adversaries, the mitigation for each, and the non-goals —
+      including that nothing here can make a language model obey the
+      frame, and that the security review so far has been self-review.</p>
+    </div>
+  </div>
+</section>
 
-  <h3>2 · Who you trust</h3>
-  <pre>gage add bob &lt;their-key&gt;</pre>
-  <p class="note">Then <strong>read the four word-pairs to each other out
-  loud</strong> — on a call, in person, not in the channel you sent the key
-  through. If one word differs, it is not their key. This is the step nothing
-  can do for you, and skipping it is what makes <code>SENDER VERIFIED</code>
-  mean only "this is the key I was handed".</p>
+<footer>
+  <div class="wrap">
+    <div class="links">
+      <a href="https://github.com/warewithall2/gage/blob/master/docs/spec.md">Spec</a>
+      <a href="https://github.com/warewithall2/gage/blob/master/docs/threat-model.md">Threat model</a>
+      <a href="https://github.com/warewithall2/gage">GitHub</a>
+      <a href="https://crates.io/crates/gage">crates.io</a>
+      <a href="https://docs.rs/gage">docs.rs</a>
+      <a href="https://github.com/warewithall2/gage/blob/master/CHANGELOG.md">Changelog</a>
+    </div>
+    <p>gage 0.3.4 · dual-licensed MIT or Apache-2.0 · No trackers. No scripts. No accounts. Keys live on your machine, or it isn't gage.</p>
+  </div>
+</footer>
 
-  <h3>3 · One handoff</h3>
-  <pre>gage send --to bob --subject "spec review" \
-     --prompt ask.md --file spec.md --out ./pkg</pre>
-  <p class="note">A bundle is a signed directory, so get it to them however
-  you already can — a shared folder, git, email, <code>gage push</code>
-  through a relay, or <code>gage send --lan</code> on the same network. On
-  their side, <code>gage open ./pkg</code>, and what they see is the screen
-  below.</p>
-
-  <p>The full tour is in the
-  <a href="https://github.com/warewithall2/gage#readme">README</a>. Driving it
-  with no human at the keyboard — the command table, the exit codes, how to
-  read a verdict, and a complete worked script — is in
-  <a href="https://github.com/warewithall2/gage/blob/master/docs/agents.md">docs/agents.md</a>.</p>
-
-  <h2>Keys, said out loud</h2>
-  <p>A gage is a pledge, and historically the glove thrown down to open a challenge.
-  Two people compare four word-pairs over a channel neither machine controls — a phone
-  call, in person — and everything downstream rests on that one human moment. The words
-  are derived from the signing key, so nobody picks their own, and two machines showing
-  the same words are holding the same key.</p>
-  <div class="words">this key says : humble pillar · ruddy lobster · marine armour · eastern dovecote</div>
-  <p class="note">Four pairs is 64 bits, and is what a person confirms. The single pair
-  shown as a label is 16 bits — enough to tell two machines apart in a list, never enough
-  to confirm anything against.</p>
-
-  <h2>Other ways to install</h2>
-  <pre>cargo install gage</pre>
-  <p class="note">Works anywhere Rust does, and is the route for any platform
-  without a prebuilt binary. The binaries and their checksums are attached to
-  the <a href="https://github.com/warewithall2/gage/releases/latest">latest
-  release</a> if you would rather fetch one by hand and check it yourself —
-  <strong>linux-x86_64</strong> and <strong>darwin-arm64</strong>, with one
-  <code>SHA256SUMS</code> over both.</p>
-
-  <h2>What it looks like</h2>
-  <figure>
-    <img src="screenshots/inbox.png" alt="The gage viewer: conversations on the left, a received bundle on the right with its trust verdict stated above the contents.">
-    <figcaption><code>gage ui</code> serves a local viewer on 127.0.0.1 — loopback only,
-    nothing leaves the machine. The verdict is the headline, not a caption.</figcaption>
-  </figure>
-
-  <h2>Where it is</h2>
-  <p>v0.3.0. 130 unit tests and 871 adversarial checks pass, along with the
-  identity restore drill and the viewer end-to-end suite. It is early
-  software, and the honest way to try it is the twenty-minute packet in the
-  repository.</p>
-
-  <p><strong>0.3.0 adds two front doors.</strong> <code>gage mcp</code> serves
-  the Model Context Protocol over stdio, so an agent calls nine gage tools
-  instead of shelling out and parsing prose — a front door, not a second
-  implementation, running the same functions the CLI runs. And the local
-  viewer no longer dead-ends someone with no identity: a first-run wizard
-  walks from nothing to a first verified handoff in the page, with the
-  word-pair comparison still a thing two people do and the pair button
-  disabled until it is confirmed. Passphrases stay in the terminal. An
-  installed 0.2.0 keeps working — nothing about the bundle format or the
-  relay protocol changed.</p>
-
-  <p><strong>0.2.0 fixed a security defect in <code>gage open</code></strong>,
-  the one part of gage that is a security control: a sender could get a line
-  of their own into the trust frame — including a forged authorisation line
-  carrying the frame's real marker. <strong>0.1.0 is affected and upgrading is
-  recommended.</strong> What it was, who could do it and how it is fixed are
-  in the
-  <a href="https://github.com/warewithall2/gage/blob/master/CHANGELOG.md">changelog</a>.
-  It was found by self-review rather than by an outside reporter, which is
-  worth knowing in both directions.</p>
-
-  <p>If you lose the key, that is no longer the end of the identity —
-  <code>gage export-identity</code> writes a passphrase-encrypted copy you
-  keep yourself. It is opt-in, and it is a trade rather than a free
-  improvement: it converts "lose the key, lose everything" into "your security
-  is your passphrase's strength", so the file belongs somewhere other than the
-  machine it came from.</p>
-
-  <p>Two documents say what this actually is rather than what it hopes to be. The
-  <a href="https://github.com/warewithall2/gage/blob/master/docs/spec.md">spec</a> is the
-  wire reality, derived from the code. The
-  <a href="https://github.com/warewithall2/gage/blob/master/docs/threat-model.md">threat
-  model</a> lists the adversaries, the mitigation for each, and the non-goals — including
-  that nothing here can make a language model obey the frame, and that the security review
-  so far has been self-review.</p>
-
-  <ul class="links">
-    <li><a href="https://github.com/warewithall2/gage/blob/master/docs/spec.md">Spec</a></li>
-    <li><a href="https://github.com/warewithall2/gage/blob/master/docs/threat-model.md">Threat model</a></li>
-    <li><a href="https://github.com/warewithall2/gage">GitHub</a></li>
-    <li><a href="https://crates.io/crates/gage">crates.io</a></li>
-    <li><a href="https://docs.rs/gage">docs.rs</a></li>
-  </ul>
-
-  <footer>
-    gage 0.3.0 · dual-licensed MIT or Apache-2.0 · no trackers and no scripts on this page
-  </footer>
-</div>
+</body>
+</html>
