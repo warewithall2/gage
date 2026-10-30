@@ -18,16 +18,9 @@
 import Cocoa
 import WebKit
 
-// The URL comes from the launcher, which has already waited for the port to
-// answer. Only loopback is accepted: this window exists to show this
-// machine's own gage, and a bundle that could be pointed at an arbitrary
-// origin would be a browser wearing the app's icon.
-func loopbackURL(from args: [String]) -> URL? {
-    guard let raw = args.dropFirst().first, let url = URL(string: raw) else { return nil }
-    guard url.scheme == "http", let host = url.host else { return nil }
-    guard host == "127.0.0.1" || host == "localhost" else { return nil }
-    return url
-}
+// `loopbackURL` and `staysInWindow` live in GageURL.swift, which imports no
+// AppKit, so tests/packaging.sh can compile and run them without a window
+// server. They are the two URL decisions this app makes.
 
 class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     let url: URL
@@ -81,7 +74,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
             decisionHandler(.cancel)
             return
         }
-        if target.host == url.host && target.port == url.port && target.scheme == url.scheme {
+        if staysInWindow(target, origin: url) {
             decisionHandler(.allow)
         } else {
             decisionHandler(.cancel)

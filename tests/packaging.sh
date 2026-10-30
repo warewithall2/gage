@@ -349,5 +349,107 @@ else bad "Gage.icns is missing or empty, so the dock falls back to a generic ico
 if head -c 4 "$T/bundle/Gage.app/Contents/Resources/Gage.icns" 2>/dev/null | grep -q '^icns$'
 then ok; else bad "Gage.icns does not start with the icns magic"; fi
 
+# ---------------------------------------------------------------------------
+# The window's two URL decisions, run rather than read.
+#
+# They were inline in main.swift next to `app.run()`, so nothing could
+# link them and the only coverage was somebody opening the app and looking --
+# which is why this is the first test the window has ever had. They are now
+# in GageURL.swift, which imports no AppKit, so this compiles and runs them
+# with no window server and no bundle.
+#
+# macOS only, and skipped loudly rather than silently: on Linux there is no
+# swiftc and the bundle ships without a window at all (Route B).
+# ---------------------------------------------------------------------------
+if [ "$(uname -s)" = "Darwin" ] && command -v swiftc >/dev/null 2>&1; then
+  echo "the window accepts only this machine's own loopback http"
+  # Called main.swift for the same reason the app's own source now is:
+  # swiftc allows top-level statements only in a file with that name once
+  # more than one file is being compiled.
+  mkdir -p "$T/gate"
+  cat > "$T/gate/main.swift" <<'SWIFTEOF'
+  // Each file needs its own imports: `URL` and `exit` are Foundation's, and
+  // GageURL.swift importing it does not bring it in here.
+  import Foundation
+
+  // Each case is a URL the launcher or the page could hand the window, and
+  // what must happen to it. A failure prints the case, because "1 failed"
+  // about a predicate with eleven cases is not a bug report.
+  let origin = URL(string: "http://127.0.0.1:7777/")!
+  var bad = 0
+  func check(_ what: String, _ got: Bool, _ want: Bool) {
+      if got != want { bad += 1; print("  FAIL: \(what)") }
+  }
+  func accepted(_ raw: String) -> Bool { loopbackURL(from: ["GageWindow", raw]) != nil }
+
+  check("127.0.0.1 is accepted", accepted("http://127.0.0.1:7777/"), true)
+  check("localhost is accepted", accepted("http://localhost:7777/"), true)
+  // The point of the whole predicate: an app with no address bar must not be
+  // pointable at somebody else's origin.
+  check("a remote host is refused", accepted("http://relay.gage.sh/"), false)
+  check("https elsewhere is refused", accepted("https://example.com/"), false)
+  // https on loopback is refused too -- gage serves plain http there, so an
+  // https URL means something else is answering.
+  check("https on loopback is refused", accepted("https://127.0.0.1:7777/"), false)
+  check("a file URL is refused", accepted("file:///etc/passwd"), false)
+  check("a host that merely starts with the loopback digits is refused",
+        accepted("http://127.0.0.1.evil.example/"), false)
+  check("userinfo pointing elsewhere is refused",
+        accepted("http://127.0.0.1@evil.example/"), false)
+  check("no argument is refused", loopbackURL(from: ["GageWindow"]) != nil, false)
+  check("an empty argument is refused", accepted(""), false)
+
+  // And what stays inside the window once it is open.
+  check("the same origin stays in", staysInWindow(URL(string: "http://127.0.0.1:7777/x")!, origin: origin), true)
+  check("another port goes out", staysInWindow(URL(string: "http://127.0.0.1:7778/")!, origin: origin), false)
+  check("another host goes out", staysInWindow(URL(string: "http://localhost:7777/")!, origin: origin), false)
+  check("https on the same host and port goes out",
+        staysInWindow(URL(string: "https://127.0.0.1:7777/")!, origin: origin), false)
+  check("a documentation link goes out",
+        staysInWindow(URL(string: "https://github.com/warewithall2/gage")!, origin: origin), false)
+
+  exit(bad == 0 ? 0 : 1)
+SWIFTEOF
+  SDK_ROOT=$(xcode-select -p 2>/dev/null)/SDKs
+  gatebuilt=
+  for sdk in $(ls -d "$SDK_ROOT"/MacOSX*.sdk 2>/dev/null | sort -Vr); do
+    case ${sdk##*/} in MacOSX.sdk) continue ;; esac
+    if swiftc -sdk "$sdk" -target arm64-apple-macos13 -o "$T/gateprobe" \
+         packaging/macos/GageURL.swift "$T/gate/main.swift" >"$T/gatebuild" 2>&1; then
+      gatebuilt=$sdk; break
+    fi
+  done
+  if [ -z "$gatebuilt" ]; then
+    bad "no SDK here compiles the window's URL predicates: $(tail -1 "$T/gatebuild" 2>/dev/null)"
+  elif "$T/gateprobe" > "$T/gateout" 2>&1; then
+    ok
+  else
+    bad "the window's URL predicates failed: $(cat "$T/gateout")"
+  fi
+
+  # The window itself must be IN the bundle on a machine that can build one.
+  # make-app.sh falls back to the browser when no SDK compiles the source,
+  # which is right on Linux and wrong here: it turned a compile error into a
+  # silently feature-less app, and that is exactly how the top-level-code
+  # breakage above shipped unnoticed for the length of one refactor.
+  echo "a machine with swiftc puts a window in the bundle"
+  if [ -x "$T/bundle/Gage.app/Contents/MacOS/GageWindow" ]; then ok
+  else bad "swiftc is here but the bundle has no window: $(grep -i window "$T/make" | tail -1)"; fi
+
+  # The real executable, not just the predicate: a bad URL must exit rather
+  # than open a window, and say what it wanted.
+  echo "the built window refuses a non-loopback URL on the command line"
+  if [ -x "$T/bundle/Gage.app/Contents/MacOS/GageWindow" ]; then
+    "$T/bundle/Gage.app/Contents/MacOS/GageWindow" http://evil.example/ \
+      > "$T/winout" 2>&1
+    [ $? = 2 ] && ok || bad "a non-loopback URL did not exit 2"
+    want "$T/winout" "loopback only"
+  else
+    echo "  window: skipped (the bundle has no GageWindow)"
+  fi
+else
+  echo "  window URL checks: skipped (not macOS, or no swiftc)"
+fi
+
 echo "$pass checks, $fail failed"
 [ "$fail" -eq 0 ]

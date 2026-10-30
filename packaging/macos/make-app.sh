@@ -85,14 +85,24 @@ fi
 # first that compiles. If none does -- or there is no swiftc, as on Linux --
 # the bundle ships without a window and the launcher opens the browser
 # instead, which is Route B and still a working app.
-WINDOW_SRC=$(dirname "$0")/GageApp.swift
-if command -v swiftc >/dev/null 2>&1 && [ -f "$WINDOW_SRC" ]; then
+# `main.swift`, and the name is load-bearing: swiftc allows top-level
+# statements only in a file called that, EXCEPT when it is compiling a single
+# file, where any name works. So this source compiled fine for months as
+# GageApp.swift and broke the moment a second file joined it -- with the
+# error swallowed by the fallback below, which shipped a bundle with no
+# window and said so only on stderr. Renaming it is the fix; the check in
+# tests/packaging.sh is what makes the breakage loud.
+WINDOW_SRC=$(dirname "$0")/main.swift
+# GageURL.swift holds the two URL predicates, kept apart from AppKit so the
+# suite can run them. Both files compile into the one executable.
+WINDOW_URLSRC=$(dirname "$0")/GageURL.swift
+if command -v swiftc >/dev/null 2>&1 && [ -f "$WINDOW_SRC" ] && [ -f "$WINDOW_URLSRC" ]; then
   SDK_ROOT=$(xcode-select -p 2>/dev/null)/SDKs
   built=
   for sdk in $(ls -d "$SDK_ROOT"/MacOSX*.sdk 2>/dev/null | sort -Vr); do
     case ${sdk##*/} in MacOSX.sdk) continue ;; esac
     if swiftc -O -sdk "$sdk" -target arm64-apple-macos13 \
-         -o "$MACOS/GageWindow" "$WINDOW_SRC" >/dev/null 2>&1; then
+         -o "$MACOS/GageWindow" "$WINDOW_SRC" "$WINDOW_URLSRC" >/dev/null 2>&1; then
       built=$sdk
       break
     fi

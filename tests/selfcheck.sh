@@ -84,6 +84,17 @@ ATT=$(bash tests/attacks.sh 2>&1 | tee -a "$LOG" | grep -E '[0-9]+ checks,' | ta
 printf '%s\n' "$ATT" | grep -q ', 0 failed' || fail "attack suite: ${ATT:-no result line}"
 NC=$(printf '%s' "$ATT" | sed -n 's/\([0-9]*\) checks.*/\1/p')
 
+# The launcher and the app bundle, which selfcheck did NOT run for the length
+# of the packaging work -- so `tests/packaging.sh` was a suite with no caller,
+# and the macOS window had no test at all partly because of it. Its own stage,
+# like the drill, so a failure says which thing broke. On this machine the
+# window checks inside it skip themselves; on a Mac they compile and run the
+# window's URL predicates.
+say "launcher and app bundle..."
+PKG=$(bash tests/packaging.sh 2>&1 | tee -a "$LOG" | grep -E '[0-9]+ checks,' | tail -1)
+printf '%s\n' "$PKG" | grep -q ', 0 failed' || fail "packaging: ${PKG:-no result line}"
+NP=$(printf '%s' "$PKG" | sed -n 's/\([0-9]*\) checks.*/\1/p')
+
 # The decision record that chose encrypted backup asked for this by name:
 # "restore is tested, not just export." An export path that runs and a restore
 # path that does not is a backup that does not exist, and the day you find out
@@ -152,6 +163,6 @@ else
   fi
 fi
 
-say "OK: $NC checks, $NU unit tests, $ND restore-drill checks, viewer $E2ESTATE, deps $DEPSTATE, at $HEAD"
-printf 'ok\t%s\t%s\t%s checks, %s unit tests, %s restore-drill checks, viewer %s, deps %s\n' \
-  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$HEAD" "$NC" "$NU" "$ND" "$E2ESTATE" "$DEPSTATE" > "$STATUS"
+say "OK: $NC checks, $NU unit tests, $ND restore-drill checks, $NP packaging checks, viewer $E2ESTATE, deps $DEPSTATE, at $HEAD"
+printf 'ok\t%s\t%s\t%s checks, %s unit tests, %s restore-drill checks, %s packaging checks, viewer %s, deps %s\n' \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$HEAD" "$NC" "$NU" "$ND" "$NP" "$E2ESTATE" "$DEPSTATE" > "$STATUS"
