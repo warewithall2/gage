@@ -22,6 +22,20 @@
   with a bare `No such file or directory (os error 2)` that named neither the
   missing manifest nor the `gage send --out` step that writes one.
 
+- **Confirming a contact in the viewer is a comparison now, not a
+  transcription.** The page shows the four word-pairs and the person
+  attests that they match what the other machine shows -- the shape of
+  every device pairing people already know -- and the confirmation
+  record says it was compared rather than typed, so the two never pose
+  as each other. The typed form is still accepted. Around it: a banner
+  at the top of the app states the connection decisions waiting on a
+  person (a key asking to be listed, a contact unconfirmed, a machine
+  on the network unpaired), `gage watch` announces the same decisions
+  as desktop notifications -- on macOS too, which had no notifier --
+  and the MCP pairing tools now route the human to that banner instead
+  of asking them to read word-pairs back to an agent, a step that could
+  never confirm anything anyway.
+
 ## 0.3.4 — 2026-10-28
 
 **A verdict that means what the documents said it meant.** Three independent

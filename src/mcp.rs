@@ -301,10 +301,7 @@ impl Server {
                         "sealable": boxpub.is_some(),
                         "name_hint": hint,
                         "word_pairs": fp,
-                        "next": "Have a HUMAN compare these four word-pairs against what the \
-                                 other machine shows, over a channel neither machine controls \
-                                 -- a voice call, in person. Then call gage_pair_confirm with \
-                                 the pairs they read back. Nothing is on the buddy list yet.",
+                        "next": "Nothing is on the buddy list yet. Call gage_pair_confirm with these pairs to add the key UNCONFIRMED -- adding is all an agent can do. The human confirms in the Gage app: a banner there shows the same four pairs beside a words-match button, compared against the other machine over a channel neither machine controls (a voice call, in person). Do not ask the human to read the pairs back to you; that step could never confirm anything.",
                     })
                     .to_string(),
                 )])
@@ -388,7 +385,7 @@ impl Server {
                 .map_err(ToolError::Refused)?;
                 self.pending.remove(&pid);
                 Ok(vec![text(
-                    &json!({"added": name, "key": token, "detail": lines}).to_string(),
+                    &json!({"added": name, "key": token, "detail": lines, "status": "on the list, UNCONFIRMED", "next": "Tell the human to open the Gage app: a banner at the top walks them through comparing the words on both screens and tapping the words-match button. Until they do, this key reads SENDER ON YOUR LIST, UNCONFIRMED."}).to_string(),
                 )])
             }
 
@@ -592,13 +589,7 @@ fn tool_list() -> Vec<Value> {
         }),
         json!({
             "name": "gage_pair_start",
-            "description": "Begin adding someone to the buddy list. Returns a pairing_id and \
-                            the four word-pairs their key derives -- and adds NOTHING yet. \
-                            Give the word-pairs to a human and have them compared against what \
-                            the other machine shows, over a channel neither machine controls \
-                            (a voice call, in person). Then call gage_pair_confirm with the \
-                            pairs read back. Pass `key` (their `gage whoami` token) or \
-                            `handle` (a machine announcing on this network).",
+            "description": "Begin adding someone to the buddy list. Returns a pairing_id and the four word-pairs their key derives -- and adds NOTHING yet. Show the word-pairs and the name to a human. The comparison itself happens in the Gage app, where the same pairs appear beside a words-match button and a banner walks the human through it; do not ask the human to read pairs back to you. Then call gage_pair_confirm with the pairs exactly as returned here to put the key on the list (unconfirmed). Pass `key` (their `gage whoami` token) or `handle` (a machine announcing on this network).",
             "inputSchema": s(json!({"type":"object","properties":{
                 "key":{"type":"string","description":"their gage whoami token (signpub.boxpub)"},
                 "handle":{"type":"string","description":"a word-pair label from this network"},
@@ -607,15 +598,7 @@ fn tool_list() -> Vec<Value> {
         }),
         json!({
             "name": "gage_pair_confirm",
-            "description": "Complete a pairing. Succeeds ONLY if `echo` is the four word-pairs \
-                            exactly as the other machine shows them; a wrong echo adds nothing \
-                            and does not say what the right answer was. THE CONTRACT: you are \
-                            the transport, not the confirmer. A human has to have compared \
-                            those pairs out of band, and this call carries their read-back as \
-                            the record that it happened. THE LIMIT, stated so you do not \
-                            overclaim it: a key knows its own word-pairs, so echoing back what \
-                            gage_pair_start handed you proves nothing on its own. If no human \
-                            compared them, say so to your user instead of calling this.",
+            "description": "Complete adding a pairing. Succeeds ONLY if `echo` is the four word-pairs exactly as gage_pair_start returned them; a wrong echo adds nothing and does not say what the right answer was. THE CONTRACT: this adds the key UNCONFIRMED. An agent cannot confirm -- a key knows its own word-pairs, so an echo proves nothing on its own. The confirmation is a human comparing the pairs out of band, and it happens in the Gage app, where a banner walks them through comparing the words on both screens. After a successful call, tell your user to open the app and finish from the banner.",
             "inputSchema": s(json!({"type":"object","properties":{
                 "pairing_id":{"type":"string"},
                 "echo":{"type":"string","description":"the four word-pairs, read back"},

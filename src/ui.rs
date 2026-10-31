@@ -1419,10 +1419,17 @@ fn pair_from_ui(body: &str) -> Result<Vec<String>, (&'static str, String)> {
 /// Record an out-of-band confirmation from the page.
 ///
 /// The browser half of `gage confirm`, and the only route through the viewer
-/// that can produce `SENDER VERIFIED`. It asks for all four pairs and shows
-/// none of them: the request card's single-pair check is, in its own words, a
-/// prompt to compare rather than proof of one, and 16 bits typed next to a
-/// button is not the claim `SENDER VERIFIED` makes.
+/// that can produce `SENDER VERIFIED`. It used to ask for all four pairs
+/// typed and show none of them, on the argument that typing is the proof of
+/// comparison. The product call (2026-10-30) went the way every device
+/// pairing a person already knows works -- the code shows on both screens
+/// and the person says whether they match -- so the page now shows the
+/// pairs and records an attested comparison. Two things did not move: the
+/// words compared are still the full fingerprint, and the record still
+/// says which happened (`how`), so a compared confirmation never poses as
+/// a typed one. The page echoes the fingerprint it displayed, and it must
+/// still be this key's -- the stale-screen guard `/api/pair` uses. The
+/// typed form is still accepted, for anyone who prefers it.
 fn confirm_from_ui(body: &str) -> Result<String, (&'static str, String)> {
     let v: serde_json::Value =
         serde_json::from_str(body).map_err(|e| ("400 Bad Request", format!("bad body: {e}")))?;
@@ -1432,14 +1439,32 @@ fn confirm_from_ui(body: &str) -> Result<String, (&'static str, String)> {
         .unwrap_or("")
         .trim()
         .to_string();
-    let typed = v.get("words").and_then(|x| x.as_str()).unwrap_or("");
     let mut c = crate::trust::Contacts::load();
     let key = c
         .key_for_name(&name)
         .ok_or_else(|| ("404 Not Found", format!("no contact named {name}")))?;
     let seq = crate::state::LocalState::load().seq;
-    c.confirm(&key, typed, "word-pairs typed back in the viewer", seq)
+    let typed = v.get("words").and_then(|x| x.as_str()).unwrap_or("");
+    if !typed.is_empty() {
+        c.confirm(&key, typed, "word-pairs typed back in the viewer", seq)
+            .map_err(|e| ("409 Conflict", e))?;
+    } else {
+        let shown = v.get("fingerprint").and_then(|x| x.as_str()).unwrap_or("");
+        let real = c.fingerprint_for(&key);
+        if shown != real {
+            return Err((
+                "409 Conflict",
+                format!("the words on screen are not this key's any more ({real}) -- look again"),
+            ));
+        }
+        c.confirm(
+            &key,
+            &real,
+            "word-pairs compared in the viewer -- shown on both screens, not typed",
+            seq,
+        )
         .map_err(|e| ("409 Conflict", e))?;
+    }
     c.save()
         .map_err(|e| ("500 Internal Server Error", e.to_string()))?;
     Ok(serde_json::json!({"confirmed": name}).to_string())

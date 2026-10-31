@@ -173,6 +173,23 @@ fn one_line(s: &str, max: usize) -> String {
 /// Fire a desktop notification. Absence of a notifier is not an error: on a
 /// server there is no desktop, and `gage watch` still has to work there.
 pub fn desktop(title: &str, body: &str, urgent: bool) -> bool {
+    if cfg!(target_os = "macos") {
+        // Notification Center via AppleScript, with the text passed as
+        // argv -- never interpolated into the script, so a sender-written
+        // subject cannot become script. `urgent` has no equivalent there
+        // and is dropped rather than faked.
+        let mut c = Command::new("osascript");
+        c.arg("-e")
+            .arg("on run argv")
+            .arg("-e")
+            .arg("display notification (item 2 of argv) with title (item 1 of argv)")
+            .arg("-e")
+            .arg("end run")
+            .arg("--")
+            .arg(one_line(title, 160))
+            .arg(one_line(body, 300));
+        return matches!(c.status(), Ok(s) if s.success());
+    }
     let mut c = Command::new("notify-send");
     c.arg("--app-name=gage")
         .arg(format!(
@@ -188,6 +205,84 @@ pub fn desktop(title: &str, body: &str, urgent: bool) -> bool {
         .arg(one_line(title, 160))
         .arg(body);
     matches!(c.status(), Ok(s) if s.success())
+}
+
+/// Connection decisions waiting on a person, as (id, title, body) triples
+/// for the watcher to announce: keys that sent mail and are not on the
+/// list, and contacts nobody has confirmed yet.
+///
+/// Computed from the same JSON the viewer renders, deliberately. The
+/// buddies page already works out who is asking and who is unconfirmed --
+/// with the signature checks and the refusal exclusions that make the
+/// answer mean anything -- and a second implementation here is how the
+/// two would come to disagree. Ids are prefixed so a decision and a
+/// bundle can never collide in the announced set, and a decision is
+/// announced once: it stays visible in the app until it is made, and a
+/// watcher that re-announced it every two minutes would train the person
+/// to ignore the watcher.
+pub fn new_decisions() -> Vec<(String, String, String)> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&crate::ui::buddies_json()) else {
+        return Vec::new();
+    };
+    let announced = load_announced();
+    let mut out = Vec::new();
+    if let Some(reqs) = v.get("requests").and_then(|x| x.as_array()) {
+        for r in reqs {
+            let (Some(k), Some(label)) = (
+                r.get("key").and_then(|x| x.as_str()),
+                r.get("label").and_then(|x| x.as_str()),
+            ) else {
+                continue;
+            };
+            let id = format!("req:{k}");
+            if announced.iter().any(|a| a == &id) {
+                continue;
+            }
+            let n = r.get("bundles").and_then(|x| x.as_u64()).unwrap_or(0);
+            let what = if n == 1 {
+                "a bundle".to_string()
+            } else {
+                format!("{n} bundles")
+            };
+            out.push((
+                id,
+                "gage: connection request".to_string(),
+                format!(
+                    "{} sent you {what} and is not on your list. Open Gage to decide.",
+                    one_line(label, 40)
+                ),
+            ));
+        }
+    }
+    if let Some(buds) = v.get("buddies").and_then(|x| x.as_array()) {
+        for b in buds {
+            if b.get("confirmed").and_then(|x| x.as_bool()) != Some(false) {
+                continue;
+            }
+            if b.get("stale").and_then(|x| x.as_bool()) == Some(true) {
+                continue;
+            }
+            let (Some(k), Some(name)) = (
+                b.get("key").and_then(|x| x.as_str()),
+                b.get("name").and_then(|x| x.as_str()),
+            ) else {
+                continue;
+            };
+            let id = format!("unconf:{k}");
+            if announced.iter().any(|a| a == &id) {
+                continue;
+            }
+            out.push((
+                id,
+                "gage: finish connecting".to_string(),
+                format!(
+                    "{} is on your list but not confirmed. Open Gage and compare the words to finish.",
+                    one_line(name, 40)
+                ),
+            ));
+        }
+    }
+    out
 }
 
 pub fn summarise(p: &[Pending]) -> (String, String) {

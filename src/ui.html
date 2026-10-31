@@ -135,7 +135,7 @@ button{background:none;border:0;cursor:pointer}
 .topbar{grid-column:1/-1;grid-row:1;display:flex;align-items:center;gap:var(--s3);
   flex-wrap:wrap;min-width:0;
   padding:var(--s3) var(--s4);border-bottom:1px solid var(--line);background:color-mix(in srgb,var(--sheet) 80%,transparent);backdrop-filter:saturate(180%) blur(20px);-webkit-backdrop-filter:saturate(180%) blur(20px)}
-.stale{grid-column:1/-1;grid-row:2}
+.banners{grid-column:1/-1;grid-row:2;display:flex;flex-direction:column}
 .left{grid-column:1;grid-row:3}
 .right{grid-column:2;grid-row:3}
 @media (max-width:880px){
@@ -269,6 +269,16 @@ button{background:none;border:0;cursor:pointer}
   font-size:var(--t2);line-height:1.5;color:var(--bad);
   border:1px solid color-mix(in srgb,var(--bad) 35%,transparent);
   background:color-mix(in srgb,var(--bad) 10%,transparent)}
+.connbar{margin:0 var(--s3) var(--s2);padding:var(--s2) var(--s3);border-radius:var(--r1);
+  font-size:var(--t2);line-height:1.5;color:var(--ink);
+  border:1px solid var(--line);background:var(--sheet);
+  display:flex;flex-direction:column;gap:var(--s1)}
+.connbar[hidden]{display:none}
+.connrow{display:flex;align-items:center;gap:var(--s2);flex-wrap:wrap}
+.connrow .sp{flex:1}
+.bigfp{font-size:1.02rem;color:var(--ink);letter-spacing:.01em;padding:var(--s1) 0}
+.dev.spot{border-color:var(--accent);
+  box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 25%,transparent)}
 .alert{padding:var(--s3) var(--s4);font-size:var(--t2);line-height:1.55;color:var(--warn);
   border-top:1px solid var(--line)}
 .alert.bad{color:var(--bad)}
@@ -545,7 +555,7 @@ textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 4px var(
     <nav class="tabs" id="tabs"></nav>
     <span class="whoami" id="me"></span>
   </header>
-  <div class="stale" id="stale" hidden></div>
+  <div class="banners"><div class="stale" id="stale" hidden></div><div class="connbar" id="connbar" hidden></div></div>
   <div class="left">
     <div class="filters" id="filters"></div>
     <div class="list" id="list"></div>
@@ -599,10 +609,9 @@ const V=[['SENDER VERIFIED','Verified','v-ok'],
          // observation step failed. Styled as bad, since the one thing it
          // must never look like is a pass.
          ['VERDICT UNAVAILABLE','Verdict unavailable','v-bad']];
-// Per-contact confirm inputs and their errors, keyed by name. Kept out of
-// BUD because BUD is replaced wholesale on every poll and half-typed
-// word-pairs must survive that.
-const CONFW={},CONFE={};
+// Per-contact confirm errors, keyed by name. Kept out of BUD because BUD
+// is replaced wholesale on every poll and an error must survive that.
+const CONFE={};
 const vRow=t=>V.find(r=>(t||'').startsWith(r[0]));
 const vClass=t=>{const r=vRow(t);return r?r[2]:'v-bad';};
 const vShort=t=>{const r=vRow(t);return r?r[1]:(t||'No verdict');};
@@ -1608,15 +1617,16 @@ function budRender(force){
            <div class="bwhy">This key's device label is <b>${esc(b.label)}</b> &mdash; derived from the
              signing key alone, which is all a manifest carries, so it is <i>not</i> the first of the
              four pairs when there is an encryption key as well. It tells entries apart and nothing more.
-             The four pairs are deliberately not shown here: ask them to run
-             <code>gage fingerprint${b.sealable?'':' --signing-only'}</code> and read them out over a call,
-             then type all four below.</div>
+             Compare the four pairs below with the other person — over a call, in
+             person, any channel the machines do not control. Their machine shows
+             the same four for this key: their own list, or
+             <code>gage fingerprint${b.sealable?'':' --signing-only'}</code>.
+             If all four match, the key is theirs.</div>
+           <div class="devfp bigfp">${esc(b.fingerprint)}</div>
            <div class="devrow">
-             <input class="lanin wide" placeholder="all four pairs, as their machine shows them"
-               value="${esc(CONFW[b.name]||'')}"
-               oninput="CONFW['${esc(b.name)}']=this.value" ${ABUSY?'disabled':''}>
-             <button class="devbtn" onclick="budConfirm('${esc(b.name)}')" ${ABUSY?'disabled':''}>
-               ${ABUSY?'Checking...':'Confirm'}</button>
+             <button class="devbtn go" onclick="budConfirm('${esc(b.name)}','${esc(b.fingerprint)}')" ${ABUSY?'disabled':''}>
+               ${ABUSY?'Recording...':'The words match'}</button>
+             <button class="devbtn" onclick="budMismatch('${esc(b.name)}')" ${ABUSY?'disabled':''}>They don't match</button>
            </div>
            ${CONFE[b.name]?`<div class="lanerr">${esc(CONFE[b.name])}</div>`:''}`}
       ${reachRow(b.reach)}
@@ -1692,22 +1702,24 @@ function budDecline(k,undo){ budPost('/api/decline',{key:k,undo:!!undo}); }
 
 // Confirming is its own call rather than a flag on an add, because it happens
 // at a different moment: the add is when a key arrives, the confirmation is
-// after a phone call. The error is kept per contact, so one failed comparison
-// does not clear the words somebody else is halfway through typing -- and the
-// server never says what the right answer was.
-async function budConfirm(name){
-  const words=(CONFW[name]||'').trim();
-  if(!words){ CONFE[name]='Type the four pairs they read out.'; budRender(true); return; }
+// after the comparison. The page shows the pairs and the person attests that
+// they match what the other machine shows; the server checks the page is
+// attesting to the words this key actually renders, and the record says the
+// pairs were compared rather than typed. The error is kept per contact.
+async function budConfirm(name,fp){
   CONFE[name]='';ABUSY=true;budRender(true);
   try{
     const r=await fetch('/api/confirm',{method:'POST',
       headers:{'X-Gage':'1','Content-Type':'application/json'},
-      body:JSON.stringify({name:name,words:words})});
+      body:JSON.stringify({name:name,fingerprint:fp})});
     const j=await r.json().catch(()=>({}));
     if(!r.ok)throw new Error(j.error||('HTTP '+r.status));
-    delete CONFW[name];
   }catch(e){ CONFE[name]=(e&&e.message)?e.message:String(e); }
   ABUSY=false; await budLoad(); load();
+}
+function budMismatch(name){
+  CONFE[name]='Then this key is not theirs — or one of you is looking at the wrong entry. Do not confirm it. If you do not know whose key this is, refuse it instead.';
+  budRender(true);
 }
 
 // ---------------------------------------------------------------------------
@@ -1881,6 +1893,56 @@ function setupRender(){
   el.innerHTML=h;
 }
 
+// The connection banner: decisions waiting on a person, stated at the top
+// of every tab rather than left for somebody to find in the Buddies list.
+// State-based, not event-based -- it lists what is true now -- with a
+// per-session dismissal for anybody who has seen an item and chosen to
+// leave it. The underlying cards stay in Buddies either way.
+const CONNDISMISS=new Set();
+let CONNMAP={};
+function connItems(){
+  const out=[];
+  for(const q of BUD.requests||[]){
+    out.push({id:'req:'+q.key,
+      text:`${q.label} sent you ${q.bundles===1?'a bundle':q.bundles+' bundles'} and is not on your list.`,
+      btn:'Review',act:()=>{ setTab('buddies'); }});
+  }
+  for(const b of BUD.buddies||[]){
+    if(b.confirmed)continue;
+    out.push({id:'unconf:'+b.key,
+      text:`${b.name} is on your list but not confirmed — comparing the words finishes the connection.`,
+      btn:'Compare the words',act:()=>{ setTab('buddies');
+        setTimeout(()=>{ const cards=document.querySelectorAll('#budpane .dev');
+          for(const c of cards){ const n=c.querySelector('.devname');
+            if(n&&n.textContent===b.name){ c.scrollIntoView({block:'center'});
+              c.classList.add('spot');
+              setTimeout(()=>c.classList.remove('spot'),1600); break; } } },60); }});
+  }
+  for(const d of LAN.devices||[]){
+    if(d.paired_as)continue;
+    out.push({id:'lan:'+d.label,
+      text:`${d.label} is on this network and not paired.`,
+      btn:'Pair',act:()=>{ setTab('buddies'); lanPair(d.label); }});
+  }
+  return out.filter(i=>!CONNDISMISS.has(i.id));
+}
+function connRender(){
+  const bar=document.getElementById('connbar'); if(!bar)return;
+  const items=connItems(); CONNMAP={};
+  if(!items.length){ bar.hidden=true; bar.innerHTML=''; return; }
+  const shown=items.slice(0,3);
+  let h='';
+  shown.forEach((it,ix)=>{ CONNMAP[ix]=it;
+    h+=`<div class="connrow"><span>${esc(it.text)}</span><span class="sp"></span>`
+      +`<button class="devbtn" onclick="connAct(${ix})">${esc(it.btn)}</button>`
+      +`<button class="devbtn" onclick="connDismiss(${ix})" title="Not now">✕</button></div>`; });
+  if(items.length>shown.length)
+    h+=`<div class="connrow"><span>And ${items.length-shown.length} more waiting in Buddies.</span></div>`;
+  bar.innerHTML=h; bar.hidden=false;
+}
+function connAct(ix){ const it=CONNMAP[ix]; if(it)it.act(); }
+function connDismiss(ix){ const it=CONNMAP[ix]; if(it){ CONNDISMISS.add(it.id); connRender(); } }
+
 async function budLoad(){
   try{
     const r=await fetch('/api/buddies');
@@ -1891,7 +1953,7 @@ async function budLoad(){
     // Same rule as every other loader here: never fail invisibly.
     AERR='Could not read your list: '+(e&&e.message?e.message:e);
   }
-  tabsRender(); budRender();
+  tabsRender(); budRender(); connRender();
   // The agent list decides two of the five steps and was loaded exactly once,
   // so `gage agent new` in a terminal left this tab describing the machine as
   // it had been when the page opened. It is reloaded while this tab is the

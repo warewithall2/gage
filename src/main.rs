@@ -3057,6 +3057,21 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 } else if once {
                     println!("nothing new");
                 }
+                // Connection decisions, announced like arrivals and
+                // exactly once: a key asking to be listed, a contact
+                // waiting on the word comparison. Announcing them is
+                // what a person hears about without the app open; the
+                // banner in the app carries the same list for when it is.
+                let decisions = notify::new_decisions();
+                if !decisions.is_empty() {
+                    for (_, title, body) in &decisions {
+                        if quiet || !notify::desktop(title, body, false) {
+                            println!("{title}\n{body}");
+                        }
+                    }
+                    let ids: Vec<String> = decisions.iter().map(|(id, _, _)| id.clone()).collect();
+                    notify::mark_announced(&ids);
+                }
                 if once {
                     break;
                 }
