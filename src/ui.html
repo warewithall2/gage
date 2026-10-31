@@ -549,9 +549,9 @@ textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 4px var(
   <div class="left">
     <div class="filters" id="filters"></div>
     <div class="list" id="list"></div>
+    <div class="side" id="budside" hidden></div>
     <div class="lanbox" id="lanbox"></div>
     <div class="lanbox netbox" id="netbox"></div>
-    <div class="side" id="budside" hidden></div>
   </div>
   <div class="right">
     <div class="head">
@@ -1219,9 +1219,13 @@ function setTab(t){
   const solo = (t==='setup');
   // One shell. The rail never goes away: what changes is which half of it is
   // showing -- the thread list on Chats, this machine's own identity on
-  // Buddies, the form that makes an agent one on Agents.
+  // Buddies, the form that makes an agent one on Agents. The two network
+  // panels live on Buddies, at the foot of that rail: the Chats rail is
+  // conversations and nothing else, and being reachable -- this network,
+  // the relay -- belongs with identity and pairing, which is what the
+  // Buddies rail is for.
   for(const [id,show] of [['filters',t==='chats'],['list',t==='chats'],
-                          ['lanbox',t==='chats'],['netbox',t==='chats'],['budside',wide],
+                          ['lanbox',t==='buddies'],['netbox',t==='buddies'],['budside',wide],
                           // The right-hand pane belongs to whichever tab is
                           // showing. It used to keep the Chats empty state --
                           // "Pick a conversation" -- next to the buddy list,
