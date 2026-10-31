@@ -1,11 +1,13 @@
 [package]
 name = "gage"
-version = "0.3.4"
+version = "0.3.5"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "Hand context between agents — files, prompts and decisions — with a trust boundary that survives the hop."
 repository = "https://github.com/warewithall2/gage"
 homepage = "https://github.com/warewithall2/gage"
+keywords = ["agents", "handoff", "signing", "trust", "mcp"]
+categories = ["command-line-utilities", "cryptography"]
 
 [dependencies]
 # Identity backup, and nothing else. Both are pinned to the RustCrypto

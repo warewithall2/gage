@@ -141,9 +141,12 @@ it arrives and is attributable, and its verdict is
 `authority` honours no grant under it — so a key an agent added cannot
 pre-authorise anything, which is the consequence that actually mattered.
 
-The only things that write a confirmation are a human typing four word-pairs
-back: `gage confirm <name>` at a terminal, or the viewer's confirm step, which
-asks for all four and displays none. `gage add --same-machine` is the one
+The only things that write a confirmation are a human's out-of-band
+comparison of the four word-pairs: `gage confirm <name>` at a terminal,
+where they are typed back, or the viewer's confirm step, which displays
+the pairs beside a words-match button and records the attestation as a
+comparison, not a transcription -- the record keeps the two distinct.
+`gage add --same-machine` is the one
 exception and it is not reachable from here: it exists for `gage agent new`,
 where both keys came out of a keygen the same process just ran and there is no
 other party to compare with.

@@ -195,6 +195,12 @@ It asks you to type the four pairs they read out. Type them as they said them
 they do not match the key on your list, nothing is recorded and you should go
 back to the paragraph above.
 
+In the app the same step is a comparison instead of a transcription: a
+banner at the top points at the person, their card in **Buddies** shows
+all four pairs, and you tap that they match what your partner's screen
+shows. Either route records the confirmation; the record says which
+one you used.
+
 Until you run this, `gage` will say so on every bundle from them:
 
     trust      : SENDER ON YOUR LIST, UNCONFIRMED (signature valid, but

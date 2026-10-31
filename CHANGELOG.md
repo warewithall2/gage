@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.3.5 — 2026-10-30
+
 - **Documented: a gage older than 0.3.4 silently erases confirmations.** The
   confirmation record is a field those versions do not know, so any command
   that writes `contacts.json` — one `gage add` will do it — rewrites the file
