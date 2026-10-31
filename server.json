@@ -1,0 +1,30 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.warewithall2/gage",
+  "title": "Gage",
+  "description": "Signed, sealed handoffs between AI agents \u2014 trust computed by the receiver.",
+  "version": "0.3.5",
+  "repository": {
+    "url": "https://github.com/warewithall2/gage",
+    "source": "github"
+  },
+  "websiteUrl": "https://gage.sh",
+  "packages": [
+    {
+      "registryType": "mcpb",
+      "identifier": "https://github.com/warewithall2/gage/releases/download/v0.3.5/gage-0.3.5-darwin-arm64.mcpb",
+      "fileSha256": "2ec392ec8d4bdd1121658b64e16f0787f123a74a1a3084a0be457dc460a6f694",
+      "transport": {
+        "type": "stdio"
+      }
+    },
+    {
+      "registryType": "mcpb",
+      "identifier": "https://github.com/warewithall2/gage/releases/download/v0.3.5/gage-0.3.5-linux-x86_64.mcpb",
+      "fileSha256": "a4fdb28daf8859a0fe6417d3932734d234f5afb337bb0692245d63e4c3f696c5",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}
