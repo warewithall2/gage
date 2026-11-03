@@ -80,6 +80,15 @@ First a JSON object — verdict, `attributable`, `on_your_list`, `confirmed`,
 `payload_withheld`, `tampered`, the bundle id, subject, `from_key`, and
 `from_handle_claimed` (named that way because it is text the sender chose).
 
+Since 0.3.6 the object also carries the two freshness facts: `expires` as a
+four-state word (`undeclared`, `current`, `expired`, `unreadable`) with an
+`expired` boolean, and `context_match` as one of `match`, `mismatch`,
+`undeclared`, `no-local-context`. They are verdict-level for the same reason
+the rest of the object is: an agent can refuse a stale or wrong-run bundle
+before reading it. The two quiet `context_match` states are kept distinct
+because collapsing them would let a bundle that names no run read as one
+that was checked against this machine's.
+
 **`on_your_list` and `confirmed` are two facts and the first used to answer
 for both.** `on_your_list` is true for a contact nobody ever compared out of
 band — including one an agent added by calling the tools below.

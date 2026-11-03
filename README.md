@@ -181,6 +181,18 @@ make the ordinary first contact with a new person unusable while buying
 nothing: whoever handed you the file can hand you the file again. What you
 get instead is the verdict, before the payload, every time.
 
+**Freshness and run are verdict facts too.** A bundle may carry a sender-set
+expiry (`--ttl` / `--expires`) and a declared context (`--context`) naming
+the run it belongs to. An expired bundle joins the withheld set above; it
+stays in the inbox, listed and marked, because arrival is not acceptance.
+Where this machine knows its own run context (`GAGE_CONTEXT`, or the first
+line of `<home>/context`), the verdict also states the comparison -- match,
+mismatch, undeclared, no-local-context -- next to the signature, in the
+frame, the inbox, the viewer and the JSON. A match authorises nothing; it
+rules out one specific mistake, yesterday's handoff read as today's. The
+exact semantics are in `docs/spec.md`; the limits are in
+`docs/what-this-does-not-stop.md`.
+
 ## Keys, said out loud
 
     $ gage whoami
@@ -525,6 +537,11 @@ automated.
              --agent claude-code --model claude-opus-5 \
              --out ./handoff
 
+    gage send --to dana --subject "tonight only" --ttl 7d \
+             --context "backoff refactor, run 12" --file src/client.rs
+                                        #   a sender-set expiry, and the run
+                                        #   this bundle belongs to
+
     gage inspect ./handoff              # summary, no contents in context
     gage open    ./handoff              # render for an agent, inside the frame
     gage reply   <id> --text "..."      # answer a thread, recipient inferred
@@ -535,8 +552,9 @@ automated.
     gage pair laptop                    # confirm a key, rather than just see it
 
 `open` exits 0 when the bundle is attributable, and 2 when the signature fails,
-the payload does not match, or the signing key has been taken out of service,
-so a harness can branch without parsing prose.
+the payload does not match, the signing key has been taken out of service, or
+the bundle's sender-set expiry has passed, so a harness can branch without
+parsing prose.
 
 ## Item kinds, and why they differ
 

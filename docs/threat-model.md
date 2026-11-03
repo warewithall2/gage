@@ -41,6 +41,7 @@ adversary**, and the one gage is actually built against.
 | Swap payload beside a signed manifest | Each item's sha256 is checked against the manifest; a mismatch withholds contents |
 | Choose an id that collides with a real message | The id covers author key, subject and time as well as digests, and is recomputed rather than trusted |
 | Replay a message you already acted on | The witness (`sha256(from_key ␟ manifest bytes)`) is recorded; `pull` and `unseal` both refuse a repeat and journal `duplicate` |
+| Replay an old handoff into a different run, or have one arrive late | Sender-set `expires` in the signed manifest: after it, `open` withholds the payload. Sender-declared `context`: the verdict states match or mismatch against this machine's own run context, beside the signature. The limits: an expiry binds only if the sender set one, and the label is readable text, not a secret -- this catches staleness and misrouting, not a listed sender who re-labels on purpose |
 | Reuse an old key after you rotated away | Verdict distinguishes `KEY RETIRED` (witnessed before retirement, attributable) from `KEY REJECTED` (arrived after, contents withheld) using this machine's own record, not any date the sender wrote |
 | Name a trusted third party as the author of a forwarded bundle | Only the last hop signs. `chain[0]` is shown as a **claim by the forwarder**, explicitly, even when the key named is one you know |
 | Post into someone else's thread to collect a reply | `reply` resolves the recipient from the key that **signed** the parent; a thread with two correspondents is refused rather than guessed |
@@ -278,10 +279,12 @@ Each of these is a decision, not an oversight.
 
 ## Known weaknesses, stated plainly
 
-- **Self-review.** The security work on this project, including the audit that
-  found the frame-injection bug above, has been done by the same hands that
-  wrote it. No independent audit has happened. Treat the mitigations table as
-  claims to be checked, not as assurances.
+- **Mostly self-review.** The security work on this project, including the
+  audit that found the frame-injection bug above, was done by the same hands
+  that wrote it. The 0.3.6 replay-defense changes were audited pre-release by
+  a second model family working from the diff -- more than self-review, less
+  than an outside audit; no independent human audit has happened. Treat the
+  mitigations table as claims to be checked, not as assurances.
 - **The 16-bit label.** One word-pair is grindable in ~65,000 tries. It is a
   label only and is never confirmed against — but it appears in lists next to
   names, and a sender *can* arrange for its own key's label to be a pair you

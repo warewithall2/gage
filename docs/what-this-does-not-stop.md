@@ -216,6 +216,16 @@ currently run it anywhere.
   real mitigation and not the same thing. This is the shape of the Cline
   chain one hop earlier, and it is listed as "not on the plan" in
   `docs/thesis-and-plan.md` because the answer is not obvious.
+- **Expiry and context are the sender's statements, not the world's.** Most
+  bundles carry no expiry -- there is no default, deliberately -- and a
+  sender who sets one can set it in the year 9999 as easily as tomorrow.
+  `context` catches a bundle replayed or misrouted into the *wrong* run; it
+  does nothing about a listed sender who re-sends old content under a fresh
+  label, and an un-upgraded hop on the path strips both fields, after which
+  the honest verdict is `not declared`. Expiry is judged on the receiver's
+  clock. What the pair actually buys is narrower and real: staleness and
+  wrong-run delivery, by accident or by a third party, now fail loudly in
+  the verdict, before the payload.
 - **The frame cannot make a model obey it.** Stated in the threat model and
   worth repeating here: everything above is about what the reader is *told*.
   `tests/injection/` is the only test of whether a reader *behaves*
@@ -223,8 +233,10 @@ currently run it anywhere.
   not been run.
 - **The journal is rewritable up to the last anchor.** See
   `docs/adr-journal-anchoring.md`.
-- **Nothing here is notarised.** `Gage.app` is quarantined however it
-  arrives.
+- **Notarisation is a property of a build, not of the project.** The 0.3.5
+  Mac app was signed and notarised. Whether the build you downloaded is, is
+  a question `spctl --assess --type execute Gage.app` answers -- ask it, not
+  this file.
 
 ## How to keep this file honest
 

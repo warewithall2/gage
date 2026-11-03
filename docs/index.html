@@ -317,7 +317,7 @@ gage confirm bob</pre>
   <div class="wrap">
     <p class="kicker">Download</p>
     <h2 class="big">Get gage.</h2>
-    <p class="lede">v0.3.5 — free, dual-licensed MIT or Apache-2.0. Keys are
+    <p class="lede">v0.3.6 — free, dual-licensed MIT or Apache-2.0. Keys are
     created and stored on your machine only. There is no account and
     nothing phones home.</p>
     <div class="dl">
@@ -328,8 +328,8 @@ gage confirm bob</pre>
         a first verified handoff in minutes, with no terminal at all.
         Apple Silicon, macOS 13 or later.</p>
         <a class="btn primary" href="https://github.com/warewithall2/gage/releases/latest/download/Gage-macOS.zip">Download the app</a>
-        <p class="tiny" style="color:var(--dark-dim)">Not notarized yet, so the first open is right-click →
-        Open, once. After that it opens like anything else.</p>
+        <p class="tiny" style="color:var(--dark-dim)">It is the same gage as the command
+        line below — a front door, not a different tool.</p>
       </div>
       <div class="dlcard" style="background:var(--dark-sheet);color:var(--dark-ink)">
         <h3 style="margin-top:4.2rem">The command line</h3>
@@ -352,10 +352,19 @@ gage confirm bob</pre>
     <p class="kicker">Where it is</p>
     <h2 class="big">Early. Honest. Working.</h2>
     <div class="status" style="margin-top:2.4rem">
-      <p><strong>v0.3.5 is current.</strong> 169 unit and integration tests
-      pass, along with the 80-check packaging suite, the identity restore
-      drill and the viewer end-to-end suite. The honest way to try it is
-      the twenty-minute packet in the repository.</p>
+      <p><strong>v0.3.6 is current.</strong> 185 unit tests pass, along
+      with the 76-check packaging suite, the identity restore drill and
+      the viewer end-to-end suite. The honest way to try it is the
+      twenty-minute packet in the repository.</p>
+      <p><strong>0.3.6 closes the replay hole.</strong> A bundle can
+      carry a sender-set expiry (<code>--ttl</code> /
+      <code>--expires</code>) and the run it belongs to
+      (<code>--context</code>), and both are verdict facts: the frame,
+      the inbox and the MCP JSON state the expiry and whether the
+      context matches, next to the signature. Past the expiry the
+      payload is withheld; a context match authorises nothing. A reader
+      of the launch thread found the hole — the release notes carry
+      the credit.</p>
       <p><strong>0.3.5 makes connecting the easy part.</strong> A banner
       in the app — and a desktop notification from <code>gage watch</code> —
       says who is waiting to connect. Confirming is comparing the four
@@ -403,7 +412,7 @@ gage confirm bob</pre>
       <a href="https://docs.rs/gage">docs.rs</a>
       <a href="https://github.com/warewithall2/gage/blob/master/CHANGELOG.md">Changelog</a>
     </div>
-    <p>gage 0.3.5 · dual-licensed MIT or Apache-2.0 · No trackers. No scripts. No accounts. Keys live on your machine, or it isn't gage.</p>
+    <p>gage 0.3.6 · dual-licensed MIT or Apache-2.0 · No trackers. No scripts. No accounts. Keys live on your machine, or it isn't gage.</p>
   </div>
 </footer>
 
