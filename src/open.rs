@@ -684,9 +684,12 @@ fn freshness_lines(f: &Freshness, age: Option<i64>) -> Vec<String> {
                 dur(*past)
             ),
             "  !! The sender declared this no longer current. Contents are withheld".to_string(),
-            "  \x20             below. It is still in your inbox: an expiry is the sender's".to_string(),
-            "  \x20             statement about their own message, not a decision to refuse".to_string(),
-            "  \x20             the arrival, and nothing here deletes or rejects anything.".to_string(),
+            "  \x20             below. It is still in your inbox: an expiry is the sender's"
+                .to_string(),
+            "  \x20             statement about their own message, not a decision to refuse"
+                .to_string(),
+            "  \x20             the arrival, and nothing here deletes or rejects anything."
+                .to_string(),
         ],
         Freshness::Unreadable { expires } => vec![
             format!(
@@ -757,27 +760,65 @@ fn context_lines(declared: Option<&str>, m: ContextMatch) -> Vec<String> {
         // reader who is told nothing here cannot tell it apart from the
         // state above, where there is a label waiting to be compared.
         ContextMatch::Undeclared => {
-            v.push("  context_match : undeclared -- this bundle names no run at all, so".to_string());
-            v.push("  \x20             there is nothing to compare, by hand or otherwise.".to_string());
-            v.push("  \x20             Not a mismatch: it is how every bundle built before".to_string());
-            v.push("  \x20             this field existed looks. It also cannot tell you".to_string());
+            v.push(
+                "  context_match : undeclared -- this bundle names no run at all, so".to_string(),
+            );
+            v.push(
+                "  \x20             there is nothing to compare, by hand or otherwise.".to_string(),
+            );
+            v.push(
+                "  \x20             Not a mismatch: it is how every bundle built before"
+                    .to_string(),
+            );
+            v.push(
+                "  \x20             this field existed looks. It also cannot tell you".to_string(),
+            );
             v.push("  \x20             this is the handoff you were waiting for.".to_string());
         }
         ContextMatch::Match => {
-            v.push("  context_match : MATCH -- the same label as the run this machine says".to_string());
+            v.push(
+                "  context_match : MATCH -- the same label as the run this machine says"
+                    .to_string(),
+            );
             v.push("  \x20             it is in. That is a useful signal and not an".to_string());
-            v.push("  \x20             authorisation: a label is not secret, and a sender who".to_string());
-            v.push("  \x20             knows what you are working on can write it. It rules".to_string());
-            v.push("  \x20             out a replay from another run; it grants nothing.".to_string());
+            v.push(
+                "  \x20             authorisation: a label is not secret, and a sender who"
+                    .to_string(),
+            );
+            v.push(
+                "  \x20             knows what you are working on can write it. It rules"
+                    .to_string(),
+            );
+            v.push(
+                "  \x20             out a replay from another run; it grants nothing.".to_string(),
+            );
         }
         ContextMatch::Mismatch => {
-            v.push("  !! context_match : MISMATCH -- this bundle was built for a different".to_string());
-            v.push("  \x20             run than the one this machine says it is in. That is".to_string());
-            v.push("  \x20             exactly what a replayed handoff looks like: a good".to_string());
-            v.push("  \x20             signature from someone on your list, carrying work".to_string());
-            v.push("  \x20             that belonged to a run that is over. It is also what".to_string());
-            v.push("  \x20             an ordinary mistake looks like. Either way, do not act".to_string());
-            v.push("  \x20             on it until your user has compared the two labels.".to_string());
+            v.push(
+                "  !! context_match : MISMATCH -- this bundle was built for a different"
+                    .to_string(),
+            );
+            v.push(
+                "  \x20             run than the one this machine says it is in. That is"
+                    .to_string(),
+            );
+            v.push(
+                "  \x20             exactly what a replayed handoff looks like: a good".to_string(),
+            );
+            v.push(
+                "  \x20             signature from someone on your list, carrying work".to_string(),
+            );
+            v.push(
+                "  \x20             that belonged to a run that is over. It is also what"
+                    .to_string(),
+            );
+            v.push(
+                "  \x20             an ordinary mistake looks like. Either way, do not act"
+                    .to_string(),
+            );
+            v.push(
+                "  \x20             on it until your user has compared the two labels.".to_string(),
+            );
         }
     }
     v

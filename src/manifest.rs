@@ -272,7 +272,10 @@ pub enum Freshness {
 impl Freshness {
     /// Does the payload stay behind the gate?
     pub fn gates_payload(&self) -> bool {
-        matches!(self, Freshness::Expired { .. } | Freshness::Unreadable { .. })
+        matches!(
+            self,
+            Freshness::Expired { .. } | Freshness::Unreadable { .. }
+        )
     }
 
     /// The expiry as the sender wrote it, if they declared one. Escaped and
@@ -805,7 +808,10 @@ mod tests {
         );
         // A local run and a bundle that names none: undeclared, which is
         // honest and is NOT the replay tell.
-        assert_eq!(context_match(None, Some("run 12")), ContextMatch::Undeclared);
+        assert_eq!(
+            context_match(None, Some("run 12")),
+            ContextMatch::Undeclared
+        );
         assert_eq!(
             context_match(Some(""), Some("run 12")),
             ContextMatch::Undeclared
@@ -847,8 +853,14 @@ mod tests {
         // machine, for the same reason an exported-but-empty variable is not
         // a run label.
         assert_eq!(context_match(Some(""), None), ContextMatch::Undeclared);
-        assert_eq!(context_match(Some("  "), Some("  ")), ContextMatch::Undeclared);
-        assert_eq!(context_match(None, Some("run 12")), ContextMatch::Undeclared);
+        assert_eq!(
+            context_match(Some("  "), Some("  ")),
+            ContextMatch::Undeclared
+        );
+        assert_eq!(
+            context_match(None, Some("run 12")),
+            ContextMatch::Undeclared
+        );
     }
 
     #[test]
@@ -865,11 +877,18 @@ mod tests {
             context_match(None, None),
         ];
         let words: Vec<&str> = states.iter().map(|s| s.word()).collect();
-        assert_eq!(words, ["match", "mismatch", "no-local-context", "undeclared"]);
+        assert_eq!(
+            words,
+            ["match", "mismatch", "no-local-context", "undeclared"]
+        );
         let mut sorted = words.clone();
         sorted.sort_unstable();
         sorted.dedup();
-        assert_eq!(sorted.len(), 4, "two context states share a word: {words:?}");
+        assert_eq!(
+            sorted.len(),
+            4,
+            "two context states share a word: {words:?}"
+        );
     }
 
     #[test]

@@ -340,9 +340,11 @@ pub fn resolve_expiry(
     now: i64,
 ) -> Result<Option<String>, String> {
     match (ttl, expires) {
-        (Some(_), Some(_)) => Err("--ttl and --expires say the same thing two ways; pass one. \
+        (Some(_), Some(_)) => Err(
+            "--ttl and --expires say the same thing two ways; pass one. \
              --ttl 24h is a window from now, --expires is an instant."
-            .into()),
+                .into(),
+        ),
         (None, None) => Ok(None),
         (Some(t), None) => {
             let secs = parse_duration(t)?;
@@ -448,9 +450,11 @@ pub fn parse_duration(w: &str) -> Result<i64, String> {
         )
     })?;
     if n <= 0 {
-        return Err("--ttl must be positive; a bundle that expires now or earlier \
+        return Err(
+            "--ttl must be positive; a bundle that expires now or earlier \
              cannot be opened by anybody"
-            .into());
+                .into(),
+        );
     }
     // Checked: the unit is a multiplier of up to 604_800, so an `n` well
     // inside i64 can leave the type on the way out. The unknown-unit arm
@@ -635,7 +639,11 @@ pub fn send_bundle(
         Some(c) => Some(c),
         None => parent.as_ref().and_then(|m| m.context.clone()),
     };
-    let expires = resolve_expiry(ttl.as_deref(), expires.as_deref(), crate::bundle::now_secs())?;
+    let expires = resolve_expiry(
+        ttl.as_deref(),
+        expires.as_deref(),
+        crate::bundle::now_secs(),
+    )?;
     let ag = agent.map(|name| AgentInfo { name, model });
     // Built once into a staging dir, then delivered to each routed
     // recipient. Building per-recipient would give one payload a
@@ -665,17 +673,7 @@ pub fn send_bundle(
         .clone()
         .unwrap_or_else(|| identity::home().join(format!("outbox/{}", std::process::id())));
     let m = bundle::create(
-        &stage,
-        &id,
-        &subject,
-        &to,
-        ag,
-        reply_to,
-        thread,
-        msg_type,
-        expires,
-        context,
-        &specs,
+        &stage, &id, &subject, &to, ag, reply_to, thread, msg_type, expires, context, &specs,
     )?;
     // Keep our own copy before delivering anywhere.
     let sent = routes::sent_dir(&identity::home()).join(&m.id);
