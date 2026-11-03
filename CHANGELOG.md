@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.6 — 2026-11-03
 
 - **A bundle can now carry a short expiry and the run it was meant for, so a
   valid sender cannot replay an old handoff into a new one.** Exact
@@ -48,6 +48,21 @@
 
   From the r/mcp launch thread: u/BC_MARO asked for exactly this, and for the
   expiry and context to be verdict-level facts rather than manifest trivia.
+
+- **Corrections caught by the cross-family audit passes before this
+  release shipped.** The verdict's context comparison now keeps four
+  states distinct — match, mismatch, no local context, and not
+  declared — where the first cut collapsed "not declared" into "no
+  local context" on the JSON, MCP and viewer surfaces. A `--ttl` too
+  large to resolve is refused with checked arithmetic instead of
+  wrapping. An `--expires` whose zone offset pushes its UTC instant
+  past 9999-12-31T23:59:59Z is refused at send time, on the normalized
+  instant, rather than signed into a timestamp no reader can parse.
+  And the cross-version compat gate now compares the manifest key set
+  in both directions, so a dropped key fails it as an added one
+  already did.
+- The viewer's confirm-gate e2e test now asserts the shipped visual
+  word-match confirmation instead of the retired typed-echo design.
 
 ## 0.3.5 — 2026-10-30
 
