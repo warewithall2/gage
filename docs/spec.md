@@ -40,13 +40,16 @@ re-pretty-printed manifest is a different message.
       "chain":  [ { "by": {...}, "at": "...", "action": "Created" } ],
       "in_reply_to": "…", "thread": "…",
       "msg_type": "share",
+      "expires": "2026-10-25T17:51:38Z",
+      "context": "loan-packager build run 12",
       "items": [
         { "kind": "prompt", "path": "items/task.md",
           "sha256": "…", "bytes": 131 }
       ]
     }
 
-`agent`, `in_reply_to`, `thread` and an item's `note` are omitted when unset.
+`agent`, `in_reply_to`, `thread`, `expires`, `context` and an item's `note` are
+omitted when unset.
 
 **Everything in this file is written by the sender.** There is deliberately no
 `trust` field — see §3.
@@ -242,6 +245,109 @@ machine declined to do.
 
 The witness is also what places a bundle either side of a key retirement,
 using this machine's own record rather than any date the sender wrote.
+
+### What the witness does not cover: a handoff replayed into a new run
+
+The witness kills **exact re-delivery**. It does not touch the two shapes next
+to it, and both matter when the reader is an agent in the middle of a run:
+
+* the same bundle arriving **late** — collected from a relay long after it was
+  written, into a run its instructions no longer describe;
+* its content **re-sent fresh** — a new `created`, so a new id and a new
+  witness, carrying work that belonged to a run that is over.
+
+In both, the signature is good and the sender is on your list. Nothing in §3
+can tell them from a current handoff, because nothing in the manifest said
+which run it was for or how long it was meant to last. Two optional fields do,
+and both are inside the signed manifest, so they are exactly as tamper-proof
+as the rest of it.
+
+#### `expires`
+
+An RFC 3339 instant. **Absent means no expiry**, which is the default and is
+not a gap: store-and-forward mail is entitled to sit, and a default TTL would
+quietly expire mail nobody asked to expire. Set with `gage send --ttl 7d` (a
+window, resolved against the sender's clock at build time) or `--expires
+<rfc3339>` (an instant). Giving both is refused rather than resolved by
+precedence; an expiry already past is refused at send time, because a bundle
+built expired cannot be opened by anybody.
+
+A receiver computes a four-state fact from it, once per load, against one
+clock reading:
+
+| state | meaning | payload |
+|---|---|---|
+| `undeclared` | no `expires` | shown |
+| `current` | declared, not reached | shown |
+| `expired` | declared, passed | **withheld** |
+| `unreadable` | declared, not an RFC 3339 timestamp | **withheld** |
+
+Four states and not a boolean, deliberately: `undeclared` is not a promise
+that anything is current, and collapsing the two would let a bundle built
+before this field existed read as a guaranteed-fresh one. `unreadable` fails
+**closed** for the matching reason — a sender who declared a bound must not get
+a receiver that silently has none.
+
+Withholding an expired payload is the same gate a bad verdict gets, and it is
+**not** a rejection of the arrival. The bundle stays in `inbox/pending`, stays
+listed by `gage inbox`, and is marked there; nothing is deleted and nothing is
+auto-refused. Arrival is not acceptance (§2), and an expiry is the sender's
+statement about their own message, not a licence to take the user's decision
+for them. `gage open` exits 2, and `--reveal` shows the contents and moves
+nothing else.
+
+An expiry **survives a forward unchanged**: a forwarder never extends one, or
+any handoff they were ever sent could be revived.
+
+#### `context`
+
+A short sender-declared label for the task or run: `"loan-packager build run
+12"`, a ticket id. Set with `gage send --context <text>`. A reply **inherits
+the thread's context** by default, derived from the same message the thread id
+comes from; `--context ""` clears it.
+
+Deliberately the label and **not a hash of it**. A hash would look more like
+security and buy nothing — the manifest is signed, so the label cannot be
+altered either way, and the thing a receiver has to do with it is compare it
+with the run they are actually in, which needs the text. Task labels are not
+secret.
+
+The frame and the verdict JSON surface the declared label **verbatim**, always.
+Where the receiving side has a run context of its own — `GAGE_CONTEXT` in the
+environment, else the first line of `<home>/context`, both local, because a
+comparison is only worth making if one side is beyond the sender's reach — a
+`context_match` fact is stated as well:
+
+| state | meaning |
+|---|---|
+| `match` | same label as this machine's run |
+| `mismatch` | different run — **the replay tell** |
+| `undeclared` | this machine is in a run; the bundle names none |
+| `no-local-context` | nothing local says what run this is, so no comparison was made |
+
+`no-local-context` is not a mismatch, and `undeclared` is not one either: it is
+how every bundle built before this field existed looks. The comparison is
+exact after trimming the ends and **case-sensitive** — `match` is the one
+output that tells a reader the handoff belongs to their run, and every fold is
+a way for two different labels to earn it.
+
+A match **authorises nothing**. A label is not secret, so a sender who knows
+what you are working on can write it; what a match rules out is a replay from
+another run. Neither field is in `expected_id` (§1), since the id must follow
+the same content across hops and both already survive a forward unchanged.
+
+#### The limit of it, across versions
+
+Both fields are optional, so a reader that has never heard of them verifies
+the signature over the same bytes, recomputes the same id, and parses the
+document — checked against the v0.3.5 binary in `tests/compat.sh`, which also
+pins the edge of the claim. An **old hop forwarding** a new bundle re-signs it
+through its own struct and therefore **strips both fields**. A format-version
+bump would not fix that (a v0.3.5 reader never checks `v` on a bundle, so a
+bump is invisible to it), and nothing can make a binary preserve a field it
+does not have. The strip leaves no trace of a binding rather than a false one:
+a new reader reports `not declared`. A sender who needs the binding to survive
+every hop needs every hop upgraded.
 
 ---
 
@@ -449,11 +555,23 @@ version should refuse rather than guess.
 
 Honest statement of where this stands: **v0.1.0 has not yet had to change a
 format, so the versioning has never been exercised.** The fields that exist are
-tolerant in one specific direction — `agent`, `in_reply_to`, `thread` and
-`note` are `#[serde(default)]` and omitted when absent, and `msg_type` defaults
-— so adding an optional field is possible without a version bump. Anything that
-changes the meaning of a signed field would need `v: 2` and an explicit
-decision about what a `v: 1` reader does, and that decision has not been made.
+tolerant in one specific direction — `agent`, `in_reply_to`, `thread`,
+`expires`, `context` and `note` are `#[serde(default)]` and omitted when
+absent, and `msg_type` defaults — so adding an optional field is possible
+without a version bump. Anything that changes the meaning of a signed field
+would need `v: 2` and an explicit decision about what a `v: 1` reader does, and
+that decision has not been made.
+
+That direction has now been exercised once, which is worth recording since the
+paragraph above used to say it never had. `expires` and `context` (§5) were
+added **without** a bump, on three properties that `tests/compat.sh` checks
+against the v0.3.5 binary rather than asserting: signature verification runs
+over the manifest's raw bytes re-read from disk, `Manifest` has no
+`deny_unknown_fields`, and neither field enters `expected_id`. What that run
+also established is the thing a bump would **not** have bought: a v0.3.5
+reader never checks `v` on a bundle at all, so `v: 2` would not have made an
+old hop refuse a new bundle — it would have gone on stripping the fields when
+forwarding it. A version a reader does not check is not a gate.
 
 ---
 
