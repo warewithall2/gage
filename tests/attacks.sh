@@ -4845,6 +4845,38 @@ CTX_HOME=$RD/snd $CTX send --to receiver --subject "badttl" --file "$RD/work.md"
 code "ttl-unit" $? 1
 want "$T/rd-12.txt" "use m, h, d or w"
 
+echo "a --ttl too large to resolve is refused, not wrapped into a deadline nobody asked for"
+# In the grammar, parses as an i64, and is not a duration. The multiply by
+# the unit and the add to `now` were both unchecked: in a release build a
+# large enough `w` count wrapped and SIGNED an expiry that was not the one
+# asked for -- for some inputs one already past, which gates the payload of a
+# bundle the sender meant to be open for years. Checked at every unit,
+# because each has its own multiplier.
+for BIGTTL in 9223372036854775807m 9223372036854775807h 9223372036854775807d \
+              9223372036854775807w 153722867280912930w 99999999999999w; do
+  CTX_HOME=$RD/snd $CTX send --to receiver --subject "bigttl-$BIGTTL" \
+    --file "$RD/work.md" --ttl "$BIGTTL" > "$T/rd-12b.txt" 2>&1
+  code "ttl-overflow-$BIGTTL" $? 1
+  want   "$T/rd-12b.txt" "too far out"
+  # Not a panic, in either build profile. A wrapped expiry would have been
+  # built and delivered instead of refused.
+  wantno "$T/rd-12b.txt" "panicked"
+  if [ -z "$(idof "$RD/rcv" "bigttl-$BIGTTL")" ]; then ok
+  else bad "an overflowing --ttl built a bundle anyway: $BIGTTL"; fi
+done
+# And the bound is on what gage can WRITE, so what it accepts round-trips:
+# an ordinary long window still resolves to a readable future instant.
+CTX_HOME=$RD/snd $CTX send --to receiver --subject "longttl" \
+  --file "$RD/work.md" --ttl 520w > "$T/rd-12c.txt" 2>&1
+code "ttl-long" $? 0
+want "$T/rd-12c.txt" "after that the recipient's gage withholds the payload"
+LONG=$(idof "$RD/rcv" longttl)
+CTX_HOME=$RD/rcv $CTX open "$RD/rcv/inbox/pending/$LONG" > "$T/rd-12d.txt" 2>&1
+code "long-ttl-opens" $? 0
+want   "$T/rd-12d.txt" "the work"
+wantno "$T/rd-12d.txt" "EXPIRED"
+wantno "$T/rd-12d.txt" "UNREADABLE"
+
 echo "an EXPIRED bundle gates the payload at open, and says when it lapsed"
 # Built two seconds out and waited through, because the manifest is signed:
 # there is no editing the expiry of a real bundle after the fact, and a test
