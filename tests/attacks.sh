@@ -4808,6 +4808,24 @@ want   "$T/rd-9.txt" "context_match : undeclared"
 wantno "$T/rd-9.txt" "MISMATCH"
 want   "$T/rd-9.txt" "the work"
 
+echo "declaring no run is undeclared on a machine with no run of its own TOO, not no-local-context"
+# The collapse the November 2026 audit found. `context_match(None, None)` used
+# to classify on the local side first and come out as `no-local-context` --
+# the same word, in the one field the viewer and MCP and the inbox JSON
+# branch on, as a bundle carrying a run label nobody could check. The two
+# need different things from a reader: one has a label to compare by hand,
+# the other has nothing to compare at all. No GAGE_CONTEXT here, which is
+# every machine until somebody sets one.
+CTX_HOME=$RD/rcv $CTX open "$RD/rcv/inbox/pending/$PLAIN" > "$T/rd-9b.txt" 2>&1
+code "plain-no-local-opens" $? 0
+want   "$T/rd-9b.txt" "context_match : undeclared"
+want   "$T/rd-9b.txt" "names no run at all"
+wantno "$T/rd-9b.txt" "no-local-context"
+wantno "$T/rd-9b.txt" "MISMATCH"
+# And the state says nothing about this machine's run, because it is a fact
+# about the bundle: the old wording claimed the reader was in a run.
+wantno "$T/rd-9b.txt" "you are in a run this machine calls"
+
 echo "an expiry already past is refused at send time, not built"
 CTX_HOME=$RD/snd $CTX send --to receiver --subject "doa" --file "$RD/work.md" \
   --expires 2020-01-01T00:00:00Z > "$T/rd-10.txt" 2>&1
@@ -4864,8 +4882,26 @@ want "$T/rd-16.txt" '"expired": true'
 want "$T/rd-16.txt" '"freshness": "undeclared"'
 want "$T/rd-16.txt" '"context": "build run 12"'
 want "$T/rd-16.txt" '"context_match": "no-local-context"'
+# Both quiet states in ONE listing, which is the assertion that they are two
+# states and not two spellings of one: the bound bundles declare a context
+# nothing here can check, the plain one declares none, and this machine is in
+# no run at all. Before the fix every row in this listing said
+# "no-local-context" and a consumer had no way to tell the two apart.
+want "$T/rd-16.txt" '"context_match": "undeclared"'
+CTX_HOME=$RD/rcv $CTX inbox --json > "$T/rd-16b.json" 2>/dev/null
+RD16=$(python3 -c '
+import json,sys
+rows=json.load(open(sys.argv[1]))
+print(",".join(sorted({r.get("context_match","?") for r in rows})))' "$T/rd-16b.json" 2>/dev/null)
+if [ "$RD16" = "no-local-context,undeclared" ]; then ok
+else bad "one listing should carry both quiet context states, got: $RD16"; fi
 GAGE_CONTEXT="build run 13" CTX_HOME=$RD/rcv $CTX inbox --json > "$T/rd-17.txt" 2>&1
 want "$T/rd-17.txt" '"context_match": "mismatch"'
+# The same listing, same bundles, with a local run: the plain bundle stays
+# undeclared rather than becoming the replay tell, and the four words remain
+# four words.
+want "$T/rd-17.txt" '"context_match": "undeclared"'
+wantno "$T/rd-17.txt" '"context_match": "no-local-context"'
 
 echo "--reveal shows an expired payload and changes nothing else"
 CTX_HOME=$RD/rcv $CTX open "$RD/rcv/inbox/pending/$LAPSE" --reveal > "$T/rd-18.txt" 2>&1

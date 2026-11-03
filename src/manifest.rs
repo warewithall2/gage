@@ -300,17 +300,25 @@ impl Freshness {
 
 /// Whether the context the sender declared is the run this machine is in.
 ///
-/// Three outcomes and not two. "The sender declared nothing" and "the sender
-/// declared something that does not match" are the two a reader must never
-/// see merged, because the first is the ordinary state of every bundle built
-/// before this field existed and the second is a replay in progress.
+/// FOUR outcomes and not two, and the four are about two independent
+/// questions: did the sender declare a run, and does this machine know what
+/// run it is in. "The sender declared nothing" and "the sender declared
+/// something that does not match" are the two a reader must never see
+/// merged, because the first is the ordinary state of every bundle built
+/// before this field existed and the second is a replay in progress. The
+/// same is true of the first against "they declared a run and there is
+/// nothing here to compare it with": that one still has a label the reader
+/// must go and compare by hand, and a collapsed verdict is what stops them
+/// being told so.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContextMatch {
-    /// Nothing local to compare against, so no comparison was made. The
-    /// declared label is still surfaced verbatim -- that is what a reader
-    /// compares by hand.
+    /// The bundle DOES declare a run and nothing local says what run this
+    /// machine is in, so no comparison was made. The declared label is still
+    /// surfaced verbatim -- that is what a reader compares by hand.
     NoLocalContext,
-    /// This machine has a run context and the bundle declares none.
+    /// The bundle declares no run at all, whatever this machine knows about
+    /// its own. There is nothing to compare, and nothing a reader could
+    /// compare by hand either.
     Undeclared,
     Match,
     Mismatch,
@@ -337,10 +345,17 @@ impl ContextMatch {
 /// differs only in case is a mismatch worth seeing; the cost of being told so
 /// is one glance, and the cost of the other error is acting on a replayed
 /// handoff.
+/// The order of these arms is the whole of the fix for the collapse the
+/// November audit found. What the sender declared is asked FIRST, because
+/// `Undeclared` is a fact about the bundle alone: a bundle that names no run
+/// is undeclared on a machine that knows its run and on one that does not,
+/// and classifying by the local side first made `(None, None)` come out as
+/// `NoLocalContext` -- indistinguishable, in the one field every consumer
+/// branches on, from a bundle carrying a label nobody could check.
 pub fn context_match(declared: Option<&str>, local: Option<&str>) -> ContextMatch {
     match (declared.map(str::trim), local.map(str::trim)) {
-        (_, None) | (_, Some("")) => ContextMatch::NoLocalContext,
-        (None, Some(_)) | (Some(""), Some(_)) => ContextMatch::Undeclared,
+        (None, _) | (Some(""), _) => ContextMatch::Undeclared,
+        (Some(_), None) | (Some(_), Some("")) => ContextMatch::NoLocalContext,
         (Some(d), Some(l)) if d == l => ContextMatch::Match,
         (Some(_), Some(_)) => ContextMatch::Mismatch,
     }
@@ -782,7 +797,6 @@ mod tests {
             context_match(Some("run 12"), None),
             ContextMatch::NoLocalContext
         );
-        assert_eq!(context_match(None, None), ContextMatch::NoLocalContext);
         // Blank is the same as unset on both sides: an exported-but-empty
         // variable is not a run label.
         assert_eq!(
@@ -816,6 +830,46 @@ mod tests {
             context_match(Some("run 13"), Some("run 12")),
             ContextMatch::Mismatch
         );
+    }
+
+    #[test]
+    fn declaring_no_run_is_undeclared_even_with_no_local_run() {
+        // The collapse the November audit found, pinned in the direction it
+        // must not go again. A bundle that declares nothing, read on a
+        // machine that knows nothing about its own run, used to come out as
+        // `NoLocalContext` -- the same word, in the field MCP and the viewer
+        // and the inbox JSON branch on, as a bundle carrying a run label
+        // that nobody could check. The two cases need different things from
+        // a reader: one has a label to go and compare by hand, the other has
+        // nothing to compare at all.
+        assert_eq!(context_match(None, None), ContextMatch::Undeclared);
+        // Blank on the bundle side is the same as absent, on both kinds of
+        // machine, for the same reason an exported-but-empty variable is not
+        // a run label.
+        assert_eq!(context_match(Some(""), None), ContextMatch::Undeclared);
+        assert_eq!(context_match(Some("  "), Some("  ")), ContextMatch::Undeclared);
+        assert_eq!(context_match(None, Some("run 12")), ContextMatch::Undeclared);
+    }
+
+    #[test]
+    fn the_four_context_states_are_four_distinct_words() {
+        // Every surface -- the CLI frame, the inbox JSON, the MCP verdict,
+        // the viewer -- classifies on `word()`. Four states that shared a
+        // word on the wire would be four states a consumer could not tell
+        // apart however carefully it branched, so the distinctness is
+        // asserted on the words and not only on the enum.
+        let states = [
+            context_match(Some("run 12"), Some("run 12")),
+            context_match(Some("run 13"), Some("run 12")),
+            context_match(Some("run 12"), None),
+            context_match(None, None),
+        ];
+        let words: Vec<&str> = states.iter().map(|s| s.word()).collect();
+        assert_eq!(words, ["match", "mismatch", "no-local-context", "undeclared"]);
+        let mut sorted = words.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), 4, "two context states share a word: {words:?}");
     }
 
     #[test]

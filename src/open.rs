@@ -719,6 +719,11 @@ fn context_lines(declared: Option<&str>, m: ContextMatch) -> Vec<String> {
         // somebody sets one. Not reported as a failure, and the way to make
         // the comparison automatic is named rather than left to be found.
         ContextMatch::NoLocalContext => {
+            // Always true now that an absent declaration classifies as
+            // `Undeclared` before the local side is looked at. Kept as a
+            // guard rather than dropped: these lines read as advice about a
+            // label, and printing them with no label to point at would be
+            // worse than printing nothing.
             if declared.is_some_and(|c| !c.trim().is_empty()) {
                 v.push(
                     "  \x20             That is the sender's label for the run they built this"
@@ -747,12 +752,16 @@ fn context_lines(declared: Option<&str>, m: ContextMatch) -> Vec<String> {
                 v.push("  \x20             here instead of leaving it to you.".to_string());
             }
         }
+        // Said on every machine, not only on one that knows its own run.
+        // This state is a fact about the BUNDLE -- it names no run -- and a
+        // reader who is told nothing here cannot tell it apart from the
+        // state above, where there is a label waiting to be compared.
         ContextMatch::Undeclared => {
-            v.push("  context_match : undeclared -- you are in a run this machine calls".to_string());
-            v.push("  \x20             something, and this bundle names no run at all. Not a".to_string());
-            v.push("  \x20             mismatch: it is how every bundle built before this".to_string());
-            v.push("  \x20             field existed looks. It also cannot tell you this is".to_string());
-            v.push("  \x20             the handoff you were waiting for.".to_string());
+            v.push("  context_match : undeclared -- this bundle names no run at all, so".to_string());
+            v.push("  \x20             there is nothing to compare, by hand or otherwise.".to_string());
+            v.push("  \x20             Not a mismatch: it is how every bundle built before".to_string());
+            v.push("  \x20             this field existed looks. It also cannot tell you".to_string());
+            v.push("  \x20             this is the handoff you were waiting for.".to_string());
         }
         ContextMatch::Match => {
             v.push("  context_match : MATCH -- the same label as the run this machine says".to_string());

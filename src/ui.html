@@ -660,12 +660,21 @@ function alerts(m){
       `Expires ${esc(m.expires)}. After that the payload is withheld.`]);
     else if(m.freshness&&m.freshness!=='undeclared'&&m.freshness!=='current') out.push(['bad',
       `Unrecognised freshness "${esc(m.freshness)}". This viewer does not know what it means, so treat the bundle as not current.`]);
+    // Four states, four renderings, classified on the WORD like freshness
+    // above it. `undeclared` and `no-local-context` are the pair a reader
+    // must not see merged: the second has a label waiting to be compared by
+    // hand, the first has nothing to compare, and both are quiet states that
+    // a single "no comparison was made" line would flatten into one.
     if(m.context_match==='mismatch') out.push(['bad',
       `<b>Context mismatch.</b> Built for "${esc(m.context||'')}", and this machine says it is in a different run. That is what a replayed handoff looks like &mdash; a good signature carrying work from a run that is over. Compare the two labels before acting on it.`]);
     else if(m.context_match==='match') out.push(['',
       `Context matches the run this machine says it is in ("${esc(m.context||'')}"). It rules out a replay from another run and authorises nothing: a label is not secret.`]);
-    else if(m.context) out.push(['',
-      `Built for "${esc(m.context)}" &mdash; the sender's label for the run. ${m.context_match==='no-local-context'?'Nothing here says what run this machine is in, so no comparison was made. Compare it yourself.':''}`]);
+    else if(m.context_match==='no-local-context') out.push(['',
+      `Built for "${esc(m.context||'')}" &mdash; the sender's label for the run. Nothing here says what run this machine is in, so no comparison was made. Compare it yourself.`]);
+    else if(m.context_match==='undeclared') out.push(['',
+      `No run declared &mdash; this bundle names no run, so nothing was compared. Not a mismatch, and not a confirmation that this is the handoff you were waiting for.`]);
+    else if(m.context_match) out.push(['bad',
+      `Unrecognised context_match "${esc(m.context_match)}"${m.context?` on a bundle built for "${esc(m.context)}"`:''}. This viewer does not know what it means, so compare the run labels yourself before acting on it.`]);
   }
   if(m.memories) out.push(['bad',
     `${m.memories} memory file(s). Memory outlives the session that accepts it, so it is never merged automatically.`]);

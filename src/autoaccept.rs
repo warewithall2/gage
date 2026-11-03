@@ -376,7 +376,9 @@ mod tests {
             tampered: vec![],
             unwitnessed: false,
             freshness: Freshness::Undeclared,
-            context_match: ContextMatch::NoLocalContext,
+            // The fixture's manifest declares no context, and that is the
+            // state a bundle declaring none has on every machine.
+            context_match: ContextMatch::Undeclared,
         }
     }
 
