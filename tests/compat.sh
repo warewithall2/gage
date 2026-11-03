@@ -251,8 +251,13 @@ python3 - "$T/old/inbox/pending/$B3/manifest.json" \
 import json,sys
 new=set(json.load(open(sys.argv[1])))
 old=set(json.load(open(sys.argv[2])))
-extra=new-old
-print("KEYS-MATCH" if not extra else "KEYS-DIFFER "+",".join(sorted(extra)))
+# BOTH directions. Comparing only new-old made the gate one-sided: a new
+# manifest that DROPPED a key left `extra` empty, printed KEYS-MATCH and
+# passed -- and a removed key is the compat break that matters more of the
+# two, since an old reader looking for a field that is gone has nothing to
+# fall back on.
+diff=sorted("+"+k for k in new-old)+sorted("-"+k for k in old-new)
+print("KEYS-MATCH" if not diff else "KEYS-DIFFER "+",".join(diff))
 PY
 cat "$T/keys.txt"
 want "$T/keys.txt" "KEYS-MATCH"
