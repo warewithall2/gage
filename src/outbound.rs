@@ -376,6 +376,22 @@ pub fn resolve_expiry(
                     manifest::one_line(e)
                 ));
             }
+            // And bounded, on the normalized instant rather than on the
+            // digits the sender typed. The grammar's four-digit year is not
+            // the ceiling it looks like: `parse_rfc3339` subtracts the zone
+            // offset, so `9999-12-31T23:59:59-23:59` is an in-grammar input
+            // whose UTC instant is in the year 10000. `rfc3339` formats the
+            // year with a minimum width of four digits, not a maximum, so
+            // that instant is written out as `10000-01-01T23:58:59Z` -- a
+            // signed expiry this tree's own parser reads back as nothing,
+            // which makes a recipient withhold the payload for a bundle
+            // whose sender did nothing wrong but pick a zone.
+            //
+            // So the same ceiling the `--ttl` path bounds against is applied
+            // here, after normalization and before formatting.
+            if at > MAX_EXPIRY {
+                return Err(too_far_expires(e));
+            }
             Ok(Some(crate::bundle::rfc3339(at)))
         }
     }
@@ -396,6 +412,22 @@ fn too_far(w: &str) -> String {
         "--ttl {:?} is too far out; gage cannot write an expiry past \
          9999-12-31T23:59:59Z. Pass a window a recipient could actually be \
          inside, in m, h, d or w.",
+        manifest::one_line(w)
+    )
+}
+
+/// The refusal for an `--expires` whose normalized instant is past the bound.
+///
+/// Separate from `too_far` because it is reached by a different mistake and
+/// has a different fix. A `--ttl` past the bound is a window nobody could be
+/// inside; an `--expires` past it is usually a timestamp whose zone offset
+/// carried it over, so the sender is told what their input normalizes to
+/// rather than being told to pick a shorter window they did not ask for.
+fn too_far_expires(w: &str) -> String {
+    format!(
+        "--expires {:?} is past 9999-12-31T23:59:59Z once its zone offset is \
+         applied, and gage cannot write an expiry beyond that. Pass an \
+         instant inside that range.",
         manifest::one_line(w)
     )
 }
@@ -858,32 +890,93 @@ mod tests {
     }
 
     #[test]
-    fn the_absolute_expiry_path_shares_none_of_that_arithmetic() {
-        // Checked because the audit asked whether `--expires` needed the
-        // same treatment. It does not, and the reason is structural rather
-        // than lucky: `parse_rfc3339` reads the year from exactly four ASCII
-        // digits, so the largest instant it can return is 9999-12-31, which
-        // is MAX_EXPIRY -- the same ceiling, reached by the grammar instead
-        // of by a bound. There is no multiply and no add to `now` on this
-        // path at all.
+    fn the_absolute_expiry_path_is_bounded_on_the_normalized_utc_instant() {
+        // The earlier version of this test asserted that `--expires` needed
+        // no bound, on the reasoning that `parse_rfc3339` reads the year
+        // from four ASCII digits and so cannot return an instant past
+        // 9999-12-31. That reasoning was wrong, and wrong in the one place
+        // it mattered: the parser SUBTRACTS the zone offset after reading
+        // the digits, so an in-grammar input can normalize past the bound.
+        // The property pinned here is that the refusal is decided on the
+        // normalized UTC instant, never on the local fields.
         let now = 1_793_000_000;
-        assert_eq!(
-            resolve_expiry(None, Some("9999-12-31T23:59:59Z"), now),
-            Ok(Some("9999-12-31T23:59:59Z".to_string()))
-        );
+
+        // Just inside the bound, written two ways, and the output is a
+        // timestamp this tree reads back as the same instant.
+        for w in ["9999-12-31T23:59:59Z", "9999-12-31T23:59:59+00:00"] {
+            let out = resolve_expiry(None, Some(w), now)
+                .unwrap_or_else(|e| panic!("{w} refused: {e}"))
+                .unwrap();
+            assert_eq!(out, "9999-12-31T23:59:59Z", "{w}");
+            assert_eq!(crate::bundle::parse_rfc3339(&out), Some(MAX_EXPIRY), "{w}");
+        }
         assert_eq!(
             crate::bundle::parse_rfc3339("9999-12-31T23:59:59Z"),
             Some(MAX_EXPIRY)
         );
-        // A five-digit year is not in the grammar, so it is refused as "not
-        // a timestamp" rather than reaching any arithmetic.
-        assert!(resolve_expiry(None, Some("99999-01-01T00:00:00Z"), now).is_err());
-        // Nor can the zone offset push it out: the offset is at most 23:59
-        // and is subtracted from an instant already inside the ceiling.
-        assert!(
-            resolve_expiry(None, Some("9999-12-31T23:59:59-23:59"), now)
-                .unwrap()
-                .is_some()
+
+        // A negative offset pushing an in-grammar input over the bound. This
+        // is the case the old assertion accepted: it normalizes to the year
+        // 10000, which `rfc3339` prints with five year digits and
+        // `parse_rfc3339` then refuses, so the recipient of such a bundle
+        // withholds the payload. Refused at send time instead.
+        let e = resolve_expiry(None, Some("9999-12-31T23:59:59-23:59"), now).unwrap_err();
+        assert!(e.contains("9999-12-31T23:59:59Z"), "{e}");
+        // Stated as the round-trip property, so this cannot regress into an
+        // `is_some()` again: nothing this function returns is unreadable.
+        for w in [
+            "9999-12-31T23:59:59-23:59",
+            "9999-12-31T23:59:59-00:01",
+            "9999-12-31T23:59:60Z",
+            "9999-12-31T00:00:00-23:59",
+        ] {
+            if let Ok(Some(out)) = resolve_expiry(None, Some(w), now) {
+                let back = crate::bundle::parse_rfc3339(&out)
+                    .unwrap_or_else(|| panic!("{w} produced an unreadable {out}"));
+                assert!(back <= MAX_EXPIRY, "{w} -> {out}");
+            }
+        }
+
+        // A plain year-10000 input, and a five-digit year generally, is not
+        // in the grammar: refused as "not a timestamp" before any bound.
+        for w in ["10000-01-01T00:00:00Z", "99999-01-01T00:00:00Z"] {
+            let e = resolve_expiry(None, Some(w), now).unwrap_err();
+            assert!(e.contains("RFC 3339 timestamp"), "{w}: {e}");
+        }
+
+        // The lower bound needs no separate check: `rfc3339` cannot write a
+        // pre-1970 instant either, and the already-past refusal above covers
+        // every negative second for any `now` at or after the epoch.
+        let e = resolve_expiry(None, Some("1969-07-20T20:17:00Z"), now).unwrap_err();
+        assert!(e.contains("already past"), "{e}");
+    }
+
+    #[test]
+    fn the_expiry_bound_is_decided_on_the_instant_not_on_the_typed_fields() {
+        let now = 1_793_000_000;
+        // The other direction, and the reason the check cannot be done on
+        // the typed fields: a POSITIVE offset makes the local fields read
+        // later than the instant they denote. `10000-01-01T00:30:00+23:59`
+        // is inside the bound as an instant, but this tree's parser refuses
+        // five-digit local years up front (`parse_rfc3339` wants exactly
+        // four digits before the `-`), so that input never reaches the
+        // bound at all.
+        assert_eq!(
+            crate::bundle::parse_rfc3339("10000-01-01T00:30:00+23:59"),
+            None
+        );
+        // So the inside-bound positive-offset case is taken at the largest
+        // four-digit local year instead. Its local fields are the maximum
+        // the grammar allows; its UTC instant is EARLIER, hence inside, and
+        // it is accepted -- a bound applied to the local fields would have
+        // refused it.
+        let out = resolve_expiry(None, Some("9999-12-31T23:59:59+23:59"), now)
+            .unwrap()
+            .unwrap();
+        assert_eq!(out, "9999-12-31T00:00:59Z");
+        assert_eq!(
+            crate::bundle::parse_rfc3339(&out),
+            Some(MAX_EXPIRY - 86_340)
         );
     }
 

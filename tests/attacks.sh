@@ -4877,6 +4877,34 @@ want   "$T/rd-12d.txt" "the work"
 wantno "$T/rd-12d.txt" "EXPIRED"
 wantno "$T/rd-12d.txt" "UNREADABLE"
 
+echo "an --expires whose zone offset carries it past the bound is refused at send time"
+# The four-digit year in the grammar is not the ceiling it looks like: the
+# parser subtracts the zone offset AFTER reading the digits, so this input is
+# in-grammar and normalizes to the year 10000. The formatter's year width is a
+# minimum, not a maximum, so it was written out as `10000-01-01T23:58:59Z` --
+# signed, and unreadable to this tree's own parser, which makes the recipient
+# withhold the payload of a bundle whose sender only picked a zone. Refused
+# here instead, on the normalized instant.
+CTX_HOME=$RD/snd $CTX send --to receiver --subject "bigexp" \
+  --file "$RD/work.md" --expires 9999-12-31T23:59:59-23:59 > "$T/rd-12e.txt" 2>&1
+code "expires-overflow" $? 1
+want   "$T/rd-12e.txt" "9999-12-31T23:59:59Z"
+wantno "$T/rd-12e.txt" "panicked"
+if [ -z "$(idof "$RD/rcv" bigexp)" ]; then ok
+else bad "an out-of-range --expires built a bundle anyway"; fi
+# And the instant one second inside that bound is still accepted, delivered,
+# and read back by the recipient rather than gated as unreadable.
+CTX_HOME=$RD/snd $CTX send --to receiver --subject "maxexp" \
+  --file "$RD/work.md" --expires 9999-12-31T23:59:59Z > "$T/rd-12f.txt" 2>&1
+code "expires-max" $? 0
+MAXE=$(idof "$RD/rcv" maxexp)
+CTX_HOME=$RD/rcv $CTX open "$RD/rcv/inbox/pending/$MAXE" > "$T/rd-12g.txt" 2>&1
+code "expires-max-opens" $? 0
+want   "$T/rd-12g.txt" "9999-12-31T23:59:59Z"
+want   "$T/rd-12g.txt" "the work"
+wantno "$T/rd-12g.txt" "EXPIRED"
+wantno "$T/rd-12g.txt" "UNREADABLE"
+
 echo "an EXPIRED bundle gates the payload at open, and says when it lapsed"
 # Built two seconds out and waited through, because the manifest is signed:
 # there is no editing the expiry of a real bundle after the fact, and a test
