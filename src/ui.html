@@ -645,6 +645,28 @@ function alerts(m){
   if(m.thread_ok===false) out.push(['bad',
     `This message <b>claims</b> to belong to this conversation while answering something you do not hold. The thread field is written by the sender. Treat it as a separate message, and reply to the person you meant.`]);
   if(m.forwarded) out.push(['',`Forwarded, ${m.hops} hop(s). The sender is not the author, and any hop could have altered it before signing.`]);
+  // Expiry and context are verdict facts, so they are alerts beside the
+  // signature and the chain of custody rather than detail buried in the
+  // sheet. Classified on the WORD the server sent, not on a boolean: an
+  // unrecognised freshness must not fall through to the quiet styling, for
+  // the same reason the verdict table above lists every verdict and shows an
+  // unknown one raw.
+  if(!m.mine) {
+    if(m.freshness==='expired') out.push(['bad',
+      `<b>Expired</b> ${esc(m.expires||'')}. The sender declared this no longer current, inside the signed manifest. <code>gage open</code> withholds the payload. It is still here: an expiry is their statement about their own message, not a decision to refuse the arrival.`]);
+    else if(m.freshness==='unreadable') out.push(['bad',
+      `<b>Expiry unreadable</b> (${esc(m.expires||'')}) &mdash; not an RFC 3339 timestamp, so it is treated as lapsed rather than as absent and the payload is withheld.`]);
+    else if(m.freshness==='current'&&m.expires) out.push(['',
+      `Expires ${esc(m.expires)}. After that the payload is withheld.`]);
+    else if(m.freshness&&m.freshness!=='undeclared'&&m.freshness!=='current') out.push(['bad',
+      `Unrecognised freshness "${esc(m.freshness)}". This viewer does not know what it means, so treat the bundle as not current.`]);
+    if(m.context_match==='mismatch') out.push(['bad',
+      `<b>Context mismatch.</b> Built for "${esc(m.context||'')}", and this machine says it is in a different run. That is what a replayed handoff looks like &mdash; a good signature carrying work from a run that is over. Compare the two labels before acting on it.`]);
+    else if(m.context_match==='match') out.push(['',
+      `Context matches the run this machine says it is in ("${esc(m.context||'')}"). It rules out a replay from another run and authorises nothing: a label is not secret.`]);
+    else if(m.context) out.push(['',
+      `Built for "${esc(m.context)}" &mdash; the sender's label for the run. ${m.context_match==='no-local-context'?'Nothing here says what run this machine is in, so no comparison was made. Compare it yourself.':''}`]);
+  }
   if(m.memories) out.push(['bad',
     `${m.memories} memory file(s). Memory outlives the session that accepts it, so it is never merged automatically.`]);
   if(m.prompts) out.push(['',

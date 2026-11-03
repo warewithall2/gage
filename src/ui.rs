@@ -1322,6 +1322,12 @@ fn send_from_ui(raw: &[u8]) -> Result<Vec<String>, (&'static str, String)> {
                 agent: None,
                 model: None,
                 record_send: true,
+                // The composer does not offer either yet. Left explicit
+                // rather than defaulted so that adding a field to the page
+                // is a change here too.
+                ttl: None,
+                expires: None,
+                context: None,
             },
             &mut say,
         );
@@ -1818,6 +1824,12 @@ fn reply_from_ui(body: &str) -> Result<String, (&'static str, String)> {
             agent: None,
             model: None,
             record_send: true,
+            ttl: None,
+            expires: None,
+            // None, which INHERITS the thread's context in `send_bundle` --
+            // it does not clear it. A reply typed into the viewer stays in
+            // the run the exchange is about, exactly as `gage reply` does.
+            context: None,
         },
         &mut say,
     );
@@ -1907,6 +1919,13 @@ fn state_json() -> String {
                         "bytes": i.bytes,
                     })).collect::<Vec<_>>(),
                     "tampered": l.tampered,
+                    // Verdict-level facts, the same four words the CLI and the
+                    // MCP block use. The page classifies on them, so they must
+                    // not be a boolean here and spelled out there.
+                    "freshness": l.freshness.word(),
+                    "expires": l.freshness.declared(),
+                    "context": m.context,
+                    "context_match": l.context_match.word(),
                     "agent": m.agent.as_ref().map(|a| serde_json::json!({
                         "name": a.name, "model": a.model })),
                 })
@@ -2001,6 +2020,11 @@ fn threads_json() -> String {
     }
 
     let threads = crate::state::threads(manifests, &st, &mine);
+    // Read once for the whole response, like `bundle::load` does for one
+    // bundle: two messages in one thread must not disagree about whether the
+    // moment they are both measured against has passed.
+    let now = crate::bundle::now_secs();
+    let local_ctx = crate::identity::run_context();
     let rows: Vec<serde_json::Value> = threads
         .iter()
         .map(|t| {
@@ -2040,6 +2064,16 @@ fn threads_json() -> String {
                         "prompts": m.prompt_count(),
                         "memories": m.memory_count(),
                         "bytes": m.total_bytes(),
+                        // Computed from the manifest here rather than carried
+                        // over from `Loaded`: this listing is built from
+                        // manifests, and a second set of rules for deciding
+                        // the same thing is how the page comes to show a
+                        // bundle as current that `gage open` withholds.
+                        "freshness": m.freshness(now).word(),
+                        "expires": m.expires,
+                        "context": m.context,
+                        "context_match": crate::manifest::context_match(
+                            m.context.as_deref(), local_ctx.as_deref()).word(),
                         "items": m.items.iter().map(|i| serde_json::json!({
                             "kind": format!("{:?}", i.kind).to_lowercase(),
                             "path": i.path.strip_prefix("items/").unwrap_or(&i.path),

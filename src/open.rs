@@ -23,7 +23,7 @@
 //! prompt is written to be obeyed and is therefore the dangerous kind.
 
 use crate::bundle::Loaded;
-use crate::manifest::{ItemKind, one_line};
+use crate::manifest::{ContextMatch, Freshness, ItemKind, one_line, safe_display};
 use crate::trust::{Contacts, Trust};
 use base64::{Engine, engine::general_purpose::STANDARD as B64};
 use std::fs;
@@ -414,6 +414,21 @@ pub fn render(l: &Loaded, reveal: bool) -> Result<String, String> {
     s.push_str(&format!("  subject    : {}\n", one_line(&m.subject)));
     s.push_str(&format!("  bundle id  : {}\n", one_line(&m.id)));
     s.push_str(&format!("  created    : {}\n", one_line(&m.created)));
+    // Expiry and context are VERDICT-LEVEL facts, so they sit here beside
+    // the signature and the chain of custody rather than being left in the
+    // manifest for whoever thinks to look. The replay they exist to catch
+    // does not announce itself: an old handoff re-delivered into a new run
+    // has a perfectly good signature from a sender on your list, and the
+    // only thing that gives it away is one of these two lines not matching
+    // the run the reader is in.
+    for line in freshness_lines(&l.freshness, m.age_secs(crate::bundle::now_secs())) {
+        s.push_str(&line);
+        s.push('\n');
+    }
+    for line in context_lines(m.context.as_deref(), l.context_match) {
+        s.push_str(&line);
+        s.push('\n');
+    }
     if let Some(a) = &m.agent {
         s.push_str(&format!(
             "  produced by: {}{}\n",
@@ -516,6 +531,50 @@ pub fn render(l: &Loaded, reveal: bool) -> Result<String, String> {
         return Ok(s);
     }
 
+    // Expiry gates the payload the same way a bad verdict does, and for a
+    // reason worth stating precisely: the sender themselves said this was
+    // no longer current. Withholding is not a judgement about them -- it is
+    // taking them at their word.
+    //
+    // What it deliberately is NOT is a rejection of the arrival. The bundle
+    // is still here, still listed by `gage inbox`, still marked; nothing is
+    // deleted and nothing is auto-refused. Arrival is not acceptance, and
+    // an expiry is not a reason to make that decision on the user's behalf.
+    if l.freshness.gates_payload() && !reveal {
+        match &l.freshness {
+            Freshness::Expired { expires, past } => {
+                s.push_str(&format!(
+                    "\n  Contents withheld: this bundle EXPIRED {} ago, at {}, by the\n\
+                     \x20 sender's own declaration inside the signed manifest. The\n\
+                     \x20 signature is fine and the sender is who the verdict says; what\n\
+                     \x20 has lapsed is their claim that this is still the current\n\
+                     \x20 handoff. If a run needs it anyway, ask them to send it again --\n\
+                     \x20 a fresh bundle is the only thing that can say it is still\n\
+                     \x20 wanted. --reveal shows it and changes nothing else.\n",
+                    dur(*past),
+                    safe_display(expires, 60)
+                ));
+            }
+            Freshness::Unreadable { expires } => {
+                s.push_str(&format!(
+                    "\n  Contents withheld: this bundle declares an expiry this tool\n\
+                     \x20 cannot read ({}), so whether it has lapsed cannot be\n\
+                     \x20 determined. Treated as expired rather than as having no\n\
+                     \x20 expiry: the sender set a bound, and ignoring a bound because\n\
+                     \x20 it is malformed would leave you with none at all. Ask them to\n\
+                     \x20 re-send it with an RFC 3339 timestamp.\n",
+                    safe_display(expires, 60)
+                ));
+            }
+            // Unreachable: `gates_payload` is true for exactly the two arms
+            // above. Kept exhaustive rather than wildcarded so that a new
+            // Freshness state has to come here and say what it withholds.
+            Freshness::Undeclared | Freshness::Current { .. } => {}
+        }
+        s.push_str(&format!("=== END RECEIVED CONTEXT {n} ===\n"));
+        return Ok(s);
+    }
+
     for it in &m.items {
         let body = fs::read_to_string(l.dir.join(&it.path))
             .unwrap_or_else(|_| "<not valid UTF-8; read the file directly>".into());
@@ -577,6 +636,142 @@ pub fn render(l: &Loaded, reveal: bool) -> Result<String, String> {
         l.trust.label()
     ));
     Ok(s)
+}
+
+/// A duration a person can read, from seconds. Coarse on purpose: the
+/// question an expiry answers is "is this stale", and "3d" answers it where
+/// "271,849 seconds" makes the reader do arithmetic to find out.
+fn dur(secs: i64) -> String {
+    let s = secs.max(0);
+    if s < 60 {
+        format!("{s}s")
+    } else if s < 3_600 {
+        format!("{}m", s / 60)
+    } else if s < 86_400 {
+        format!("{}h", s / 3_600)
+    } else {
+        format!("{}d", s / 86_400)
+    }
+}
+
+/// The `expires :` fact, with the bundle's age beside it.
+///
+/// The age comes from `created`, which the sender wrote, so it is their claim
+/// and is labelled as one. It is here because the two answer different
+/// questions: the expiry is a bound its author set, the age is how long this
+/// has been in flight, and a bundle that is three weeks old with no expiry is
+/// worth a second look even though nothing has lapsed.
+fn freshness_lines(f: &Freshness, age: Option<i64>) -> Vec<String> {
+    let aged = match age {
+        Some(a) if a >= 0 => format!("  (the manifest says it was created {} ago)", dur(a)),
+        // A negative age means `created` is in the future by this machine's
+        // clock. Said rather than hidden: one of the two clocks is wrong, and
+        // which one it is decides whether an expiry here means anything.
+        Some(_) => "  (the manifest's `created` is in the FUTURE by this machine's clock)".into(),
+        None => "  (the manifest's `created` is not a timestamp this tool can read)".into(),
+    };
+    match f {
+        Freshness::Undeclared => vec![format!("  expires    : not declared{aged}")],
+        Freshness::Current { expires, remaining } => vec![format!(
+            "  expires    : {} -- {} from now{aged}",
+            safe_display(expires, 60),
+            dur(*remaining)
+        )],
+        Freshness::Expired { expires, past } => vec![
+            format!(
+                "  expires    : {} -- EXPIRED {} ago{aged}",
+                safe_display(expires, 60),
+                dur(*past)
+            ),
+            "  !! The sender declared this no longer current. Contents are withheld".to_string(),
+            "  \x20             below. It is still in your inbox: an expiry is the sender's".to_string(),
+            "  \x20             statement about their own message, not a decision to refuse".to_string(),
+            "  \x20             the arrival, and nothing here deletes or rejects anything.".to_string(),
+        ],
+        Freshness::Unreadable { expires } => vec![
+            format!(
+                "  expires    : {} -- UNREADABLE, not an RFC 3339 timestamp{aged}",
+                safe_display(expires, 60)
+            ),
+            "  !! An expiry that cannot be read is treated as lapsed, not as absent.".to_string(),
+        ],
+    }
+}
+
+/// The `context :` fact: what run the sender says this is for, and -- when
+/// this machine knows what run IT is in -- whether those are the same run.
+///
+/// The declared label is printed verbatim whatever the comparison says,
+/// because in the ordinary case there is no local context and the comparison
+/// a human or an agent then makes by hand is the one that matters. The
+/// automatic comparison is an addition to that, never a replacement: a reader
+/// who sees only `context_match : match` has been told the answer without
+/// being shown the question.
+fn context_lines(declared: Option<&str>, m: ContextMatch) -> Vec<String> {
+    let mut v = match declared {
+        Some(c) if !c.trim().is_empty() => {
+            vec![format!("  context    : {}", safe_display(c, 160))]
+        }
+        _ => vec!["  context    : not declared".to_string()],
+    };
+    match m {
+        // Nothing local to compare with, which is every machine until
+        // somebody sets one. Not reported as a failure, and the way to make
+        // the comparison automatic is named rather than left to be found.
+        ContextMatch::NoLocalContext => {
+            if declared.is_some_and(|c| !c.trim().is_empty()) {
+                v.push(
+                    "  \x20             That is the sender's label for the run they built this"
+                        .to_string(),
+                );
+                v.push(
+                    "  \x20             for. Compare it with the run you are actually in: a"
+                        .to_string(),
+                );
+                v.push(
+                    "  \x20             handoff replayed out of an old run still carries the old"
+                        .to_string(),
+                );
+                v.push(
+                    "  \x20             run's label, and a sender cannot know the label of a run"
+                        .to_string(),
+                );
+                v.push(
+                    "  \x20             that had not started when they signed. Set GAGE_CONTEXT"
+                        .to_string(),
+                );
+                v.push(
+                    "  \x20             (or <home>/context) and gage will make that comparison"
+                        .to_string(),
+                );
+                v.push("  \x20             here instead of leaving it to you.".to_string());
+            }
+        }
+        ContextMatch::Undeclared => {
+            v.push("  context_match : undeclared -- you are in a run this machine calls".to_string());
+            v.push("  \x20             something, and this bundle names no run at all. Not a".to_string());
+            v.push("  \x20             mismatch: it is how every bundle built before this".to_string());
+            v.push("  \x20             field existed looks. It also cannot tell you this is".to_string());
+            v.push("  \x20             the handoff you were waiting for.".to_string());
+        }
+        ContextMatch::Match => {
+            v.push("  context_match : MATCH -- the same label as the run this machine says".to_string());
+            v.push("  \x20             it is in. That is a useful signal and not an".to_string());
+            v.push("  \x20             authorisation: a label is not secret, and a sender who".to_string());
+            v.push("  \x20             knows what you are working on can write it. It rules".to_string());
+            v.push("  \x20             out a replay from another run; it grants nothing.".to_string());
+        }
+        ContextMatch::Mismatch => {
+            v.push("  !! context_match : MISMATCH -- this bundle was built for a different".to_string());
+            v.push("  \x20             run than the one this machine says it is in. That is".to_string());
+            v.push("  \x20             exactly what a replayed handoff looks like: a good".to_string());
+            v.push("  \x20             signature from someone on your list, carrying work".to_string());
+            v.push("  \x20             that belonged to a run that is over. It is also what".to_string());
+            v.push("  \x20             an ordinary mistake looks like. Either way, do not act".to_string());
+            v.push("  \x20             on it until your user has compared the two labels.".to_string());
+        }
+    }
+    v
 }
 
 /// The `authorised :` block: whether the receiver's own user has

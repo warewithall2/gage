@@ -27,6 +27,7 @@ drive both sides of a test.
 | add a contact | `gage add <name> <key>` | non-interactive. Quote the name: a derived handle is two words |
 | build a bundle | `gage send --to <name> --subject <s> [--file f] [--prompt p] [--decision d] [--memory m] [--dir D] --out <dir>` | writes a directory; prints where |
 | what kind | `--type share\|question\|answer\|review-request\|ack` | an unknown type is refused, not defaulted |
+| bind it to a run | `--ttl 7d` (or `--expires <rfc3339>`) and `--context "<run>"` | optional. After the expiry the recipient's `open` withholds the payload; the context is shown to them to compare with the run they are in. A reply inherits the thread's context |
 | send over a relay | `gage push <dir> --to <name> --yes` | **`--yes` is required** without a terminal |
 | send over the LAN | `gage send ... --lan` | needs `gage lan` running on both |
 | collect | `gage pull` | into `inbox/pending`, unread |
@@ -46,7 +47,7 @@ Checked, not assumed:
 |---|---|
 | `0` | it worked. For `open`: the bundle is **attributable** — a key signed it and that signature verifies |
 | `1` | it did not work, and the message says why and what to do next |
-| `2` | for `open`: a verdict of **not attributable** — signature missing or invalid, payload does not match the signed manifest, or the signing key is out of service. Also clap's code for a malformed command line |
+| `2` | for `open`: the payload was **withheld** — not attributable (signature missing or invalid, or the signing key is out of service), the payload does not match the signed manifest, or the bundle has **expired**. Also clap's code for a malformed command line |
 
 Checked against the binary, because the distinction between 1 and 2 is not the
 obvious one:

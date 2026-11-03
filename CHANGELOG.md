@@ -2,6 +2,53 @@
 
 ## Unreleased
 
+- **A bundle can now carry a short expiry and the run it was meant for, so a
+  valid sender cannot replay an old handoff into a new one.** Exact
+  re-delivery was already dead -- the receiver recomputes the content id and
+  uses it as the dedup key -- but the two shapes beside it were not: the same
+  bundle arriving late out of a relay, or its content re-sent fresh, into a
+  run its instructions no longer describe. In both the signature is good and
+  the sender is on your list, so nothing in the verdict could tell them from a
+  current handoff.
+
+  Two optional fields in the signed manifest. `gage send --ttl 7d` (or
+  `--expires <rfc3339>`) sets a bound; after it the recipient's `gage open`
+  withholds the payload, the way it does on a bad verdict. `--context "build
+  run 12"` declares the task or run, and the frame shows it verbatim so the
+  receiving agent and human can compare it with the run they are actually in
+  -- a mismatch is the tell. Where the receiving side has a run context of its
+  own (`GAGE_CONTEXT`, or `<home>/context`) the verdict states the comparison
+  as well. Both facts are verdict-level: they sit next to the signature and
+  the chain of custody in the frame, in `gage inbox` either form, in the
+  viewer, and in the JSON `gage_open` and `gage_inbox` return, so an agent can
+  branch before it reads a payload. A reply inherits its thread's context
+  without being asked to.
+
+  Three decisions worth stating, because the obvious version of each is
+  wrong. **No default TTL**: absent means no expiry, since store-and-forward
+  mail is entitled to sit and a default would quietly expire mail nobody asked
+  to. **An expired bundle is not refused**, only gated: it stays in the inbox,
+  stays listed and stays marked, because arrival is not acceptance and an
+  expiry is the sender's statement about their own message rather than a
+  licence to take your decision for you. **`context` is the label, not a hash
+  of it**: a hash would look more like security and buy nothing, since the
+  manifest is signed either way and the thing a receiver does with the label
+  is compare it with their own run, which needs the text. A match rules out a
+  replay from another run and authorises nothing -- a label is not secret.
+
+  Format v1 is unchanged and `expected_id` is untouched. `tests/compat.sh`
+  builds the 0.3.5 binary from its tag and checks both directions rather than
+  reasoning about them, and it found the edge of the claim: an **un-upgraded
+  hop forwarding** one of these bundles re-signs it through its own struct and
+  strips both fields. A version bump would not have helped -- 0.3.5 never
+  checks `v` on a bundle, so it is invisible to it -- and nothing can make a
+  binary preserve a field it does not have. The strip leaves no trace rather
+  than a false one: a new reader reports `not declared`. Senders who need the
+  binding to survive every hop need every hop upgraded.
+
+  From the r/mcp launch thread: u/BC_MARO asked for exactly this, and for the
+  expiry and context to be verdict-level facts rather than manifest trivia.
+
 ## 0.3.5 — 2026-10-30
 
 - **Documented: a gage older than 0.3.4 silently erases confirmations.** The

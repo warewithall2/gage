@@ -329,6 +329,23 @@ pub fn inbox_rows(all: bool) -> Vec<serde_json::Value> {
                 "prompts": l.manifest.prompt_count(),
                 "items": l.manifest.items.len(),
                 "tampered": l.tampered,
+                // Freshness as a word, not a boolean, and the same four
+                // words everywhere: "undeclared" and "current" are
+                // different facts and an agent branching on a boolean
+                // would have to treat them alike. `expired` is here as
+                // well because it is the one an agent must not miss, and
+                // a reader who branches on the wrong field should get the
+                // safe answer rather than no answer.
+                "freshness": l.freshness.word(),
+                "expired": l.freshness.gates_payload(),
+                "expires": l.freshness.declared()
+                    .map(|e| crate::manifest::safe_display(e, 60)),
+                // Sender-chosen text reaching an agent before anybody has
+                // accepted anything, so escaped and bounded like the
+                // subject beside it.
+                "context": l.manifest.context.as_deref()
+                    .map(|c| crate::manifest::safe_display(c, 160)),
+                "context_match": l.context_match.word(),
             })
         })
         .chain(accepted.iter().map(|(_, l)| {
@@ -338,6 +355,13 @@ pub fn inbox_rows(all: bool) -> Vec<serde_json::Value> {
                 "subject": crate::manifest::safe_display(&l.manifest.subject, 160),
                 "from_key": l.manifest.from.key,
                 "trust": l.trust.label(),
+                "freshness": l.freshness.word(),
+                "expired": l.freshness.gates_payload(),
+                "expires": l.freshness.declared()
+                    .map(|e| crate::manifest::safe_display(e, 60)),
+                "context": l.manifest.context.as_deref()
+                    .map(|c| crate::manifest::safe_display(c, 160)),
+                "context_match": l.context_match.word(),
             })
         }))
         .collect()

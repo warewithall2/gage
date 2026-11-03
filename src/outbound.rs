@@ -308,6 +308,100 @@ pub struct SendArgs {
     /// this machine's own journal, no user content, and goes only to a
     /// contact already on the list.
     pub record_send: bool,
+    /// How long this should stay current, as a duration: `24h`, `7d`, `30m`.
+    /// Resolved against this machine's clock at build time, so what ships is
+    /// an absolute instant and not a countdown a recipient has to interpret.
+    pub ttl: Option<String>,
+    /// The expiry as an absolute RFC 3339 timestamp, for a sender who has a
+    /// deadline rather than a window. Canonicalised before it is signed.
+    pub expires: Option<String>,
+    /// The task or run label. Inherited from the thread on a reply unless the
+    /// caller passes one.
+    pub context: Option<String>,
+}
+
+/// Resolve `--ttl` / `--expires` into the one absolute UTC timestamp that
+/// goes into the manifest.
+///
+/// Both forms end up here, and the result is always formatted by
+/// `bundle::rfc3339` -- the same function that writes `created`. That is not
+/// tidiness: an expiry a sender typed as `+02:00` is a correct RFC 3339
+/// timestamp that no 0.3.5 reader will ever see, and canonicalising it at
+/// send time means the bytes a recipient compares are in the form this tree
+/// produces everywhere else. The parse stays permissive on the way in, so a
+/// sender who types an offset is not refused -- they are normalised.
+///
+/// Giving both is refused rather than resolved by precedence. They are two
+/// ways of saying one thing, and a silent winner is how a sender comes to
+/// believe they set a deadline they did not set.
+pub fn resolve_expiry(
+    ttl: Option<&str>,
+    expires: Option<&str>,
+    now: i64,
+) -> Result<Option<String>, String> {
+    match (ttl, expires) {
+        (Some(_), Some(_)) => Err("--ttl and --expires say the same thing two ways; pass one. \
+             --ttl 24h is a window from now, --expires is an instant."
+            .into()),
+        (None, None) => Ok(None),
+        (Some(t), None) => {
+            let secs = parse_duration(t)?;
+            Ok(Some(crate::bundle::rfc3339(now + secs)))
+        }
+        (None, Some(e)) => {
+            let at = crate::bundle::parse_rfc3339(e).ok_or_else(|| {
+                format!(
+                    "--expires wants an RFC 3339 timestamp like 2026-11-09T09:00:00Z, not {:?}. \
+                     A zone is required: a bare local time is hours away from where you meant it.",
+                    manifest::one_line(e)
+                )
+            })?;
+            // Refused, not warned. A bundle that is expired before it is
+            // built cannot be opened by anyone, so building it is never what
+            // the sender wanted, and the only place this can be said while
+            // it is still fixable is here.
+            if at <= now {
+                return Err(format!(
+                    "--expires {} is already past; the bundle would be built expired and \
+                     its recipient could not open it.",
+                    manifest::one_line(e)
+                ));
+            }
+            Ok(Some(crate::bundle::rfc3339(at)))
+        }
+    }
+}
+
+/// `24h`, `7d`, `30m`, `2w` as seconds.
+///
+/// Deliberately the same four units, the same shape and the same refusals as
+/// `--since` in `main.rs`: one duration grammar in this tool, so a person who
+/// has learned `7d` once has learned it everywhere. Zero is refused for the
+/// same reason a past `--expires` is.
+pub fn parse_duration(w: &str) -> Result<i64, String> {
+    let w = w.trim();
+    let (n, unit) = w.split_at(w.len().saturating_sub(1));
+    let n: i64 = n.parse().map_err(|_| {
+        format!(
+            "--ttl wants a duration like 24h, 7d or 30m, not {:?}",
+            manifest::one_line(w)
+        )
+    })?;
+    if n <= 0 {
+        return Err("--ttl must be positive; a bundle that expires now or earlier \
+             cannot be opened by anybody"
+            .into());
+    }
+    match unit {
+        "m" => Ok(n * 60),
+        "h" => Ok(n * 3_600),
+        "d" => Ok(n * 86_400),
+        "w" => Ok(n * 604_800),
+        _ => Err(format!(
+            "unknown unit {:?} in --ttl; use m, h, d or w",
+            manifest::one_line(unit)
+        )),
+    }
 }
 
 /// Build and deliver a bundle.
@@ -344,6 +438,9 @@ pub fn send_bundle(
         agent,
         model,
         record_send,
+        ttl,
+        expires,
+        context,
     } = a;
     let r#type = type_in;
 
@@ -446,11 +543,29 @@ pub fn send_bundle(
     // than walked at read time: over a relay you may hold only part
     // of a thread, and a chain you cannot walk is a thread you cannot
     // group. Falling back to the parent id still groups the pair.
-    let thread = reply_to.as_ref().map(|rid| {
-        find_manifest(rid)
-            .map(|m| m.thread_id().to_string())
-            .unwrap_or_else(|| rid.clone())
+    // The parent is looked up once and used for both the thread and the
+    // inherited context. Two lookups would be two chances for them to come
+    // from different messages.
+    let parent = reply_to.as_ref().and_then(|rid| find_manifest(rid));
+    let thread = reply_to.as_ref().map(|rid| match &parent {
+        Some(m) => m.thread_id().to_string(),
+        None => rid.clone(),
     });
+    // A reply inherits the thread's context, derived at the same point and
+    // from the same message as the thread id. An exchange about one run is
+    // about that run in both directions, and a reply that dropped the label
+    // would be a reply the other side could not match against its own run --
+    // which is the comparison the field exists for.
+    //
+    // An explicit `--context` wins, and passing a blank one clears it: a
+    // sender who has moved on from the run their correspondent was in has to
+    // be able to say so.
+    let context = match context {
+        Some(c) if c.trim().is_empty() => None,
+        Some(c) => Some(c),
+        None => parent.as_ref().and_then(|m| m.context.clone()),
+    };
+    let expires = resolve_expiry(ttl.as_deref(), expires.as_deref(), crate::bundle::now_secs())?;
     let ag = agent.map(|name| AgentInfo { name, model });
     // Built once into a staging dir, then delivered to each routed
     // recipient. Building per-recipient would give one payload a
@@ -480,7 +595,17 @@ pub fn send_bundle(
         .clone()
         .unwrap_or_else(|| identity::home().join(format!("outbox/{}", std::process::id())));
     let m = bundle::create(
-        &stage, &id, &subject, &to, ag, reply_to, thread, msg_type, &specs,
+        &stage,
+        &id,
+        &subject,
+        &to,
+        ag,
+        reply_to,
+        thread,
+        msg_type,
+        expires,
+        context,
+        &specs,
     )?;
     // Keep our own copy before delivering anywhere.
     let sent = routes::sent_dir(&identity::home()).join(&m.id);
@@ -550,6 +675,20 @@ pub fn send_bundle(
             m.memory_count()
         ));
     }
+    // Echoed back because they are the two fields a sender can get wrong in
+    // a way nothing else will tell them about: a `--ttl` typed as `7h` when
+    // `7d` was meant builds a bundle that works now and is refused on Monday.
+    if let Some(e) = &m.expires {
+        say.push(format!(
+            "  expires {e} -- after that the recipient's gage withholds the payload"
+        ));
+    }
+    if let Some(c) = &m.context {
+        say.push(format!(
+            "  context {:?} -- shown to the recipient to compare with the run they are in",
+            manifest::safe_display(c, 160)
+        ));
+    }
     for d in &delivered {
         say.push(format!("  delivered {d}"));
     }
@@ -568,4 +707,66 @@ pub fn send_bundle(
     }
 
     Ok(m)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_ttl_becomes_an_absolute_instant_in_the_form_this_tree_writes() {
+        // The window is resolved at build time rather than shipped as a
+        // countdown, because a countdown would have to be interpreted
+        // against the RECIPIENT's clock -- and then "7d" means a different
+        // instant for every reader, including a relay that held it a while.
+        let now = 1_793_000_000;
+        let out = resolve_expiry(Some("7d"), None, now).unwrap().unwrap();
+        assert_eq!(out, crate::bundle::rfc3339(now + 7 * 86_400));
+        // And it round-trips through the parser the receiver uses.
+        assert_eq!(
+            crate::bundle::parse_rfc3339(&out),
+            Some(now + 7 * 86_400),
+            "{out}"
+        );
+        for (w, secs) in [("30m", 1_800), ("24h", 86_400), ("2w", 1_209_600)] {
+            assert_eq!(parse_duration(w), Ok(secs), "{w}");
+        }
+    }
+
+    #[test]
+    fn an_absolute_expiry_is_canonicalised_rather_than_passed_through() {
+        // A sender may legitimately type an offset. What a recipient compares
+        // is then in the same form everything else in this tree writes, so a
+        // reader eyeballing the manifest is not comparing two notations.
+        let now = 1_793_000_000;
+        let at = crate::bundle::rfc3339(now + 3_600);
+        let typed = at.replace('Z', "+00:00");
+        assert_eq!(
+            resolve_expiry(None, Some(&typed), now).unwrap(),
+            Some(at.clone())
+        );
+        assert_eq!(resolve_expiry(None, Some(&at), now).unwrap(), Some(at));
+    }
+
+    #[test]
+    fn the_ways_of_getting_an_expiry_wrong_are_refused_at_send_time() {
+        let now = 1_793_000_000;
+        // Both at once. Two ways of saying one thing, and a silent winner is
+        // how a sender comes to believe they set a deadline they did not set.
+        assert!(resolve_expiry(Some("7d"), Some("2026-11-09T09:00:00Z"), now).is_err());
+        // Already past: the bundle would be built unopenable, and this is
+        // the last moment anybody can be told while it is still fixable.
+        assert!(resolve_expiry(None, Some(&crate::bundle::rfc3339(now - 1)), now).is_err());
+        assert!(resolve_expiry(None, Some(&crate::bundle::rfc3339(now)), now).is_err());
+        // Not a timestamp, no zone, not a duration, zero, negative, bad unit.
+        assert!(resolve_expiry(None, Some("next tuesday"), now).is_err());
+        assert!(resolve_expiry(None, Some("2026-11-09T09:00:00"), now).is_err());
+        for bad in ["7y", "abc", "", "0d", "-1d", "d", "1 d"] {
+            assert!(parse_duration(bad).is_err(), "{bad:?} should be refused");
+        }
+        // Nothing asked for is still nothing: no default TTL, ever. A
+        // default would silently expire mail that store-and-forward is
+        // entitled to hold.
+        assert_eq!(resolve_expiry(None, None, now), Ok(None));
+    }
 }

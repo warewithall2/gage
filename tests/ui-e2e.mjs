@@ -126,10 +126,29 @@ async function buddies([base, key, wantPair, wrongPair]) {
 // Added because the confirmation record shipped with no browser coverage at
 // all: the endpoint and the card were written together, the Rust side
 // compiled, and nothing drove a person through the one path in the page that
-// can produce SENDER VERIFIED. The property it guards is the same one the
-// request gate guards and is easier to lose here, because this card sits in a
-// list that re-renders on a 2s poll: **the four pairs must not be on the page
-// while they are being asked for.**
+// can produce SENDER VERIFIED.
+//
+// This scenario asserted the superseded design until 2026-11-03: that the
+// four pairs must NOT be on the card, because the person was made to type
+// them and an answer on screen turns typing into copying. The product call
+// of 2026-10-30 (`5c4d106`) replaced that with the shape every device
+// pairing a person already knows -- the code shows on both screens and the
+// person says whether they match -- so the card now DISPLAYS the pairs and
+// offers "The words match" / "They don't match". The old assertions went on
+// asserting the old design and were red from 0.3.5 onward; Owen ruled the
+// test the stale side.
+//
+// The property to guard moved with it, and it is worth stating precisely
+// because it inverts: in a comparison design, showing the pairs is the
+// feature, and what must hold instead is that the pairs shown are **this
+// key's actual fingerprint**. A card that displayed anything else -- a
+// placeholder, a stale value, another contact's words -- would collect a
+// person's attestation that two things match while showing them something
+// that was never compared, which is worse than the typed form it replaced.
+// So: the displayed value equals what the CLI computes for this key, the
+// decline button cannot confirm anybody, and only the match button reaches
+// SENDER VERIFIED. The card still sits in a list that re-renders on a 2.5s
+// poll, so every state assertion here has to survive one.
 async function confirmgate([base, name, wantWords, wrongWords]) {
   await page.goto(base + '/#buddies');
   if (!(await waitFor('.dev', 'the buddy list never rendered'))) return;
@@ -149,27 +168,53 @@ async function confirmgate([base, name, wantWords, wrongWords]) {
   // question about its state.
   const tags = () => card.locator('.devtag');
   const tagText = async () => (await tags().allTextContents()).join(' ');
-  ok(/unconfirmed/i.test(await tagText()),
+  // Nobody has done anything yet, so the only state the card may be in is
+  // the one before a human acts.
+  const before = await tagText();
+  ok(/unconfirmed/i.test(before),
      'an unconfirmed contact is not tagged unconfirmed');
-  // The whole point. If this fails, the page is showing the answer to the
-  // question it is asking.
-  ok(!(await has(wantWords)),
-     'the four word-pairs were on the page before they were typed');
+  ok(!/\bconfirmed\b/.test(before.replace(/unconfirmed/gi, '')),
+     'a contact nobody has compared is tagged confirmed');
 
-  // A wrong echo records nothing, reveals nothing, and does not say what the
-  // right answer was.
-  await card.locator('input.lanin').first().fill(wrongWords);
-  await card.getByText('Confirm', { exact: true }).click();
-  if (await waitFor('.lanerr', 'a wrong echo produced no error')) {
-    ok(!(await has(wantWords)),
-       'a wrong echo revealed or echoed the expected words');
-    ok(/unconfirmed/i.test(await tagText()),
-       'a wrong echo confirmed the contact anyway');
+  // The property the comparison design rests on. Read from the element that
+  // renders it, not from the page, because "the words are somewhere on the
+  // page" is not the claim -- the claim is that THIS card is showing THIS
+  // key's pairs, which is what the person is about to attest to.
+  const fp = card.locator('.devfp.bigfp');
+  if (!(await fp.count())) {
+    failed++;
+    console.log('  FAIL: the card shows no word-pairs to compare');
+    return;
   }
+  const shown = ((await fp.first().textContent()) || '').trim();
+  ok(shown === wantWords,
+     'the card does not show this key\'s own fingerprint: showed ' +
+     JSON.stringify(shown) + ', the CLI says ' + JSON.stringify(wantWords));
+  // And it is not showing some other set of four real pairs, which is the
+  // failure a bare "is a fingerprint displayed" check would pass.
+  ok(!(await has(wrongWords)),
+     'the card displayed words that are not this key\'s');
 
-  // The right one flips it.
-  await card.locator('input.lanin').first().fill(wantWords);
-  await card.getByText('Confirm', { exact: true }).click();
+  // "They don't match" must not be a confirmation by another route. It is
+  // the answer a person gives when the ceremony FAILED, so the one thing it
+  // may never do is record the thing the ceremony was for.
+  await card.getByText("They don't match", { exact: true }).click();
+  if (await waitFor('.lanerr', 'declining the comparison said nothing at all')) {
+    ok(/unconfirmed/i.test(await tagText()),
+       'declining the comparison confirmed the contact anyway');
+  }
+  // Checked again after a poll, which is the half a page-local assertion
+  // misses: the tag is rendered from /api/buddies, so a confirmation written
+  // on the server would only surface on the next refresh. Still unconfirmed
+  // 3s later means nothing was recorded, not merely that nothing was drawn.
+  await page.waitForTimeout(3000);
+  ok(/unconfirmed/i.test(await tagText()),
+     'declining the comparison recorded a confirmation that showed up on the next poll');
+
+  // And the one route that does. `budConfirm` clears the decline notice and
+  // posts the fingerprint it displayed, which the server checks against the
+  // key's current one before it records anything.
+  await card.getByText('The words match', { exact: true }).click();
   try {
     await page.waitForFunction(
       n => {
@@ -182,11 +227,12 @@ async function confirmgate([base, name, wantWords, wrongWords]) {
       name, { timeout: 10000 });
   } catch {
     failed++;
-    console.log('  FAIL: the right word-pairs did not confirm the contact');
+    console.log('  FAIL: attesting that the words match did not confirm the contact');
     return;
   }
-  // And only now are the pairs shown, which is what the card is for: a
-  // confirmed contact's fingerprint is something you re-check later.
+  // The pairs stay on a confirmed card, which is what it is for: a
+  // fingerprint is something you re-check later, after a rotation or a
+  // doubt.
   ok(await has(wantWords),
      'a confirmed contact does not show the words that were confirmed');
 }

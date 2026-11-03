@@ -339,6 +339,22 @@ enum Cmd {
         agent: Option<String>,
         #[arg(long)]
         model: Option<String>,
+        /// How long it stays current: 24h, 7d, 30m, 2w. After that the
+        /// recipient's gage withholds the payload. Omit for no expiry, which
+        /// is the default -- mail is allowed to sit.
+        #[arg(long)]
+        ttl: Option<String>,
+        /// The expiry as an instant instead of a window: an RFC 3339
+        /// timestamp with a zone, e.g. 2026-11-09T09:00:00Z. One of this and
+        /// --ttl, not both.
+        #[arg(long)]
+        expires: Option<String>,
+        /// The task or run this is for, e.g. "loan-packager build run 12" or
+        /// a ticket id. Rides inside the signed manifest and is shown to the
+        /// recipient to compare against the run THEY are in -- which is how
+        /// an old handoff replayed into a new run gives itself away.
+        #[arg(long)]
+        context: Option<String>,
     },
     /// Answer a thread without typing its id or working out the recipient
     Reply {
@@ -373,6 +389,14 @@ enum Cmd {
         model: Option<String>,
         #[arg(long)]
         out: Option<PathBuf>,
+        #[arg(long)]
+        ttl: Option<String>,
+        #[arg(long)]
+        expires: Option<String>,
+        /// Override the context inherited from the thread. A reply keeps the
+        /// thread's context by default; pass an empty string to clear it.
+        #[arg(long)]
+        context: Option<String>,
     },
     /// Summarise a bundle without putting its contents in context
     Inspect { dir: PathBuf },
@@ -1716,6 +1740,13 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                         model: None,
                         // The one send that is NOT journalled. See `record_send`.
                         record_send: false,
+                        // An anchor is a standing record of this machine's
+                        // journal head, not a handoff into a run. Nothing
+                        // about it goes stale and there is no task to bind
+                        // it to.
+                        ttl: None,
+                        expires: None,
+                        context: None,
                     },
                     &mut say,
                 );
@@ -2261,6 +2292,9 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             lan,
             agent,
             model,
+            ttl,
+            expires,
+            context,
         } => {
             let targets = to.clone();
             let mut say = Vec::new();
@@ -2282,6 +2316,9 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     agent,
                     model,
                     record_send: true,
+                    ttl,
+                    expires,
+                    context,
                 },
                 &mut say,
             );
@@ -2315,6 +2352,9 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             agent,
             model,
             out,
+            ttl,
+            expires,
+            context,
         } => {
             let t = resolve_reply(&id)?;
             // --text is written to a file rather than handled specially, so a
@@ -2362,6 +2402,9 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     agent,
                     model,
                     record_send: true,
+                    ttl,
+                    expires,
+                    context,
                 },
                 &mut say,
             );
@@ -2465,7 +2508,13 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             // a bundle that predates its retirement is attributable, so a
             // harness should carry on; a revoked one is not, so it should
             // stop, exactly as it does for a bad signature.
+            // An expired bundle joins them. The payload was withheld, so a
+            // harness that carried on would be acting on a frame with no
+            // contents in it -- and the one in `--reveal`'s case has been
+            // read under a verdict its user asked to override, which is
+            // still not a success.
             if !l.tampered.is_empty()
+                || l.freshness.gates_payload()
                 || matches!(
                     l.trust,
                     trust::Trust::Unverified | trust::Trust::Revoked | trust::Trust::Unwitnessed
@@ -2533,6 +2582,34 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                         println!("      -> expects a reply");
                     }
                     println!("      {}", l.trust.label());
+                    // Marked, never hidden and never dropped. Arrival is not
+                    // acceptance either way: an expired bundle is still mail
+                    // that turned up, and the decision about it stays the
+                    // user's. What the mark buys is that they do not open it
+                    // expecting contents and find a withholding notice.
+                    match &l.freshness {
+                        manifest::Freshness::Expired { expires, .. } => println!(
+                            "      EXPIRED {} -- the sender declared this no longer current; \
+                             `gage open` withholds the payload",
+                            manifest::safe_display(expires, 60)
+                        ),
+                        manifest::Freshness::Unreadable { expires } => println!(
+                            "      EXPIRY UNREADABLE {} -- not an RFC 3339 timestamp, so \
+                             treated as lapsed",
+                            manifest::safe_display(expires, 60)
+                        ),
+                        manifest::Freshness::Current { expires, .. } => {
+                            println!("      expires {}", manifest::safe_display(expires, 60))
+                        }
+                        manifest::Freshness::Undeclared => {}
+                    }
+                    if let Some(c) = &m.context {
+                        println!(
+                            "      context {} [{}]",
+                            manifest::safe_display(c, 160),
+                            l.context_match.word()
+                        );
+                    }
                     if !l.tampered.is_empty() {
                         println!("      TAMPERED: {}", l.tampered.join(", "));
                     }
