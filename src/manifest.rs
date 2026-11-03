@@ -199,10 +199,197 @@ pub struct Manifest {
     /// to decide and are stored locally.
     #[serde(default)]
     pub msg_type: MsgType,
+    /// When this bundle stops being current, RFC 3339. Absent means no
+    /// expiry, which is the old behaviour and still the default: mail that
+    /// sits in a relay for a week is store-and-forward working, not a fault.
+    ///
+    /// Sender-declared, inside the signed manifest, and therefore exactly as
+    /// tamper-proof as the rest of it -- but it is still the SENDER's claim
+    /// about their own message, not a fact about yours. What it buys is the
+    /// one thing `created` cannot: a bound the sender set deliberately, so a
+    /// receiver can tell "old mail" from "mail its author had already
+    /// written off". Nothing extends it, a forward least of all.
+    ///
+    /// Optional, and omitted when absent, which is what keeps format v1
+    /// intact: a 0.3.5 reader verifies the signature over these exact bytes
+    /// and ignores a field it has never heard of, and a bundle with no
+    /// expiry serialises byte-for-byte as it did before this field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires: Option<String>,
+    /// The task or run the sender meant this for: a label, not a secret.
+    ///
+    /// Deliberately the label itself rather than a hash of it. A hash would
+    /// look more like security and buy nothing: the manifest is signed, so
+    /// the label cannot be altered either way, and the thing a receiver has
+    /// to do with it is COMPARE IT WITH THE RUN THEY ARE ACTUALLY IN -- which
+    /// needs the text. Task labels are not secret, and hiding one behind a
+    /// digest would only mean the mismatch could not be shown to the person
+    /// who has to judge it.
+    ///
+    /// This is the replay tell. An old handoff re-delivered into a new run
+    /// still carries the old run's label, and a sender cannot know the label
+    /// of a run that had not started when they signed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<String>,
     pub items: Vec<Item>,
 }
 
+/// What a receiver can say about a bundle's declared expiry.
+///
+/// A verdict-level fact, computed locally from this machine's clock and the
+/// signed manifest, and never read as a boolean. "No expiry declared" and
+/// "expiry declared and still current" are different statements and the
+/// second is the only one that is a promise about freshness; collapsing them
+/// into `is_fresh() == true` is how an undeclared bundle would come to read
+/// as a guaranteed-current one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Freshness {
+    /// No `expires` in the manifest. The ordinary case, and the only one
+    /// bundles built before this field existed can be in.
+    Undeclared,
+    /// Declared, parsed, and not reached yet.
+    Current {
+        expires: String,
+        /// Seconds until it expires.
+        remaining: i64,
+    },
+    /// Declared, parsed, and passed. The payload is gated on this.
+    Expired {
+        expires: String,
+        /// Seconds since it expired.
+        past: i64,
+    },
+    /// Declared and NOT parseable as an RFC 3339 timestamp.
+    ///
+    /// Gated like `Expired`, which is the fail-closed direction and is a
+    /// decision rather than an oversight. The alternative -- ignore what we
+    /// cannot read -- means a sender who declares a bound gets a receiver
+    /// that silently has none, and the one case where that matters is the
+    /// case this field was added for.
+    Unreadable { expires: String },
+}
+
+impl Freshness {
+    /// Does the payload stay behind the gate?
+    pub fn gates_payload(&self) -> bool {
+        matches!(self, Freshness::Expired { .. } | Freshness::Unreadable { .. })
+    }
+
+    /// The expiry as the sender wrote it, if they declared one. Escaped and
+    /// bounded by the caller like every other sender-chosen string.
+    pub fn declared(&self) -> Option<&str> {
+        match self {
+            Freshness::Undeclared => None,
+            Freshness::Current { expires, .. }
+            | Freshness::Expired { expires, .. }
+            | Freshness::Unreadable { expires } => Some(expires),
+        }
+    }
+
+    /// One word for a machine reader to branch on. Distinct values for
+    /// distinct facts, for the reason the enum itself is not a boolean.
+    pub fn word(&self) -> &'static str {
+        match self {
+            Freshness::Undeclared => "undeclared",
+            Freshness::Current { .. } => "current",
+            Freshness::Expired { .. } => "expired",
+            Freshness::Unreadable { .. } => "unreadable",
+        }
+    }
+}
+
+/// Whether the context the sender declared is the run this machine is in.
+///
+/// Three outcomes and not two. "The sender declared nothing" and "the sender
+/// declared something that does not match" are the two a reader must never
+/// see merged, because the first is the ordinary state of every bundle built
+/// before this field existed and the second is a replay in progress.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContextMatch {
+    /// Nothing local to compare against, so no comparison was made. The
+    /// declared label is still surfaced verbatim -- that is what a reader
+    /// compares by hand.
+    NoLocalContext,
+    /// This machine has a run context and the bundle declares none.
+    Undeclared,
+    Match,
+    Mismatch,
+}
+
+impl ContextMatch {
+    pub fn word(&self) -> &'static str {
+        match self {
+            ContextMatch::NoLocalContext => "no-local-context",
+            ContextMatch::Undeclared => "undeclared",
+            ContextMatch::Match => "match",
+            ContextMatch::Mismatch => "mismatch",
+        }
+    }
+}
+
+/// Compare a declared context with the run this machine says it is in.
+///
+/// Exact after trimming the ends, and case-SENSITIVE. A looser comparison was
+/// the first version and it is the wrong trade here: this function's only
+/// output that matters is `Match`, which tells a reader the handoff belongs to
+/// the run they are in, and every fold -- case, inner whitespace, punctuation
+/// -- is a way for two different labels to earn that word. A label that
+/// differs only in case is a mismatch worth seeing; the cost of being told so
+/// is one glance, and the cost of the other error is acting on a replayed
+/// handoff.
+pub fn context_match(declared: Option<&str>, local: Option<&str>) -> ContextMatch {
+    match (declared.map(str::trim), local.map(str::trim)) {
+        (_, None) | (_, Some("")) => ContextMatch::NoLocalContext,
+        (None, Some(_)) | (Some(""), Some(_)) => ContextMatch::Undeclared,
+        (Some(d), Some(l)) if d == l => ContextMatch::Match,
+        (Some(_), Some(_)) => ContextMatch::Mismatch,
+    }
+}
+
 impl Manifest {
+    /// This bundle's freshness against a clock reading, in seconds since the
+    /// epoch.
+    ///
+    /// `now` is a parameter rather than read here so that one command reaches
+    /// one answer: the renderer, the listing and the MCP verdict all decide
+    /// against the same reading, and a bundle expiring this second cannot be
+    /// current in one line of output and expired in the next.
+    pub fn freshness(&self, now: i64) -> Freshness {
+        let Some(raw) = self.expires.as_deref() else {
+            return Freshness::Undeclared;
+        };
+        let Some(at) = crate::bundle::parse_rfc3339(raw) else {
+            return Freshness::Unreadable {
+                expires: raw.to_string(),
+            };
+        };
+        // `>` and not `>=`: the instant named is the last one it is current
+        // for, which is the reading a person gives "expires at 09:00".
+        if now > at {
+            Freshness::Expired {
+                expires: raw.to_string(),
+                past: now - at,
+            }
+        } else {
+            Freshness::Current {
+                expires: raw.to_string(),
+                remaining: at - now,
+            }
+        }
+    }
+
+    /// How old the bundle says it is, in seconds, or None if `created` is not
+    /// a timestamp this can read.
+    ///
+    /// Surfaced beside the expiry because the two answer different questions
+    /// and the brief wanted both: the expiry is a bound its author set, the
+    /// age is how long it has been in flight. Neither is a fact about YOUR
+    /// clock -- both come off a field the sender wrote -- which is why the
+    /// frame prints them as the sender's claims.
+    pub fn age_secs(&self, now: i64) -> Option<i64> {
+        crate::bundle::parse_rfc3339(&self.created).map(|c| now - c)
+    }
+
     /// The original author, as distinct from whoever sent it to you.
     pub fn author(&self) -> Option<&Peer> {
         self.chain.first().map(|h| &h.by)

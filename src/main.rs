@@ -339,6 +339,22 @@ enum Cmd {
         agent: Option<String>,
         #[arg(long)]
         model: Option<String>,
+        /// How long it stays current: 24h, 7d, 30m, 2w. After that the
+        /// recipient's gage withholds the payload. Omit for no expiry, which
+        /// is the default -- mail is allowed to sit.
+        #[arg(long)]
+        ttl: Option<String>,
+        /// The expiry as an instant instead of a window: an RFC 3339
+        /// timestamp with a zone, e.g. 2026-11-09T09:00:00Z. One of this and
+        /// --ttl, not both.
+        #[arg(long)]
+        expires: Option<String>,
+        /// The task or run this is for, e.g. "loan-packager build run 12" or
+        /// a ticket id. Rides inside the signed manifest and is shown to the
+        /// recipient to compare against the run THEY are in -- which is how
+        /// an old handoff replayed into a new run gives itself away.
+        #[arg(long)]
+        context: Option<String>,
     },
     /// Answer a thread without typing its id or working out the recipient
     Reply {
@@ -373,6 +389,14 @@ enum Cmd {
         model: Option<String>,
         #[arg(long)]
         out: Option<PathBuf>,
+        #[arg(long)]
+        ttl: Option<String>,
+        #[arg(long)]
+        expires: Option<String>,
+        /// Override the context inherited from the thread. A reply keeps the
+        /// thread's context by default; pass an empty string to clear it.
+        #[arg(long)]
+        context: Option<String>,
     },
     /// Summarise a bundle without putting its contents in context
     Inspect { dir: PathBuf },
@@ -1716,6 +1740,13 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                         model: None,
                         // The one send that is NOT journalled. See `record_send`.
                         record_send: false,
+                        // An anchor is a standing record of this machine's
+                        // journal head, not a handoff into a run. Nothing
+                        // about it goes stale and there is no task to bind
+                        // it to.
+                        ttl: None,
+                        expires: None,
+                        context: None,
                     },
                     &mut say,
                 );
@@ -2261,6 +2292,9 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             lan,
             agent,
             model,
+            ttl,
+            expires,
+            context,
         } => {
             let targets = to.clone();
             let mut say = Vec::new();
@@ -2282,6 +2316,9 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     agent,
                     model,
                     record_send: true,
+                    ttl,
+                    expires,
+                    context,
                 },
                 &mut say,
             );
@@ -2315,6 +2352,9 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             agent,
             model,
             out,
+            ttl,
+            expires,
+            context,
         } => {
             let t = resolve_reply(&id)?;
             // --text is written to a file rather than handled specially, so a
@@ -2362,6 +2402,9 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     agent,
                     model,
                     record_send: true,
+                    ttl,
+                    expires,
+                    context,
                 },
                 &mut say,
             );

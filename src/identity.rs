@@ -126,6 +126,42 @@ pub fn home() -> PathBuf {
     homes.into_iter().next().expect("the list is not empty")
 }
 
+/// The run this machine says it is in, for comparing against a bundle's
+/// declared `context`.
+///
+/// Two sources, in order, and both are LOCAL. That is the whole design
+/// constraint: a comparison is only worth making if one side of it is beyond
+/// the sender's reach, so this reads the environment and this home and never
+/// anything that arrived in a bundle.
+///
+/// * `GAGE_CONTEXT` in the environment, which is where a harness puts it --
+///   a run label belongs to one run, and an exported variable is the thing
+///   whose lifetime matches.
+/// * `<home>/context`, first line, for a label that outlives a single
+///   command: a ticket a machine is working through, a long-running build.
+///
+/// Absent or blank means there is nothing to compare, and that is reported as
+/// such rather than as a mismatch -- it is the state every machine is in
+/// until somebody sets one, and "no comparison was possible" must never read
+/// like "the labels differ".
+pub fn run_context() -> Option<String> {
+    if let Some(v) = std::env::var("GAGE_CONTEXT")
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+    {
+        return Some(v);
+    }
+    let f = home().join("context");
+    std::fs::read_to_string(f)
+        .ok()?
+        .lines()
+        .next()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(str::to_string)
+}
+
 fn b64_32(s: &str) -> std::io::Result<[u8; 32]> {
     let v = B64
         .decode(s.trim())

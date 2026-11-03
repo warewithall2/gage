@@ -199,6 +199,11 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         agent: None,
         model: None,
         record_send: true,
+        // First contact, before either side knows what the other is working
+        // on: there is no run to bind it to and no deadline to set.
+        ttl: None,
+        expires: None,
+        context: None,
     };
     let mut say = Vec::new();
     let sent = crate::outbound::send_bundle(args, &mut say);

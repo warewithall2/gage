@@ -1322,6 +1322,12 @@ fn send_from_ui(raw: &[u8]) -> Result<Vec<String>, (&'static str, String)> {
                 agent: None,
                 model: None,
                 record_send: true,
+                // The composer does not offer either yet. Left explicit
+                // rather than defaulted so that adding a field to the page
+                // is a change here too.
+                ttl: None,
+                expires: None,
+                context: None,
             },
             &mut say,
         );
@@ -1818,6 +1824,12 @@ fn reply_from_ui(body: &str) -> Result<String, (&'static str, String)> {
             agent: None,
             model: None,
             record_send: true,
+            ttl: None,
+            expires: None,
+            // None, which INHERITS the thread's context in `send_bundle` --
+            // it does not clear it. A reply typed into the viewer stays in
+            // the run the exchange is about, exactly as `gage reply` does.
+            context: None,
         },
         &mut say,
     );

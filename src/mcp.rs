@@ -412,6 +412,9 @@ impl Server {
                     agent: opt_str(a, "agent"),
                     model: opt_str(a, "model"),
                     record_send: true,
+                    ttl: opt_str(a, "ttl"),
+                    expires: opt_str(a, "expires"),
+                    context: opt_str(a, "context"),
                 };
                 match crate::outbound::send_bundle(args, &mut say) {
                     Ok(m) => Ok(vec![text(
