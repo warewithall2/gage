@@ -238,14 +238,24 @@ B3=$(GAGE_HOME=$T/old $NEW inbox --json | python3 -c "
 import json,sys
 for r in json.load(sys.stdin):
     if r.get('subject')=='new-plain': print(r['id']); break")
+# Captured and then ASSERTED. It printed its verdict and nothing tested it,
+# so a future change that added a key to a default new-code manifest would
+# still have ended the stage at "0 failed" -- the marker is what a reader
+# looks at, the exit status is what a CI run looks at, and only one of them
+# was being told. The match is REQUIRED here and only here: this is the
+# plain-manifest case, where an existing invocation must produce the key set
+# it produced before the upgrade. The intentional differences in this file
+# are elsewhere, and each is asserted in its own direction.
 python3 - "$T/old/inbox/pending/$B3/manifest.json" \
-          "$T/new/inbox/pending/$B2/manifest.json" <<'PY'
+          "$T/new/inbox/pending/$B2/manifest.json" > "$T/keys.txt" 2>&1 <<'PY'
 import json,sys
 new=set(json.load(open(sys.argv[1])))
 old=set(json.load(open(sys.argv[2])))
 extra=new-old
 print("KEYS-MATCH" if not extra else "KEYS-DIFFER "+",".join(sorted(extra)))
 PY
+cat "$T/keys.txt"
+want "$T/keys.txt" "KEYS-MATCH"
 GAGE_HOME=$T/old "$PREV" open "$T/old/inbox/pending/$B3" > "$T/c6.txt" 2>&1
 code "old-opens-new-plain" $? 0
 want "$T/c6.txt" "the payload"
