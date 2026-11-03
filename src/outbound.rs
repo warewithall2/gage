@@ -346,7 +346,16 @@ pub fn resolve_expiry(
         (None, None) => Ok(None),
         (Some(t), None) => {
             let secs = parse_duration(t)?;
-            Ok(Some(crate::bundle::rfc3339(now + secs)))
+            // Checked, and then bounded. `--ttl` is a number a sender types,
+            // so the only thing standing between `99999999999999w` and a
+            // serialized expiry is this line: unchecked, it wrapped in
+            // release builds -- signing a deadline that was not the one
+            // asked for, possibly already past -- and panicked in debug.
+            let at = now
+                .checked_add(secs)
+                .filter(|at| *at <= MAX_EXPIRY)
+                .ok_or_else(|| too_far(t))?;
+            Ok(Some(crate::bundle::rfc3339(at)))
         }
         (None, Some(e)) => {
             let at = crate::bundle::parse_rfc3339(e).ok_or_else(|| {
@@ -372,6 +381,25 @@ pub fn resolve_expiry(
     }
 }
 
+/// The last instant `bundle::rfc3339` can write: 9999-12-31T23:59:59Z.
+///
+/// Not an arbitrary ceiling. `rfc3339` formats the year as four digits and
+/// walks the years one at a time from 1970, so a deadline past this point is
+/// a timestamp this tree cannot write and would spend a geological age trying
+/// to -- a hang rather than a wrong answer, which is why a merely-checked
+/// multiplication is not enough on its own here.
+const MAX_EXPIRY: i64 = 253_402_300_799;
+
+/// The one refusal both overflow paths reach.
+fn too_far(w: &str) -> String {
+    format!(
+        "--ttl {:?} is too far out; gage cannot write an expiry past \
+         9999-12-31T23:59:59Z. Pass a window a recipient could actually be \
+         inside, in m, h, d or w.",
+        manifest::one_line(w)
+    )
+}
+
 /// `24h`, `7d`, `30m`, `2w` as seconds.
 ///
 /// Deliberately the same four units, the same shape and the same refusals as
@@ -392,16 +420,26 @@ pub fn parse_duration(w: &str) -> Result<i64, String> {
              cannot be opened by anybody"
             .into());
     }
-    match unit {
-        "m" => Ok(n * 60),
-        "h" => Ok(n * 3_600),
-        "d" => Ok(n * 86_400),
-        "w" => Ok(n * 604_800),
-        _ => Err(format!(
-            "unknown unit {:?} in --ttl; use m, h, d or w",
-            manifest::one_line(unit)
-        )),
-    }
+    // Checked: the unit is a multiplier of up to 604_800, so an `n` well
+    // inside i64 can leave the type on the way out. The unknown-unit arm
+    // comes first in the reading order a sender needs, but the refusal for
+    // an in-grammar number that cannot be a duration is just as much a
+    // refusal -- never a wrap, and never a debug-build panic.
+    let per = match unit {
+        "m" => 60,
+        "h" => 3_600,
+        "d" => 86_400,
+        "w" => 604_800,
+        _ => {
+            return Err(format!(
+                "unknown unit {:?} in --ttl; use m, h, d or w",
+                manifest::one_line(unit)
+            ));
+        }
+    };
+    n.checked_mul(per)
+        .filter(|secs| *secs <= MAX_EXPIRY)
+        .ok_or_else(|| too_far(w))
 }
 
 /// Build and deliver a bundle.
@@ -768,5 +806,100 @@ mod tests {
         // default would silently expire mail that store-and-forward is
         // entitled to hold.
         assert_eq!(resolve_expiry(None, None, now), Ok(None));
+    }
+
+    #[test]
+    fn a_ttl_too_large_to_mean_anything_is_refused_rather_than_wrapped() {
+        let now = 1_793_000_000;
+        // In the grammar, parses as an i64, and is not a duration. Unchecked,
+        // the multiply wrapped in release builds -- signing a deadline that
+        // was not the one asked for, and for some inputs one already past --
+        // and panicked in debug. Every unit, because each has its own
+        // multiplier and a fix applied to one arm is a fix applied to one
+        // arm.
+        for w in [
+            "9223372036854775807m",
+            "9223372036854775807h",
+            "9223372036854775807d",
+            "9223372036854775807w",
+            "153722867280912930w",
+            "99999999999999w",
+            "1000000000000000000d",
+        ] {
+            let e = parse_duration(w).unwrap_err();
+            assert!(e.contains("too far out"), "{w}: {e}");
+            // And the refusal reaches the CLI through the path `gage send`
+            // actually takes, not only through the helper.
+            let r = resolve_expiry(Some(w), None, now);
+            assert!(r.is_err(), "{w} resolved to {r:?}");
+        }
+        // The far side of the same boundary: the largest instant this tree
+        // can WRITE is accepted and round-trips, and one second past it is
+        // refused rather than formatted into a year rfc3339 cannot print.
+        let edge = MAX_EXPIRY - now;
+        let out = resolve_expiry(Some(&format!("{edge}m")), None, now);
+        assert!(out.is_err(), "a window {edge} minutes long is not writable");
+        assert!(parse_duration(&format!("{MAX_EXPIRY}m")).is_err());
+        // Ordinary TTLs are untouched by any of this.
+        for (w, secs) in [
+            ("1m", 60),
+            ("30m", 1_800),
+            ("24h", 86_400),
+            ("7d", 604_800),
+            ("52w", 31_449_600),
+        ] {
+            assert_eq!(parse_duration(w), Ok(secs), "{w}");
+            assert_eq!(
+                resolve_expiry(Some(w), None, now),
+                Ok(Some(crate::bundle::rfc3339(now + secs))),
+                "{w}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_absolute_expiry_path_shares_none_of_that_arithmetic() {
+        // Checked because the audit asked whether `--expires` needed the
+        // same treatment. It does not, and the reason is structural rather
+        // than lucky: `parse_rfc3339` reads the year from exactly four ASCII
+        // digits, so the largest instant it can return is 9999-12-31, which
+        // is MAX_EXPIRY -- the same ceiling, reached by the grammar instead
+        // of by a bound. There is no multiply and no add to `now` on this
+        // path at all.
+        let now = 1_793_000_000;
+        assert_eq!(
+            resolve_expiry(None, Some("9999-12-31T23:59:59Z"), now),
+            Ok(Some("9999-12-31T23:59:59Z".to_string()))
+        );
+        assert_eq!(
+            crate::bundle::parse_rfc3339("9999-12-31T23:59:59Z"),
+            Some(MAX_EXPIRY)
+        );
+        // A five-digit year is not in the grammar, so it is refused as "not
+        // a timestamp" rather than reaching any arithmetic.
+        assert!(resolve_expiry(None, Some("99999-01-01T00:00:00Z"), now).is_err());
+        // Nor can the zone offset push it out: the offset is at most 23:59
+        // and is subtracted from an instant already inside the ceiling.
+        assert!(
+            resolve_expiry(None, Some("9999-12-31T23:59:59-23:59"), now)
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn the_resolved_expiry_is_always_one_this_tree_can_write_and_read_back() {
+        // The property the bound exists for, stated as a property: whatever
+        // comes out of `resolve_expiry` is a timestamp `parse_rfc3339` reads
+        // back as the same instant, so a receiver's freshness check is
+        // deciding on the deadline the sender asked for.
+        let now = 1_793_000_000;
+        for w in ["1m", "90m", "36h", "365d", "4000w", "100000d"] {
+            let out = resolve_expiry(Some(w), None, now).unwrap().unwrap();
+            let back = crate::bundle::parse_rfc3339(&out)
+                .unwrap_or_else(|| panic!("{w} produced an unreadable {out}"));
+            assert_eq!(back, now + parse_duration(w).unwrap(), "{w} -> {out}");
+            assert!(back > now, "{w} -> {out} is not in the future");
+        }
     }
 }

@@ -312,21 +312,25 @@ altered either way, and the thing a receiver has to do with it is compare it
 with the run they are actually in, which needs the text. Task labels are not
 secret.
 
-The frame and the verdict JSON surface the declared label **verbatim**, always.
-Where the receiving side has a run context of its own — `GAGE_CONTEXT` in the
-environment, else the first line of `<home>/context`, both local, because a
-comparison is only worth making if one side is beyond the sender's reach — a
-`context_match` fact is stated as well:
+The frame and the verdict JSON surface the declared label **verbatim**, always,
+together with a `context_match` fact. The receiving side's own run context is
+`GAGE_CONTEXT` in the environment, else the first line of `<home>/context` —
+both local, because a comparison is only worth making if one side is beyond
+the sender's reach. Four states, and they are **four**, on every surface:
 
 | state | meaning |
 |---|---|
 | `match` | same label as this machine's run |
 | `mismatch` | different run — **the replay tell** |
-| `undeclared` | this machine is in a run; the bundle names none |
-| `no-local-context` | nothing local says what run this is, so no comparison was made |
+| `undeclared` | the bundle names no run at all, whatever this machine knows about its own |
+| `no-local-context` | the bundle names a run; nothing local says what run this is, so no comparison was made |
 
-`no-local-context` is not a mismatch, and `undeclared` is not one either: it is
-how every bundle built before this field existed looks. The comparison is
+The two quiet states are not one state. `undeclared` is a fact about the
+bundle — it is how every bundle built before this field existed looks, and
+there is nothing for a reader to compare by hand. `no-local-context` is a fact
+about this machine — there IS a label, and comparing it is the reader's job.
+Collapsing them is what the November 2026 audit found and what the ordering of
+the match arms in `context_match` now prevents. Neither is a mismatch. The comparison is
 exact after trimming the ends and **case-sensitive** — `match` is the one
 output that tells a reader the handoff belongs to their run, and every fold is
 a way for two different labels to earn it.
