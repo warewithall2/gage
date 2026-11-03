@@ -2508,7 +2508,13 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             // a bundle that predates its retirement is attributable, so a
             // harness should carry on; a revoked one is not, so it should
             // stop, exactly as it does for a bad signature.
+            // An expired bundle joins them. The payload was withheld, so a
+            // harness that carried on would be acting on a frame with no
+            // contents in it -- and the one in `--reveal`'s case has been
+            // read under a verdict its user asked to override, which is
+            // still not a success.
             if !l.tampered.is_empty()
+                || l.freshness.gates_payload()
                 || matches!(
                     l.trust,
                     trust::Trust::Unverified | trust::Trust::Revoked | trust::Trust::Unwitnessed
@@ -2576,6 +2582,34 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                         println!("      -> expects a reply");
                     }
                     println!("      {}", l.trust.label());
+                    // Marked, never hidden and never dropped. Arrival is not
+                    // acceptance either way: an expired bundle is still mail
+                    // that turned up, and the decision about it stays the
+                    // user's. What the mark buys is that they do not open it
+                    // expecting contents and find a withholding notice.
+                    match &l.freshness {
+                        manifest::Freshness::Expired { expires, .. } => println!(
+                            "      EXPIRED {} -- the sender declared this no longer current; \
+                             `gage open` withholds the payload",
+                            manifest::safe_display(expires, 60)
+                        ),
+                        manifest::Freshness::Unreadable { expires } => println!(
+                            "      EXPIRY UNREADABLE {} -- not an RFC 3339 timestamp, so \
+                             treated as lapsed",
+                            manifest::safe_display(expires, 60)
+                        ),
+                        manifest::Freshness::Current { expires, .. } => {
+                            println!("      expires {}", manifest::safe_display(expires, 60))
+                        }
+                        manifest::Freshness::Undeclared => {}
+                    }
+                    if let Some(c) = &m.context {
+                        println!(
+                            "      context {} [{}]",
+                            manifest::safe_display(c, 160),
+                            l.context_match.word()
+                        );
+                    }
                     if !l.tampered.is_empty() {
                         println!("      TAMPERED: {}", l.tampered.join(", "));
                     }
