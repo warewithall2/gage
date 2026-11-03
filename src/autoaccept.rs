@@ -367,12 +367,16 @@ mod tests {
                 in_reply_to: Some("1111111111111111".into()),
                 thread: claimed_thread.map(|t| t.to_string()),
                 msg_type: MsgType::Answer,
+                expires: None,
+                context: None,
                 items: vec![],
             },
             trust: crate::trust::Trust::Known,
             dir: std::path::PathBuf::from("/nonexistent"),
             tampered: vec![],
             unwitnessed: false,
+            freshness: Freshness::Undeclared,
+            context_match: ContextMatch::NoLocalContext,
         }
     }
 

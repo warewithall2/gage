@@ -708,3 +708,65 @@ pub fn send_bundle(
 
     Ok(m)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_ttl_becomes_an_absolute_instant_in_the_form_this_tree_writes() {
+        // The window is resolved at build time rather than shipped as a
+        // countdown, because a countdown would have to be interpreted
+        // against the RECIPIENT's clock -- and then "7d" means a different
+        // instant for every reader, including a relay that held it a while.
+        let now = 1_793_000_000;
+        let out = resolve_expiry(Some("7d"), None, now).unwrap().unwrap();
+        assert_eq!(out, crate::bundle::rfc3339(now + 7 * 86_400));
+        // And it round-trips through the parser the receiver uses.
+        assert_eq!(
+            crate::bundle::parse_rfc3339(&out),
+            Some(now + 7 * 86_400),
+            "{out}"
+        );
+        for (w, secs) in [("30m", 1_800), ("24h", 86_400), ("2w", 1_209_600)] {
+            assert_eq!(parse_duration(w), Ok(secs), "{w}");
+        }
+    }
+
+    #[test]
+    fn an_absolute_expiry_is_canonicalised_rather_than_passed_through() {
+        // A sender may legitimately type an offset. What a recipient compares
+        // is then in the same form everything else in this tree writes, so a
+        // reader eyeballing the manifest is not comparing two notations.
+        let now = 1_793_000_000;
+        let at = crate::bundle::rfc3339(now + 3_600);
+        let typed = at.replace('Z', "+00:00");
+        assert_eq!(
+            resolve_expiry(None, Some(&typed), now).unwrap(),
+            Some(at.clone())
+        );
+        assert_eq!(resolve_expiry(None, Some(&at), now).unwrap(), Some(at));
+    }
+
+    #[test]
+    fn the_ways_of_getting_an_expiry_wrong_are_refused_at_send_time() {
+        let now = 1_793_000_000;
+        // Both at once. Two ways of saying one thing, and a silent winner is
+        // how a sender comes to believe they set a deadline they did not set.
+        assert!(resolve_expiry(Some("7d"), Some("2026-11-09T09:00:00Z"), now).is_err());
+        // Already past: the bundle would be built unopenable, and this is
+        // the last moment anybody can be told while it is still fixable.
+        assert!(resolve_expiry(None, Some(&crate::bundle::rfc3339(now - 1)), now).is_err());
+        assert!(resolve_expiry(None, Some(&crate::bundle::rfc3339(now)), now).is_err());
+        // Not a timestamp, no zone, not a duration, zero, negative, bad unit.
+        assert!(resolve_expiry(None, Some("next tuesday"), now).is_err());
+        assert!(resolve_expiry(None, Some("2026-11-09T09:00:00"), now).is_err());
+        for bad in ["7y", "abc", "", "0d", "-1d", "d", "1 d"] {
+            assert!(parse_duration(bad).is_err(), "{bad:?} should be refused");
+        }
+        // Nothing asked for is still nothing: no default TTL, ever. A
+        // default would silently expire mail that store-and-forward is
+        // entitled to hold.
+        assert_eq!(resolve_expiry(None, None, now), Ok(None));
+    }
+}

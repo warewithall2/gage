@@ -105,6 +105,25 @@ DRILL=$(bash tests/restore-drill.sh 2>&1 | tee -a "$LOG" | grep -E 'restore dril
 printf '%s\n' "$DRILL" | grep -q ', 0 failed' || fail "identity restore drill: ${DRILL:-no result line}"
 ND=$(printf '%s' "$DRILL" | sed -n 's/restore drill: \([0-9]*\) checks.*/\1/p')
 
+# Cross-version compatibility. Its own stage, like the drill, because the
+# thing it proves cannot be proved from inside one version: an optional field
+# added to the signed manifest is only safe if a binary that has never heard
+# of it still verifies the signature over those bytes, still recomputes the
+# content id to the same value, and still parses the document. All three are
+# invisible to a suite that only ever runs this build.
+#
+# It builds the previous release from its tag once and caches the binary, and
+# it SKIPS -- loudly, never as a pass -- if it cannot get one. A compatibility
+# check that silently did not happen is the shape of mistake this file exists
+# to prevent.
+say "cross-version compatibility..."
+CMP=$(bash tests/compat.sh 2>&1 | tee -a "$LOG" | grep -E 'compat: [0-9]+ checks,' | tail -1)
+case "$CMP" in
+  *SKIPPED*) CMPSTATE="skipped"; say "  SKIP: $CMP" ;;
+  *', 0 failed'*) CMPSTATE=$(printf '%s' "$CMP" | sed -n 's/compat: \([0-9]*\) checks.*/\1/p') ;;
+  *) fail "cross-version compatibility: ${CMP:-no result line}" ;;
+esac
+
 # Optional, and skipping is not failing: it needs a browser.
 say "viewer end-to-end..."
 E2E=$(bash tests/ui-e2e.sh 2>&1 | tee -a "$LOG" | tail -1)
@@ -163,6 +182,6 @@ else
   fi
 fi
 
-say "OK: $NC checks, $NU unit tests, $ND restore-drill checks, $NP packaging checks, viewer $E2ESTATE, deps $DEPSTATE, at $HEAD"
-printf 'ok\t%s\t%s\t%s checks, %s unit tests, %s restore-drill checks, %s packaging checks, viewer %s, deps %s\n' \
-  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$HEAD" "$NC" "$NU" "$ND" "$NP" "$E2ESTATE" "$DEPSTATE" > "$STATUS"
+say "OK: $NC checks, $NU unit tests, $ND restore-drill checks, $NP packaging checks, compat $CMPSTATE, viewer $E2ESTATE, deps $DEPSTATE, at $HEAD"
+printf 'ok\t%s\t%s\t%s checks, %s unit tests, %s restore-drill checks, %s packaging checks, compat %s, viewer %s, deps %s\n' \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$HEAD" "$NC" "$NU" "$ND" "$NP" "$CMPSTATE" "$E2ESTATE" "$DEPSTATE" > "$STATUS"

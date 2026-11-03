@@ -656,6 +656,8 @@ mod tests {
             in_reply_to: None,
             thread: None,
             msg_type: MsgType::Share,
+            expires: None,
+            context: None,
             items: vec![Item {
                 kind: ItemKind::File,
                 path: "items/a.md".into(),
@@ -697,6 +699,137 @@ mod tests {
                 .unwrap(),
             other.expected_id().unwrap()
         );
+    }
+
+    /// The compatibility gate, asserted on the bytes rather than reasoned
+    /// about. A 0.3.5 reader verifies the signature over EXACTLY these bytes,
+    /// so a bundle with no expiry and no context has to serialise as it did
+    /// before the two fields existed -- which is what
+    /// `skip_serializing_if = "Option::is_none"` buys and what a later
+    /// `#[serde(default)]` without it would quietly take away.
+    #[test]
+    fn a_bundle_declaring_neither_field_serialises_as_it_did_before_they_existed() {
+        let json = serde_json::to_string(&m("status", "2026-10-15T00:00:00Z", "aa")).unwrap();
+        assert!(!json.contains("expires"), "{json}");
+        assert!(!json.contains("context"), "{json}");
+    }
+
+    /// And the other half of it: a manifest written by 0.3.5, which has
+    /// neither key, still parses. `deny_unknown_fields` is absent in both
+    /// directions by design, and this pins the direction a test can check
+    /// without an old binary.
+    #[test]
+    fn a_manifest_from_before_these_fields_still_parses() {
+        let old = r#"{"v":1,"id":"0000000000000000","created":"2026-10-15T00:00:00Z",
+            "subject":"s","from":{"handle":"a","key":"K"},"to":["b"],
+            "chain":[{"by":{"handle":"a","key":"K"},"at":"2026-10-15T00:00:00Z",
+            "action":"created"}],"msg_type":"share","items":[]}"#;
+        let m: Manifest = serde_json::from_str(old).expect("0.3.5 shape must parse");
+        assert_eq!(m.expires, None);
+        assert_eq!(m.context, None);
+        // And absence is reported as undeclared, never as expired: every
+        // bundle in existence before this change is in that state, and
+        // gating them would be a format break dressed up as a safety check.
+        assert_eq!(m.freshness(2_000_000_000), Freshness::Undeclared);
+        assert!(!m.freshness(2_000_000_000).gates_payload());
+    }
+
+    #[test]
+    fn freshness_is_four_states_and_only_two_gate_the_payload() {
+        let at = |e: Option<&str>| {
+            let mut m = m("s", "2026-10-15T00:00:00Z", "aa");
+            m.expires = e.map(str::to_string);
+            m
+        };
+        // The instant named is the last one it is current for, which is how
+        // a person reads "expires at 09:00".
+        let exact = crate::bundle::parse_rfc3339("2026-11-09T09:00:00Z").unwrap();
+        let fresh = at(Some("2026-11-09T09:00:00Z"));
+        assert!(matches!(
+            fresh.freshness(exact),
+            Freshness::Current { remaining: 0, .. }
+        ));
+        assert!(matches!(
+            fresh.freshness(exact + 1),
+            Freshness::Expired { past: 1, .. }
+        ));
+        // Offsets are honoured, so an expiry typed in a zone is judged at the
+        // instant it names and not at the one its digits look like.
+        assert!(matches!(
+            at(Some("2026-11-09T11:00:00+02:00")).freshness(exact + 1),
+            Freshness::Expired { .. }
+        ));
+        // Unreadable gates like expired. Fail-closed is the decision: a
+        // sender who declared a bound must not get a receiver with none.
+        let bad = at(Some("sometime next week"));
+        assert!(matches!(bad.freshness(exact), Freshness::Unreadable { .. }));
+        assert!(bad.freshness(exact).gates_payload());
+        // And the two that do not gate are distinct from each other, which
+        // is the reason this is not a boolean: "no expiry declared" is not a
+        // promise that anything is current.
+        assert_eq!(at(None).freshness(exact).word(), "undeclared");
+        assert_eq!(fresh.freshness(exact).word(), "current");
+        assert!(!at(None).freshness(exact).gates_payload());
+        assert!(!fresh.freshness(exact).gates_payload());
+    }
+
+    #[test]
+    fn nothing_local_to_compare_against_is_not_a_mismatch() {
+        // The distinction the whole type exists for. A machine with no run
+        // context is every machine until somebody sets one, and reporting
+        // that as a mismatch would cry wolf on every bundle ever sent.
+        assert_eq!(
+            context_match(Some("run 12"), None),
+            ContextMatch::NoLocalContext
+        );
+        assert_eq!(context_match(None, None), ContextMatch::NoLocalContext);
+        // Blank is the same as unset on both sides: an exported-but-empty
+        // variable is not a run label.
+        assert_eq!(
+            context_match(Some("run 12"), Some("   ")),
+            ContextMatch::NoLocalContext
+        );
+        // A local run and a bundle that names none: undeclared, which is
+        // honest and is NOT the replay tell.
+        assert_eq!(context_match(None, Some("run 12")), ContextMatch::Undeclared);
+        assert_eq!(
+            context_match(Some(""), Some("run 12")),
+            ContextMatch::Undeclared
+        );
+        assert_eq!(
+            context_match(Some("run 12"), Some("run 12")),
+            ContextMatch::Match
+        );
+        // Surrounding whitespace is noise and is trimmed.
+        assert_eq!(
+            context_match(Some(" run 12 "), Some("run 12")),
+            ContextMatch::Match
+        );
+        // Case is NOT. `Match` is the one output that tells a reader the
+        // handoff belongs to the run they are in, and every fold is a way
+        // for two different labels to earn it.
+        assert_eq!(
+            context_match(Some("Run 12"), Some("run 12")),
+            ContextMatch::Mismatch
+        );
+        assert_eq!(
+            context_match(Some("run 13"), Some("run 12")),
+            ContextMatch::Mismatch
+        );
+    }
+
+    #[test]
+    fn neither_new_field_moves_the_content_id() {
+        // Stated in the manifest comment and pinned here: the id must follow
+        // the same content across hops, and these two already survive a
+        // forward unchanged, so folding them in would buy nothing and would
+        // break every 0.3.5 reader's recomputation of it.
+        let base = m("status", "2026-10-15T00:00:00Z", "aa");
+        let want = base.expected_id().unwrap();
+        let mut with = base.clone();
+        with.expires = Some("2026-11-09T09:00:00Z".into());
+        with.context = Some("build run 12".into());
+        assert_eq!(want, with.expected_id().unwrap());
     }
 
     #[test]

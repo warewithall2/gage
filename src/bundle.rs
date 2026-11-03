@@ -610,6 +610,67 @@ mod tests {
     }
 
     #[test]
+    fn an_expiry_is_parsed_rather_than_string_compared() {
+        // The whole reason `parse_rfc3339` exists. These four name the same
+        // instant and only the first sorts correctly against the `Z` strings
+        // this tree writes -- so a string compare would read the third as
+        // two hours later than it is, which on either side of a boundary is
+        // a live bundle reported expired or an expired one reported live.
+        let want = parse_rfc3339("2026-11-09T09:00:00Z").unwrap();
+        for s in [
+            "2026-11-09T09:00:00Z",
+            "2026-11-09t09:00:00z",
+            "2026-11-09T11:00:00+02:00",
+            "2026-11-09T04:00:00-05:00",
+            "2026-11-09T09:00:00.000Z",
+        ] {
+            assert_eq!(parse_rfc3339(s), Some(want), "{s}");
+        }
+    }
+
+    #[test]
+    fn it_round_trips_against_the_formatter_that_writes_the_field() {
+        // Both halves are used on the same value -- `--ttl` formats with
+        // `rfc3339` and the receiver parses with `parse_rfc3339` -- so a
+        // disagreement between them is an expiry landing somewhere nobody
+        // asked for. Across leap years, month ends and the epoch itself.
+        for secs in [
+            0, 1, 86_399, 86_400, 951_782_400,  // 2000-02-29, a leap day
+            1_583_020_800,                      // 2020-03-01, just past one
+            1_767_225_599,                      // 2025-12-31T23:59:59Z
+            1_793_000_000, 2_000_000_000,
+        ] {
+            let s = rfc3339(secs);
+            assert_eq!(parse_rfc3339(&s), Some(secs), "{s}");
+        }
+    }
+
+    #[test]
+    fn a_timestamp_it_cannot_vouch_for_is_refused_rather_than_guessed() {
+        for s in [
+            "",
+            "2026-11-09",                    // a date is not an instant
+            "2026-11-09T09:00:00",           // no zone: hours from where it meant
+            "2026-11-09 09:00:00Z",          // a space is not `T`
+            "2026-13-09T09:00:00Z",          // month 13
+            "2026-02-30T09:00:00Z",          // February has no 30th
+            "2027-02-29T09:00:00Z",          // nor a 29th outside a leap year
+            "2026-11-09T24:00:00Z",          // hour 24
+            "2026-11-09T09:60:00Z",          // minute 60
+            "2026-11-09T09:00:61Z",          // past the leap second
+            "2026-11-09T09:00:00.Z",         // a dot with no digits
+            "2026-11-09T09:00:00+0200",      // no colon in the offset
+            "2026-11-09T09:00:00+24:00",     // no such offset
+            "next tuesday",
+            "2026-11-09T09:00:00Z extra",
+        ] {
+            assert_eq!(parse_rfc3339(s), None, "{s:?} should not parse");
+        }
+        // A leap second is a real timestamp and is accepted.
+        assert!(parse_rfc3339("2026-12-31T23:59:60Z").is_some());
+    }
+
+    #[test]
     fn the_separator_cannot_be_shifted_between_the_fields() {
         // Without a separator, ("AB", "C") and ("A", "BC") would hash alike.
         assert_ne!(witness_of("AB", b"C"), witness_of("A", b"BC"));
