@@ -98,16 +98,17 @@ Audited on 22 October 2026, against those classes:
   `SENDER ON YOUR LIST, UNCONFIRMED`; it never reads `SENDER VERIFIED`, and
   `authority` honours no grant under it. Only a human's out-of-band
   comparison of the four word-pairs -- typed back to `gage confirm`, or
-  attested in the viewer's confirm step, which shows the pairs and records
-  the comparison as one -- produces the stronger verdict.
+  typed into the viewer's confirm step, which asks for all four pairs and
+  shows none -- produces the stronger verdict.
 
-  The viewer's half of that is an attestation, and its limit belongs here:
-  a person can tap that the words match without comparing, which
-  transcription made impossible to do empty-handed. What the tap cannot
-  do is confirm a key whose pairs differ from the ones on the other
-  screen -- the words compared are still the key's full fingerprint, and
-  the server checks the page attested to the words this key actually
-  renders.
+  The viewer's half is a transcription, and its limit belongs here: the
+  pairs are read off the OTHER machine and typed in, so a confirmation
+  cannot be produced empty-handed -- the page never shows the words, and the
+  server checks the typed words against the full fingerprint this key
+  actually renders, box key included. (The earlier "show the pairs and tap
+  that they match" variant was removed: a tap beside pairs the screen
+  printed is not evidence anybody compared them, and the endpoint accepted a
+  fingerprint any client can derive from the public key.)
 
   The limit of *that*, stated here rather than left for the next review: an
   agent with **shell** access is not bound by it. It can run `gage

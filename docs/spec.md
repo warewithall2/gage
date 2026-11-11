@@ -144,7 +144,7 @@ takes an agent's say-so — so until a separate record existed, the strongest
 verdict in the system was available to anything that could add a contact. The
 record stores the fingerprint that was compared and is re-checked on every
 verdict, so attaching an encryption key after a signing-only comparison
-expires it. Only a human who has compared the four word-pairs out of band writes one -- typed back at a terminal, or attested in the viewer, which shows the pairs and records that the confirmation was a comparison rather than a transcription.
+expires it. Only a human who has compared the four word-pairs out of band writes one -- typed back at a terminal, or typed into the viewer's confirm step, which asks for all four pairs and shows none: the words come from the other machine, so typing them is the proof they were read off something that is not this screen.
 
 **Running a gage older than 0.3.4 against the same home erases every
 confirmation.** The record is a field those versions never knew, and any
