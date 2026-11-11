@@ -109,6 +109,11 @@ pub fn render(l: &Loaded, reveal: bool) -> Result<String, String> {
         && !contacts_for_names.is_a_name_you_use(&m.from.handle, &m.from.key);
     match local_name {
         Some(nm) if nm != m.from.handle && self_labelled => {
+            // Defence in depth for M1: the name is validated on the way onto
+            // the list (trust::name_is_safe), but it lands here beside
+            // `trust :` and `authorised :` lines, and the footer already runs
+            // it through one_line -- the header did not. Both now do.
+            let nm = one_line(nm);
             s.push_str(&format!(
                 "  sender     : {} (key {}…)\n",
                 nm,
@@ -122,6 +127,7 @@ pub fn render(l: &Loaded, reveal: bool) -> Result<String, String> {
             ));
         }
         Some(nm) if nm != m.from.handle => {
+            let nm = one_line(nm);
             s.push_str(&format!(
                 "  sender     : {} (key {}…)\n",
                 nm,
@@ -143,6 +149,7 @@ pub fn render(l: &Loaded, reveal: bool) -> Result<String, String> {
             // key is a key you hold under that name. Whether anybody ever
             // compared the key with its owner is a separate fact, and now a
             // separate line.
+            let nm = one_line(nm);
             s.push_str(&format!(
                 "  sender     : {} (key {}…), a name you hold for this key\n",
                 nm,
