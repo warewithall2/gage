@@ -94,6 +94,7 @@ pub fn unseal_to_dir(
     id: &crate::identity::Identity,
     out: &Path,
 ) -> std::io::Result<()> {
+    check_envelope_version(env.v)?;
     let ct = B64
         .decode(env.ct.trim())
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
@@ -105,6 +106,7 @@ pub fn unseal_to_dir(
         .decode(&pkg.manifest)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
     let m: crate::manifest::Manifest = serde_json::from_slice(&manifest)?;
+    crate::bundle::check_manifest_version(m.v)?;
 
     // EVERYTHING is checked before anything is written.
     //
@@ -191,6 +193,32 @@ pub fn unseal_to_dir(
         std::fs::write(out.join(&path), data)?;
     }
     Ok(())
+}
+
+fn check_envelope_version(v: u32) -> std::io::Result<()> {
+    if v == 1 {
+        Ok(())
+    } else {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("unsupported envelope version {v}; this gage supports 1"),
+        ))
+    }
+}
+
+#[cfg(test)]
+mod version_tests {
+    use super::*;
+    #[test]
+    fn future_envelope_versions_are_refused() {
+        assert!(check_envelope_version(1).is_ok());
+        assert!(
+            check_envelope_version(999)
+                .unwrap_err()
+                .to_string()
+                .contains("unsupported envelope version 999")
+        );
+    }
 }
 
 #[cfg(test)]

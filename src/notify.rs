@@ -75,6 +75,7 @@ pub struct Pending {
     /// message, rendered as the line it came from. `None` is the normal case
     /// and means no hook runs: see `run_hook`.
     pub grant: Option<String>,
+    pub unattended_refusal: Option<String>,
 }
 
 /// Unread, un-announced bundles sitting in pending.
@@ -107,19 +108,32 @@ pub fn new_arrivals() -> Vec<Pending> {
         // and contacts or the authority file can change before anyone reads
         // the frame. What is true is that the two call the one function, so
         // they cannot disagree about the same inputs.
-        let grant = authority
-            .lookup(
-                &contacts,
-                l.trust,
-                &m.from.key,
-                m.msg_type,
-                crate::authority::answers_something_i_sent(&home, m).is_some(),
-            )
-            .ok()
-            .map(|g| g.to_string());
+        let unattended_refusal = if l.freshness.gates_payload() {
+            Some("expired or unreadable expiry; --on-arrival did not run".to_string())
+        } else if m.context.is_some() && l.context_match == crate::manifest::ContextMatch::Mismatch
+        {
+            Some("context mismatch; --on-arrival did not run".to_string())
+        } else {
+            None
+        };
+        let grant = if unattended_refusal.is_some() {
+            None
+        } else {
+            authority
+                .lookup(
+                    &contacts,
+                    l.trust,
+                    &m.from.key,
+                    m.msg_type,
+                    crate::authority::answers_something_i_sent(&home, m).is_some(),
+                )
+                .ok()
+                .map(|g| g.to_string())
+        };
         out.push(Pending {
             key: m.from.key.clone(),
             grant,
+            unattended_refusal,
             id: m.id.clone(),
             from: contacts
                 .name_for(&m.from.key)
@@ -326,6 +340,7 @@ mod tests {
             expects_reply: expects,
             key: "k".into(),
             grant: None,
+            unattended_refusal: None,
         }
     }
 
@@ -527,6 +542,7 @@ mod hook_tests {
             expects_reply: false,
             key: "KEY".into(),
             grant: Some("allow mac share".into()),
+            unattended_refusal: None,
         }
     }
 

@@ -7,7 +7,7 @@
 use base64::{Engine, engine::general_purpose::STANDARD as B64};
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use std::fs;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 /// One of your own past keypairs.
@@ -266,7 +266,7 @@ impl Identity {
             box_secret: B64.encode(box_seed),
             retired: Vec::new(),
         };
-        write_store(&kp, &stored)?;
+        write_store_new(&kp, &stored)?;
         fs::write(dir.join("handle"), handle)?;
         Ok(Self {
             handle: handle.to_string(),
@@ -544,11 +544,44 @@ pub fn public_halves_of(key_json: &str) -> Result<(String, String), String> {
 }
 
 fn write_store(kp: &Path, st: &StoredKeys) -> std::io::Result<()> {
-    let tmp = kp.with_extension("key.tmp");
+    let tmp = kp.with_extension(format!(
+        "{}.{}.tmp",
+        std::process::id(),
+        NEXT_TEMP.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
     fs::write(&tmp, serde_json::to_vec_pretty(st)?)?;
     set_private(&tmp)?;
     fs::rename(&tmp, kp)?;
     set_private(kp)
+}
+
+static NEXT_TEMP: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn write_store_new(kp: &Path, st: &StoredKeys) -> std::io::Result<()> {
+    let tmp = kp.with_extension(format!(
+        "{}.{}.new",
+        std::process::id(),
+        NEXT_TEMP.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let result = (|| {
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)?;
+        f.write_all(&serde_json::to_vec_pretty(st)?)?;
+        set_private(&tmp)?;
+        f.sync_all()?;
+        drop(f);
+        // A hard link is an atomic create-if-absent on the same filesystem.
+        // Unlike rename, it cannot replace an identity another process just created.
+        fs::hard_link(&tmp, kp)?;
+        fs::remove_file(&tmp)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    result
 }
 
 #[cfg(unix)]
@@ -597,6 +630,7 @@ pub fn verify(pubkey_b64: &str, msg: &[u8], sig_b64: &str) -> bool {
 
 #[cfg(test)]
 mod home_tests {
+    use super::*;
     /// The rename must not be able to mislay an identity.
     ///
     /// Not a unit test of `home()` itself -- it reads process-wide
@@ -626,5 +660,26 @@ mod home_tests {
         assert_eq!(pick([false, true, true]), "countersign");
         // Fresh machine gets the current name.
         assert_eq!(pick([false, false, false]), "gage");
+    }
+
+    #[test]
+    fn concurrent_create_cannot_replace_an_identity_file() {
+        let dir = std::env::temp_dir().join(format!("gage-create-race-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let kp = dir.join("identity.key");
+        let seed = [7u8; 32];
+        let st = StoredKeys {
+            v: 3,
+            sign_seed: B64.encode(seed),
+            box_secret: B64.encode([8u8; 32]),
+            retired: Vec::new(),
+        };
+        std::fs::write(&kp, b"first-writer").unwrap();
+        assert_eq!(
+            write_store_new(&kp, &st).unwrap_err().kind(),
+            std::io::ErrorKind::AlreadyExists
+        );
+        assert_eq!(std::fs::read(&kp).unwrap(), b"first-writer");
+        let _ = std::fs::remove_dir_all(dir);
     }
 }
