@@ -1370,11 +1370,7 @@ fn pair_from_ui(body: &str) -> Result<Vec<String>, (&'static str, String)> {
     if name.is_empty() {
         return Err(("400 Bad Request", "no name to file it under".into()));
     }
-    if !name
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == ' ')
-        || name.len() > 40
-    {
+    if !crate::trust::name_is_safe(&name) {
         return Err((
             "400 Bad Request",
             "a contact name is letters, digits, spaces, - and _".into(),
@@ -1397,9 +1393,13 @@ fn pair_from_ui(body: &str) -> Result<Vec<String>, (&'static str, String)> {
     let shown = v.get("fingerprint").and_then(|x| x.as_str()).unwrap_or("");
     let real = crate::words::fingerprint_of(&e.sign, Some(&e.boxpub));
     if shown != real {
+        // The expected value is NOT echoed back. Printing the real fingerprint
+        // in the error turns a "the list changed under you" guard into a way
+        // to read the words off this screen, which is the one place they must
+        // never come from.
         return Err((
             "409 Conflict",
-            format!("the words on screen are not this key's any more ({real}) -- look again"),
+            "the words on screen are not this key's any more -- look again".into(),
         ));
     }
     // Added UNCONFIRMED, which is what the page has always said this step
@@ -1425,17 +1425,16 @@ fn pair_from_ui(body: &str) -> Result<Vec<String>, (&'static str, String)> {
 /// Record an out-of-band confirmation from the page.
 ///
 /// The browser half of `gage confirm`, and the only route through the viewer
-/// that can produce `SENDER VERIFIED`. It used to ask for all four pairs
-/// typed and show none of them, on the argument that typing is the proof of
-/// comparison. The product call (2026-10-30) went the way every device
-/// pairing a person already knows works -- the code shows on both screens
-/// and the person says whether they match -- so the page now shows the
-/// pairs and records an attested comparison. Two things did not move: the
-/// words compared are still the full fingerprint, and the record still
-/// says which happened (`how`), so a compared confirmation never poses as
-/// a typed one. The page echoes the fingerprint it displayed, and it must
-/// still be this key's -- the stale-screen guard `/api/pair` uses. The
-/// typed form is still accepted, for anyone who prefers it.
+/// that can produce `SENDER VERIFIED`. It asks for all four word-pairs TYPED
+/// back as the other machine shows them, and shows none of them here: typing
+/// is the proof of comparison, and a value this screen could display is not.
+///
+/// The 2026-10-30 "show the pairs, tap that they match" variant was removed
+/// (audit M3): a tap beside pairs this screen printed is not evidence anybody
+/// compared them with the other machine, and the endpoint accepted a
+/// submitted fingerprint that merely equalled the key's own -- a value any
+/// client derives from the public key. That made confirmation reachable
+/// without a human, which is exactly what the viewer XSS (C1) reached for.
 fn confirm_from_ui(body: &str) -> Result<String, (&'static str, String)> {
     let v: serde_json::Value =
         serde_json::from_str(body).map_err(|e| ("400 Bad Request", format!("bad body: {e}")))?;
@@ -1450,27 +1449,26 @@ fn confirm_from_ui(body: &str) -> Result<String, (&'static str, String)> {
         .key_for_name(&name)
         .ok_or_else(|| ("404 Not Found", format!("no contact named {name}")))?;
     let seq = crate::state::LocalState::load().seq;
-    let typed = v.get("words").and_then(|x| x.as_str()).unwrap_or("");
-    if !typed.is_empty() {
-        c.confirm(&key, typed, "word-pairs typed back in the viewer", seq)
-            .map_err(|e| ("409 Conflict", e))?;
-    } else {
-        let shown = v.get("fingerprint").and_then(|x| x.as_str()).unwrap_or("");
-        let real = c.fingerprint_for(&key);
-        if shown != real {
-            return Err((
-                "409 Conflict",
-                format!("the words on screen are not this key's any more ({real}) -- look again"),
-            ));
-        }
-        c.confirm(
-            &key,
-            &real,
-            "word-pairs compared in the viewer -- shown on both screens, not typed",
-            seq,
-        )
-        .map_err(|e| ("409 Conflict", e))?;
+    // A confirmation is recorded ONLY from the four word-pairs typed back as
+    // the OTHER machine shows them. The previous "shown on both screens"
+    // branch accepted a submitted `fingerprint` that merely equalled the
+    // key's own computed fingerprint -- a value any client can derive from
+    // the public key, so it was no evidence that a human compared anything,
+    // and it was the write the XSS in C1 reached for. `c.confirm` checks the
+    // typed words against the live fingerprint and refuses on mismatch; it
+    // never echoes the expected value back, so a wrong try teaches nothing.
+    let typed = v.get("words").and_then(|x| x.as_str()).unwrap_or("").trim();
+    if typed.is_empty() {
+        return Err((
+            "400 Bad Request",
+            "type the four word-pairs this key shows on the OTHER machine. A \
+             confirmation is recorded from the words you type, read off the \
+             other screen -- never from a value this screen could hand you."
+                .into(),
+        ));
     }
+    c.confirm(&key, typed, "word-pairs typed back in the viewer", seq)
+        .map_err(|e| ("409 Conflict", e))?;
     c.save()
         .map_err(|e| ("500 Internal Server Error", e.to_string()))?;
     Ok(serde_json::json!({"confirmed": name}).to_string())
@@ -1649,12 +1647,7 @@ fn connect_from_ui(body: &str) -> Result<Vec<String>, (&'static str, String)> {
     // one because the page must not hold the answer before the person has
     // shown they got it from somewhere else.
     let reveal_only = name.is_empty();
-    if !reveal_only
-        && (!name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == ' ')
-            || name.len() > 40)
-    {
+    if !reveal_only && !crate::trust::name_is_safe(&name) {
         return Err((
             "400 Bad Request",
             "a contact name is letters, digits, spaces, - and _".into(),
