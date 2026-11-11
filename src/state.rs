@@ -305,6 +305,17 @@ fn thread_claim(m: &crate::manifest::Manifest, held: &BTreeMap<String, String>) 
     let Some(claim) = m.thread.as_deref() else {
         return (m.id.clone(), true);
     };
+    // A thread id IS a message id: sixteen lowercase hex characters. Anything
+    // else is not a thread reference this tool minted, and the viewer renders
+    // it straight into an inline `onclick="sel('…')"` handler (ui.html). A
+    // free-text `thread` of `x');<attacker JS>//` is how a single unsigned
+    // inbound bundle turned into stored XSS in the loopback viewer (audit
+    // C1/T11). Refuse the shape here, at ingest, so no sender-chosen free text
+    // ever reaches the client as a thread id; a message with a malformed
+    // claim simply starts its own thread, rooted at its own (hex-checked) id.
+    if !crate::manifest::id_is_safe(claim) {
+        return (m.id.clone(), true);
+    }
     if claim == m.id {
         return (m.id.clone(), true);
     }
@@ -422,4 +433,68 @@ pub fn threads(
         bn.cmp(&an)
     });
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn man(thread: Option<&str>, in_reply_to: Option<&str>) -> crate::manifest::Manifest {
+        let mut v = serde_json::json!({
+            "v": 1,
+            "id": "0123456789abcdef",
+            "created": "2026-10-15T00:00:00Z",
+            "subject": "s",
+            "from": {"handle": "alice", "key": "AUTHORKEY"},
+            "to": ["bob"],
+            "chain": [],
+            "items": [],
+        });
+        if let Some(t) = thread {
+            v["thread"] = serde_json::json!(t);
+        }
+        if let Some(p) = in_reply_to {
+            v["in_reply_to"] = serde_json::json!(p);
+        }
+        serde_json::from_value(v).unwrap()
+    }
+
+    // C1: a sender-chosen `thread` of arbitrary free text is how a single
+    // inbound bundle became stored XSS in the viewer -- the id is interpolated
+    // into an inline onclick handler. A thread id is a 16-hex message id;
+    // anything else must never surface to the client as a thread id.
+    #[test]
+    fn a_malformed_thread_claim_never_surfaces_as_a_thread_id() {
+        let held = BTreeMap::new();
+        // The exact injection shape from the audit, with an unheld parent.
+        let evil = man(
+            Some("x');(async()=>{await fetch('/api/confirm')})();//"),
+            Some("deadbeefdeadbeef"),
+        );
+        let (tid, ok) = thread_claim(&evil, &held);
+        // It starts its own thread, rooted at its own hex id -- the malicious
+        // string is gone, so nothing sender-chosen reaches the viewer.
+        assert_eq!(tid, "0123456789abcdef");
+        assert!(crate::manifest::id_is_safe(&tid));
+        assert!(ok);
+
+        // A thread claim that is almost-but-not hex is refused too.
+        let (tid, _) = thread_claim(
+            &man(Some("0123456789ABCDEF"), Some("deadbeefdeadbeef")),
+            &held,
+        );
+        assert_eq!(tid, "0123456789abcdef", "uppercase is not a minted id");
+    }
+
+    // A well-formed thread reference with an unheld parent is still honoured
+    // (marked unverified), which is the behaviour the viewer relies on over a
+    // relay where only part of a thread is held.
+    #[test]
+    fn a_well_formed_unheld_thread_claim_is_still_honoured() {
+        let held = BTreeMap::new();
+        let m = man(Some("aaaabbbbccccdddd"), Some("deadbeefdeadbeef"));
+        let (tid, ok) = thread_claim(&m, &held);
+        assert_eq!(tid, "aaaabbbbccccdddd");
+        assert!(!ok, "an unheld parent means the claim is unverified");
+    }
 }
