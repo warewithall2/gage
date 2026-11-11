@@ -323,7 +323,11 @@ pub fn inbox_rows(all: bool) -> Vec<serde_json::Value> {
                 "subject": crate::manifest::safe_display(&l.manifest.subject, 160),
                 "from_handle_claimed":
                     crate::manifest::safe_display(&l.manifest.from.handle, 80),
-                "from_key": l.manifest.from.key,
+                // Escaped and bounded like the subject and handle beside it: an
+                // unsigned bundle's `from.key` is attacker-chosen free text
+                // (audit T2, H4), and this row is read by an agent before
+                // anybody has accepted anything. 120 covers a real signpub.boxpub.
+                "from_key": crate::manifest::safe_display(&l.manifest.from.key, 120),
                 "trust": l.trust.label(),
                 "forwarded": l.manifest.is_forwarded(),
                 "prompts": l.manifest.prompt_count(),
@@ -353,7 +357,7 @@ pub fn inbox_rows(all: bool) -> Vec<serde_json::Value> {
                 "stage": "accepted",
                 "id": crate::manifest::safe_display(&l.manifest.id, 80),
                 "subject": crate::manifest::safe_display(&l.manifest.subject, 160),
-                "from_key": l.manifest.from.key,
+                "from_key": crate::manifest::safe_display(&l.manifest.from.key, 120),
                 "trust": l.trust.label(),
                 "freshness": l.freshness.word(),
                 "expired": l.freshness.gates_payload(),
