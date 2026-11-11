@@ -1464,36 +1464,11 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
             let mut c = trust::Contacts::load();
             let known = c.name_for(&v.old_sign).map(|s| s.to_string());
-            println!("rotation notice");
-            println!(
-                "  claims handle : {} (their own text, not identity)",
-                v.claim.handle
-            );
-            println!(
-                "  old key       : {}…",
-                v.old_sign.chars().take(16).collect::<String>()
-            );
-            println!(
-                "  new key       : {}…",
-                v.new_sign.chars().take(16).collect::<String>()
-            );
-            println!("  dated         : {}", v.claim.at);
-            println!("  reason        : {}", v.claim.reason);
-            println!("  new key signed: yes");
-            // Never presented as reassurance. A valid countersignature proves
-            // control of the old key and nothing about who is holding it.
-            if v.old_signed {
-                println!("  old key signed: yes -- this proves control of the old key, and");
-                println!("                  nothing about WHO holds it. If that key was");
-                println!("                  stolen, the thief can produce this signature too.");
-            } else {
-                println!("  old key signed: NO -- nothing here connects this notice to the");
-                println!("                  party you already trusted.");
-            }
-            match &known {
-                Some(name) => println!("  the old key is on your list as: {name}"),
-                None => println!("  the old key is NOT on your list"),
-            }
+            // Every notice field is sender-chosen and printed to a human AND an
+            // agent (AGENTS.md tells agents to relay what keychange "proves").
+            // The report escapes each one to a single line; see
+            // rotate::notice_report, which is where the regression test lives.
+            print!("{}", rotate::notice_report(&v, known.as_deref()));
             if c.retired_record(&v.old_sign).is_some() && c.knows(&v.new_sign) {
                 println!("\nalready applied; nothing to do");
                 return Ok(ExitCode::SUCCESS);
@@ -1540,20 +1515,9 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 // notice is a stranger's assertion about your contact, and
                 // accepting it on sight is how you get handed an attacker's
                 // key. Refusing here costs a confirmed-by-voice step; not
-                // refusing costs the contact.
-                return Err(format!(
-                    "NOT APPLIED: this notice is not countersigned by {name}'s current \
-                     key, so nothing here shows that {name} authorised it. Confirm the \
-                     new key with them over a channel that is not this one, then:\n  \
-                     gage retire {q} {}\n  gage add {q} {}",
-                    if v.claim.reason == "compromised" {
-                        "--compromised"
-                    } else {
-                        ""
-                    },
-                    v.claim.new_key
-                )
-                .into());
+                // refusing costs the contact. The advice (and its validated,
+                // shell-quoted suggestion) is built in rotate, beside its test.
+                return Err(rotate::not_countersigned_advice(&v, &name).into());
             }
             if !accept {
                 println!("\nnot applied. The countersignature shows the holder of the old");
@@ -1589,7 +1553,9 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                      gage add {q} {}",
                     r.retired_at,
                     if r.compromised { " as COMPROMISED" } else { "" },
-                    v.claim.new_key
+                    // Validated, shell-quoted token -- never the raw notice
+                    // field (same injection class as the un-countersigned path).
+                    rotate::verified_new_token(&v)
                 )
                 .into());
             }
@@ -2553,10 +2519,21 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 }
                 for (_, l) in &pending {
                     let m = &l.manifest;
+                    // Sender-chosen, so escaped and bounded exactly like the
+                    // JSON path (routes::inbox_rows). This human-readable print
+                    // had regressed to raw: a subject or claimed handle with
+                    // newlines forged a verdict line and a second inbox row
+                    // beneath the real one (audit T1). A local contact name is
+                    // validated on the way in, but one_line it too as defence.
                     let who = contacts
                         .name_for(&m.from.key)
-                        .map(|n| n.to_string())
-                        .unwrap_or_else(|| format!("\"{}\" (unlisted key)", m.from.handle));
+                        .map(manifest::one_line)
+                        .unwrap_or_else(|| {
+                            format!(
+                                "\"{}\" (unlisted key)",
+                                manifest::safe_display(&m.from.handle, 60)
+                            )
+                        });
                     let mut tags = Vec::new();
                     if m.prompt_count() > 0 {
                         tags.push(format!("{} prompt", m.prompt_count()));
@@ -2572,10 +2549,10 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     let mark = if st.is_read(&m.id) { " " } else { "*" };
                     println!(
                         "{mark} {}  {:<14} from {}  {}{}",
-                        m.id,
+                        manifest::safe_display(&m.id, 80),
                         m.msg_type.label(),
                         who,
-                        m.subject,
+                        manifest::safe_display(&m.subject, 160),
                         tag
                     );
                     if m.msg_type.expects_reply() {
@@ -2620,7 +2597,11 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     );
                 }
                 for (_, l) in &accepted {
-                    println!("[accepted] {}  {}", l.manifest.id, l.manifest.subject);
+                    println!(
+                        "[accepted] {}  {}",
+                        manifest::safe_display(&l.manifest.id, 80),
+                        manifest::safe_display(&l.manifest.subject, 160)
+                    );
                 }
             }
         }
