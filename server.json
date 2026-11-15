@@ -3,7 +3,7 @@
   "name": "io.github.warewithall2/gage",
   "title": "Gage",
   "description": "Signed, sealed handoffs between AI agents \u2014 trust computed by the receiver.",
-  "version": "0.3.6",
+  "version": "0.3.7",
   "repository": {
     "url": "https://github.com/warewithall2/gage",
     "source": "github"
@@ -12,7 +12,7 @@
   "packages": [
     {
       "registryType": "mcpb",
-      "identifier": "https://github.com/warewithall2/gage/releases/download/v0.3.6/gage-0.3.6-darwin-arm64.mcpb",
+      "identifier": "https://github.com/warewithall2/gage/releases/download/v0.3.7/gage-0.3.7-darwin-arm64.mcpb",
       "fileSha256": "a40eb874de43b72123345ff856ef000b9417939e9c4cf83014bb4a8cf59e5cbd",
       "transport": {
         "type": "stdio"
@@ -20,7 +20,7 @@
     },
     {
       "registryType": "mcpb",
-      "identifier": "https://github.com/warewithall2/gage/releases/download/v0.3.6/gage-0.3.6-linux-x86_64.mcpb",
+      "identifier": "https://github.com/warewithall2/gage/releases/download/v0.3.7/gage-0.3.7-linux-x86_64.mcpb",
       "fileSha256": "096c410620b1c21220f3b0f541669eeb74ffd57417b0d4e2c5d3fdfb36fe5bd4",
       "transport": {
         "type": "stdio"

@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.3.7 — 2026-11-14
+
+- **Security release: all twenty findings from the full-codebase audit are
+  fixed** — one critical, five high, seven medium, seven low — each with a
+  regression test, and the combined fixes cross-audited by a second model
+  family before release. The signed format did not change; bundles back to
+  v0.2.0 still verify.
+- **The viewer can no longer be turned against its owner by a crafted
+  bundle.** A sender-controlled thread id could inject markup into the
+  viewer's page (C1), and the viewer's confirm endpoint would record a
+  confirmation for a fingerprint any client can compute from a public key
+  (M3) — chained, one unsigned bundle and one click could manufacture a
+  SENDER VERIFIED. The injection is closed, and viewer confirmation now
+  requires typing the four word-pairs in from the other machine, the
+  design the CLI always used: nothing the page displays can be submitted
+  back as proof a human compared anything.
+- **Forged verdicts are closed on every surface.** The text inbox printed
+  raw sender subjects and handles, letting a sender print a fake
+  SENDER VERIFIED line (H1); unsigned bundles entered the inbox
+  unmarked and endlessly replayable (H4); LAN intake took replays and
+  unbounded payloads (H3); unattended auto-accept ignored expiry and
+  context (H5). Verdict-bearing text is now escaped or gated everywhere
+  it is printed, and unattended paths apply the same checks as attended
+  ones.
+- **A name on your list can no longer be borrowed on the local network.**
+  An announcement using a contact's name with a different key is refused
+  as an error rather than sealed to (H2) — while a first handoff to an
+  unpaired machine still works exactly as before: reachable by its
+  word-pair label, it lands in the receiver's pending inbox as
+  SENDER NOT ON YOUR LIST, behind the accept gate. (The first cut of the
+  H2 fix broke that flow; the release selfcheck caught it, and the
+  shipped fix keeps both properties.)
+- The bundle format version is now checked on receive (M7), alongside
+  the remaining medium and low fixes in identity, backup, relay and
+  manifest handling.
+
 ## 0.3.6 — 2026-11-03
 
 - **A bundle can now carry a short expiry and the run it was meant for, so a
