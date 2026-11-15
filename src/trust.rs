@@ -33,6 +33,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
 
+const CONTACT_PARSE_RECOVERY: &str = "Refusing to continue, and nothing has been changed. Every verdict this program prints is computed from this file, so reading it as an empty list would turn every contact you have confirmed into a stranger without saying so. Fix the file, or move it aside and re-add your contacts from a separate contacts backup, if you made one. `gage export-identity` does not include contacts.";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Trust {
     /// Signature valid, the key is on the allowlist, and a human recorded
@@ -347,14 +349,7 @@ impl Contacts {
                     "gage: your contact list at {} does not parse: {e}",
                     p.display()
                 );
-                eprintln!(
-                    "      Refusing to continue, and nothing has been changed. Every verdict\n\
-                     \x20     this program prints is computed from this file, so reading it as\n\
-                     \x20     an empty list would turn every contact you have confirmed into a\n\
-                     \x20     stranger without saying so. Fix the file, or move it aside and\n\
-                     \x20     re-add your contacts -- there is a copy in your backup if you\n\
-                     \x20     made one with `gage export-identity`."
-                );
+                eprintln!("      {CONTACT_PARSE_RECOVERY}");
                 std::process::exit(2);
             }
         }
@@ -363,16 +358,20 @@ impl Contacts {
     pub fn save(&self) -> std::io::Result<()> {
         let dir = crate::identity::home();
         fs::create_dir_all(&dir)?;
-        fs::write(dir.join("contacts.json"), serde_json::to_vec_pretty(self)?)
+        atomic_contacts_write(
+            &dir.join("contacts.json"),
+            &serde_json::to_vec_pretty(self)?,
+        )
     }
 
     pub fn knows(&self, pubkey: &str) -> bool {
-        self.keys.contains_key(pubkey)
+        self.keys.contains_key(pubkey.trim())
     }
 
     /// The fingerprint a person would be asked to compare for this key, over
     /// whatever halves of it this machine holds.
     pub fn fingerprint_for(&self, pubkey: &str) -> String {
+        let pubkey = pubkey.trim();
         crate::words::fingerprint_of(pubkey, self.box_keys.get(pubkey).map(|s| s.as_str()))
     }
 
@@ -383,6 +382,7 @@ impl Contacts {
     /// confirmation is not a flag that stays true; it is a statement about a
     /// specific value, and when that value changes the statement expires.
     pub fn is_confirmed(&self, pubkey: &str) -> bool {
+        let pubkey = pubkey.trim();
         match self.confirmed.get(pubkey) {
             Some(c) => c.covers == self.fingerprint_for(pubkey),
             None => false,
@@ -395,6 +395,7 @@ impl Contacts {
     /// "there is a record and it no longer applies", which is the case nobody
     /// would otherwise work out.
     pub fn stale_confirmation(&self, pubkey: &str) -> Option<&Confirmed> {
+        let pubkey = pubkey.trim();
         self.confirmed
             .get(pubkey)
             .filter(|c| c.covers != self.fingerprint_for(pubkey))
@@ -473,7 +474,7 @@ impl Contacts {
     }
 
     pub fn declined_record(&self, pubkey: &str) -> Option<&Declined> {
-        self.declined.get(pubkey)
+        self.declined.get(pubkey.trim())
     }
 
     /// Is this string something a reader of yours would recognise as naming
@@ -514,7 +515,7 @@ impl Contacts {
     }
 
     pub fn name_for(&self, pubkey: &str) -> Option<&str> {
-        self.keys.get(pubkey).map(|s| s.as_str())
+        self.keys.get(pubkey.trim()).map(|s| s.as_str())
     }
 
     /// The name for a key whether it is live or retired. `name_for` stays
@@ -526,7 +527,7 @@ impl Contacts {
     }
 
     pub fn retired_record(&self, pubkey: &str) -> Option<&Retired> {
-        self.retired.get(pubkey)
+        self.retired.get(pubkey.trim())
     }
 
     /// Trust for a key whose signature already checked out.
@@ -539,6 +540,7 @@ impl Contacts {
     /// one-second resolution cannot separate a witness from a retirement
     /// recorded in the same second. A counter can.
     pub fn verdict(&self, pubkey: &str, witnessed: Option<u64>) -> Trust {
+        let pubkey = pubkey.trim();
         if self.knows(pubkey) {
             // On the list is two states, not one. See `Trust::Unconfirmed`:
             // every route onto `keys` can be driven by software, and only a
@@ -637,6 +639,34 @@ impl Contacts {
             .find(|(_, n)| n.as_str() == name)
             .map(|(k, _)| k.clone())
     }
+}
+
+fn atomic_contacts_write(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let dir = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let tmp = dir.join(format!(
+        "contacts.{}.{}.tmp",
+        std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    use std::io::Write;
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&tmp)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        f.set_permissions(fs::Permissions::from_mode(0o600))?;
+    }
+    f.write_all(bytes)?;
+    f.sync_all()?;
+    drop(f);
+    let result = fs::rename(&tmp, path);
+    if result.is_err() {
+        let _ = fs::remove_file(tmp);
+    }
+    result
 }
 
 /// What the caller is willing to say about an add, beyond the key itself.
@@ -1183,5 +1213,48 @@ mod tests {
                 a
             );
         }
+    }
+
+    #[test]
+    fn contact_verdict_lookups_trim_key_whitespace() {
+        let mut c = Contacts::default();
+        c.retired.insert(
+            "OLDKEY".into(),
+            Retired {
+                name: "dave".into(),
+                retired_at: "2026-01-01T00:00:00Z".into(),
+                replaced_by: None,
+                retired_seq: 4,
+                claimed_at: None,
+                compromised: true,
+            },
+        );
+        assert_eq!(c.verdict("OLDKEY  \n", None), Trust::Revoked);
+    }
+
+    #[test]
+    fn contact_store_replacement_is_atomic_and_private() {
+        let dir = std::env::temp_dir().join(format!("gage-contacts-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("contacts.json");
+        std::fs::write(&p, b"old-valid-data").unwrap();
+        atomic_contacts_write(&p, b"new-valid-data").unwrap();
+        assert_eq!(std::fs::read(&p).unwrap(), b"new-valid-data");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&p).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn corrupt_contact_advice_does_not_claim_identity_backups_include_contacts() {
+        assert!(CONTACT_PARSE_RECOVERY.contains("separate contacts backup"));
+        assert!(CONTACT_PARSE_RECOVERY.contains("does not include contacts"));
+        assert!(!CONTACT_PARSE_RECOVERY.contains("copy in your backup"));
     }
 }

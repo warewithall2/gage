@@ -284,6 +284,10 @@ makes a key *yours* rather than *some machine on this wifi*, which is what a
 an agent acts on a message unattended. Requiring it before one file could
 move was a step I added and it was wrong.
 
+Sending over LAN is restricted to confirmed contacts: the nearby announcement
+must carry the same signing key as the contact you selected. A nearby handle
+alone never selects the recipient of a sealed message.
+
 Underneath, `gage nearby`, `gage pair` and `gage listen` are still there as the
 explicit forms, and `gage listen` is the one to use for a machine that should
 be reachable without announcing — it answers an address query only when the

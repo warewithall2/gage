@@ -103,6 +103,9 @@ fn argon2_key(pass: &[u8], kdf: &KdfParams) -> Result<[u8; 32], String> {
     if kdf.name != "argon2id" {
         return Err(format!("unknown key derivation `{}`", kdf.name));
     }
+    if kdf.m > 262_144 || kdf.t > 10 || kdf.p > 4 {
+        return Err("backup key-derivation parameters exceed the supported maximum (m=262144 KiB, t=10, p=4)".into());
+    }
     let salt = B64
         .decode(kdf.salt.as_bytes())
         .map_err(|_| "the salt in this file is not valid base64".to_string())?;
@@ -514,6 +517,22 @@ mod tests {
         let got = open(&b, "correct horse battery").expect("should open");
         assert_eq!(got.handle, "alice");
         assert_eq!(got.identity_key, KEYFILE);
+    }
+
+    #[test]
+    fn absurd_backup_kdf_costs_are_refused_before_derivation() {
+        let k = KdfParams {
+            name: "argon2id".into(),
+            m: u32::MAX,
+            t: 1,
+            p: 1,
+            salt: B64.encode([0u8; SALT_LEN]),
+        };
+        assert!(
+            argon2_key(b"test", &k)
+                .unwrap_err()
+                .contains("exceed the supported maximum")
+        );
     }
 
     #[test]

@@ -51,6 +51,10 @@ pub fn set_relay(addr: &str) -> std::io::Result<()> {
     std::fs::write(dir.join("relay"), addr.trim())
 }
 
+fn relay_text(s: &str, max: usize) -> String {
+    crate::manifest::safe_display(s, max)
+}
+
 /// Stop using a relay. The mailbox on the relay is untouched: there is no
 /// command that deletes one, and inventing a local "leave" that only forgets
 /// the address would be a worse lie than saying what this does. Anything
@@ -231,8 +235,8 @@ pub fn post(addr: &str, path: &str, body: &str) -> std::io::Result<String> {
     if !status.contains(" 200") {
         return Err(std::io::Error::other(format!(
             "relay said: {} {}",
-            status.trim(),
-            rest.trim()
+            relay_text(status.trim(), 160),
+            relay_text(rest.trim(), 512)
         )));
     }
     Ok(rest.to_string())
@@ -241,6 +245,13 @@ pub fn post(addr: &str, path: &str, body: &str) -> std::io::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn relay_error_text_is_single_line_and_bounded() {
+        let s = relay_text("hostile\nSENDER VERIFIED ".repeat(80).as_str(), 128);
+        assert!(!s.contains('\n'));
+        assert!(s.contains("truncated"));
+    }
 
     #[test]
     fn an_address_says_whether_it_is_verified() {

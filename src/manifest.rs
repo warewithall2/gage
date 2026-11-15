@@ -473,7 +473,9 @@ impl Manifest {
     }
 
     pub fn total_bytes(&self) -> u64 {
-        self.items.iter().map(|i| i.bytes).sum()
+        self.items
+            .iter()
+            .fold(0u64, |sum, i| sum.saturating_add(i.bytes))
     }
 }
 
@@ -627,6 +629,29 @@ mod tests {
         assert!(out.starts_with(&"x".repeat(160)));
         assert!(out.contains("truncated, 500 characters"), "{out}");
         assert!(out.chars().count() < 220, "the marker should be short");
+    }
+
+    #[test]
+    fn invisible_model_directed_characters_are_visible_and_byte_totals_saturate() {
+        assert!(one_line("a\u{200b}b\u{e0001}").contains("\\u{200b}"));
+        let mut m = m("s", "2026-10-15T00:00:00Z", "aa");
+        m.items = vec![
+            Item {
+                kind: ItemKind::File,
+                path: "a".into(),
+                sha256: String::new(),
+                bytes: u64::MAX,
+                note: None,
+            },
+            Item {
+                kind: ItemKind::File,
+                path: "b".into(),
+                sha256: String::new(),
+                bytes: 10,
+                note: None,
+            },
+        ];
+        assert_eq!(m.total_bytes(), u64::MAX);
     }
 
     /// The A+ audit finding: the fence nonce lands at the END of a line that

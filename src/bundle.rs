@@ -36,6 +36,42 @@ pub fn witness_of(from_key: &str, manifest_bytes: &[u8]) -> String {
     h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 
+pub fn is_replay(seen: bool, still_pending: bool) -> bool {
+    seen && !still_pending
+}
+
+pub fn transport_stageable(trust: Trust) -> bool {
+    trust != Trust::Unverified
+}
+
+fn declared_length_matches(actual: usize, declared: u64) -> bool {
+    actual as u64 == declared
+}
+
+#[cfg(test)]
+mod replay_tests {
+    use super::*;
+    #[test]
+    fn replay_is_refused_after_a_previous_pending_copy_is_gone() {
+        assert!(is_replay(true, false));
+        assert!(!is_replay(false, false));
+        assert!(!is_replay(true, true));
+    }
+
+    #[test]
+    fn unverifiable_sender_is_not_transport_stageable() {
+        assert!(!transport_stageable(Trust::Unverified));
+        assert!(transport_stageable(Trust::Known));
+        assert!(transport_stageable(Trust::Unknown));
+    }
+
+    #[test]
+    fn item_length_claim_must_match_actual_file() {
+        assert!(declared_length_matches(4, 4));
+        assert!(!declared_length_matches(4, u64::MAX));
+    }
+}
+
 /// The witness for a bundle directory, but ONLY if the bundle is sound:
 /// signature valid over these bytes, id addressing this content, declared
 /// paths safe, and stored payload matching its digests.
@@ -82,7 +118,7 @@ pub fn witness_if_sound_unless(dir: &Path, known: &dyn Fn(&str) -> bool) -> Opti
             return None;
         }
         match fs::read(dir.join(&it.path)) {
-            Ok(d) if sha256_hex(&d) == it.sha256 => {}
+            Ok(d) if d.len() as u64 == it.bytes && sha256_hex(&d) == it.sha256 => {}
             _ => return None,
         }
     }
@@ -422,6 +458,7 @@ pub fn write_signed(out: &Path, id: &Identity, m: &Manifest) -> std::io::Result<
 pub fn load(dir: &Path) -> std::io::Result<Loaded> {
     let bytes = fs::read(dir.join("manifest.json"))?;
     let manifest: Manifest = serde_json::from_slice(&bytes)?;
+    check_manifest_version(manifest.v)?;
     let sig = fs::read_to_string(dir.join("manifest.sig")).unwrap_or_default();
 
     let sig_ok =
@@ -486,6 +523,10 @@ pub fn load(dir: &Path) -> std::io::Result<Loaded> {
             continue;
         }
         match fs::read(dir.join(&it.path)) {
+            Ok(d) if !declared_length_matches(d.len(), it.bytes) => tampered.push(format!(
+                "{} (declared byte length mismatch)",
+                one_line(&it.path)
+            )),
             Ok(d) if sha256_hex(&d) == it.sha256 => {}
             Ok(_) => tampered.push(format!("{} (digest mismatch)", one_line(&it.path))),
             Err(_) => tampered.push(format!("{} (missing)", one_line(&it.path))),
@@ -508,6 +549,32 @@ pub fn load(dir: &Path) -> std::io::Result<Loaded> {
         freshness,
         context_match,
     })
+}
+
+pub(crate) fn check_manifest_version(v: u32) -> std::io::Result<()> {
+    if v == FORMAT_VERSION {
+        Ok(())
+    } else {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("unsupported manifest version {v}; this gage supports {FORMAT_VERSION}"),
+        ))
+    }
+}
+
+#[cfg(test)]
+mod version_tests {
+    use super::*;
+    #[test]
+    fn future_manifest_versions_are_refused() {
+        assert!(check_manifest_version(FORMAT_VERSION).is_ok());
+        assert!(
+            check_manifest_version(999)
+                .unwrap_err()
+                .to_string()
+                .contains("unsupported manifest version 999")
+        );
+    }
 }
 
 /// Re-sign for a forward, appending to the chain rather than replacing it.

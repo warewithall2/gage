@@ -798,7 +798,7 @@ fn push_core(
     .to_string();
     let resp = remote::post(addr, "/send", &body)?;
     say.push(format!("pushed to {to} via {addr}"));
-    say.push(format!("  {}", resp.trim()));
+    say.push(format!("  {}", manifest::safe_display(resp.trim(), 512)));
     Ok(())
 }
 
@@ -884,6 +884,14 @@ enum Staged {
     Refused,
 }
 
+fn require_safe_bundle_id(id: &str) -> Result<(), String> {
+    if manifest::id_is_safe(id) {
+        Ok(())
+    } else {
+        Err("unsafe bundle id".into())
+    }
+}
+
 /// Unseal one envelope and stage it in `inbox/pending`, or refuse it.
 ///
 /// Shared by `gage pull` and `gage unseal`, because an envelope handed over
@@ -956,6 +964,14 @@ fn stage_envelope(
         let _ = std::fs::remove_dir_all(&tmp);
         return Ok(Staged::Refused);
     }
+    if !bundle::transport_stageable(loaded.trust) {
+        eprintln!(
+            "  refused {}: sender signature is missing or invalid; unverifiable bundles cannot be staged",
+            loaded.manifest.id
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+        return Ok(Staged::Refused);
+    }
     let dest = pending.join(&loaded.manifest.id);
     // Has this machine seen this EXACT manifest before?
     //
@@ -992,14 +1008,14 @@ fn stage_envelope(
             return Ok(Staged::Refused);
         }
     };
-    if seen_before && !dest.exists() {
-        println!(
+    if bundle::is_replay(seen_before, dest.exists()) {
+        eprintln!(
             "  refused {} -- this machine has already seen this exact message.",
             loaded.manifest.id
         );
-        println!("    A replayed message is a real one that was already handled.");
-        println!("    If they meant to send it again, ask them to send it again:");
-        println!("    a new message has a new id and arrives normally.");
+        eprintln!("    A replayed message is a real one that was already handled.");
+        eprintln!("    If they meant to send it again, ask them to send it again:");
+        eprintln!("    a new message has a new id and arrives normally.");
         // Recorded against the temp copy, because in a moment there will
         // not be one -- the same reason `reject` journals before it
         // deletes.
@@ -1087,17 +1103,20 @@ fn fetch_mailbox(
             }
         };
         let slot = format!("pull-{}-{n}", std::process::id());
-        match stage_envelope(&env, id, &pending, &slot)? {
-            Staged::Arrived {
+        match stage_envelope(&env, id, &pending, &slot) {
+            Err(e) => {
+                eprintln!("  skipped an envelope that could not be staged: {e}");
+            }
+            Ok(Staged::Arrived {
                 bundle,
                 subject,
                 verdict,
-            } => {
-                println!("  {bundle}  {subject}  ({verdict}){label}");
+            }) => {
+                eprintln!("  {bundle}  {subject}  ({verdict}){label}");
                 n += 1;
             }
-            Staged::AlreadyHere(b) => println!("  already have {b} -- left in place"),
-            Staged::Refused => {}
+            Ok(Staged::AlreadyHere(b)) => eprintln!("  already have {b} -- left in place"),
+            Ok(Staged::Refused) => {}
         }
     }
     // Witness the arrivals now, in the same run that collected them. Waiting
@@ -2606,6 +2625,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             }
         }
         Cmd::Accept { id } => {
+            require_safe_bundle_id(&id)?;
             let me = identity::home();
             let from = routes::pending_dir(&me).join(&id);
             if !from.is_dir() {
@@ -2625,6 +2645,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             println!("  gage open {}", dest.display());
         }
         Cmd::Reject { id } => {
+            require_safe_bundle_id(&id)?;
             let p = routes::pending_dir(&identity::home()).join(&id);
             if !p.is_dir() {
                 return Err(format!("no pending bundle {id}").into());
@@ -3046,6 +3067,10 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                         let contacts = trust::Contacts::load();
                         let auth = authority::Authority::load();
                         for a in &arrivals {
+                            if let Some(reason) = &a.unattended_refusal {
+                                println!("  {}: {reason}", &a.id[..8.min(a.id.len())]);
+                                continue;
+                            }
                             let dir = routes::pending_dir(&home).join(&a.id);
                             let Ok(l) = bundle::load(&dir) else { continue };
                             let d = autoaccept::consider(&home, &contacts, &auth, &l);
@@ -3090,6 +3115,14 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     }
                     if let Some(cmd) = &on_arrival {
                         for a in &arrivals {
+                            if let Some(reason) = &a.unattended_refusal {
+                                println!(
+                                    "  {} from {}: {reason}",
+                                    &a.id[..8.min(a.id.len())],
+                                    a.from
+                                );
+                                continue;
+                            }
                             // No grant, no hook. The notification above already
                             // told the human; this is the line that keeps the
                             // unattended path narrower than the visible one.
@@ -3558,6 +3591,12 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn accept_and_reject_ids_refuse_path_components() {
+        assert!(require_safe_bundle_id("../..").is_err());
+        assert!(require_safe_bundle_id("0123456789abcdef").is_ok());
+    }
 
     // `--since` is the whole of what makes the send journal usable after an
     // incident, and a window that is silently wrong is worse than none: it

@@ -581,12 +581,14 @@ fn do_register(stream: TcpStream, body: &[u8]) -> std::io::Result<()> {
     // by re-registering it.
     if let Some(existing) = st.owners.get(&reg.box_key) {
         if existing != &reg.sign_key {
+            drop(g);
             return reply(
                 stream,
                 "409 Conflict",
                 r#"{"error":"mailbox already registered to another signing key"}"#,
             );
         }
+        drop(g);
         return reply(
             stream,
             "200 OK",
@@ -600,6 +602,7 @@ fn do_register(stream: TcpStream, body: &[u8]) -> std::io::Result<()> {
         // have read by holding the box secret.
         Some(p) => {
             let Some((want, _)) = st.pending.get(&key).cloned() else {
+                drop(g);
                 return reply(
                     stream,
                     "401 Unauthorized",
@@ -615,6 +618,7 @@ fn do_register(stream: TcpStream, body: &[u8]) -> std::io::Result<()> {
             // the box secret can produce the right answer, so a wrong one
             // tells the relay nothing except that somebody guessed.
             if p != want {
+                drop(g);
                 return reply(
                     stream,
                     "401 Unauthorized",
@@ -632,6 +636,7 @@ fn do_register(stream: TcpStream, body: &[u8]) -> std::io::Result<()> {
             // so each one costs more than the last and every other request
             // waits behind it.
             if !st.owners.contains_key(&reg.box_key) && st.owners.len() >= st.limits.mailboxes {
+                drop(g);
                 return reply(
                     stream,
                     "507 Insufficient Storage",
@@ -669,9 +674,11 @@ fn do_register(stream: TcpStream, body: &[u8]) -> std::io::Result<()> {
         // nobody else can.
         None => {
             let Ok(raw) = B64.decode(&reg.box_key) else {
+                drop(g);
                 return reply(stream, "400 Bad Request", r#"{"error":"bad box key"}"#);
             };
             let Ok(raw): Result<[u8; 32], _> = raw.try_into() else {
+                drop(g);
                 return reply(stream, "400 Bad Request", r#"{"error":"bad box key"}"#);
             };
             // An existing fresh claim keeps its nonce. Minting a new one on
@@ -686,6 +693,7 @@ fn do_register(stream: TcpStream, body: &[u8]) -> std::io::Result<()> {
                 .filter(|(_, at)| at.elapsed() < std::time::Duration::from_secs(600))
                 .map(|(n, _)| n.clone());
             let Some(nonce) = fresh.or_else(new_nonce) else {
+                drop(g);
                 return reply(
                     stream,
                     "500 Internal Server Error",
@@ -694,6 +702,7 @@ fn do_register(stream: TcpStream, body: &[u8]) -> std::io::Result<()> {
             };
             let pk = crypto_box::PublicKey::from_bytes(raw);
             let Ok(ct) = pk.seal(&mut crypto_box::aead::OsRng, nonce.as_bytes()) else {
+                drop(g);
                 return reply(
                     stream,
                     "500 Internal Server Error",
@@ -720,6 +729,7 @@ fn do_register(stream: TcpStream, body: &[u8]) -> std::io::Result<()> {
                     break;
                 }
             }
+            drop(g);
             reply(
                 stream,
                 "200 OK",
@@ -754,10 +764,14 @@ fn do_send(stream: TcpStream, body: &[u8]) -> std::io::Result<()> {
     let st = g.as_ref().unwrap();
     // Only registered mailboxes accept mail, so the relay cannot be used as
     // free storage for arbitrary keys nobody will ever collect.
-    if !st.owners.contains_key(&req.to_box) {
+    let registered = st.owners.contains_key(&req.to_box);
+    let root = st.root.clone();
+    let limits = st.limits;
+    drop(g);
+    if !registered {
         return reply(stream, "404 Not Found", r#"{"error":"no such mailbox"}"#);
     }
-    let box_dir = st.root.join("mail").join(&dir);
+    let box_dir = root.join("mail").join(&dir);
     if std::fs::create_dir_all(&box_dir).is_err() {
         return reply(
             stream,
@@ -773,14 +787,14 @@ fn do_send(stream: TcpStream, body: &[u8]) -> std::io::Result<()> {
     // It is a letterbox, and the person who gets to see who is sending is
     // the recipient, when they collect.
     let incoming = req.envelope.len() as u64;
-    if dir_bytes(&box_dir) + incoming > st.limits.mailbox_bytes {
+    if dir_bytes(&box_dir) + incoming > limits.mailbox_bytes {
         return reply(
             stream,
             "507 Insufficient Storage",
             r#"{"error":"mailbox is full"}"#,
         );
     }
-    if dir_count(&box_dir) >= st.limits.mailbox_msgs {
+    if dir_count(&box_dir) >= limits.mailbox_msgs {
         return reply(
             stream,
             "507 Insufficient Storage",
@@ -790,11 +804,11 @@ fn do_send(stream: TcpStream, body: &[u8]) -> std::io::Result<()> {
     // The backstop, for when many mailboxes are each individually under their
     // own limit. Walked per send, which is fine for a letterbox and would not
     // be for a file host -- said here so nobody later mistakes it for one.
-    let mail_root = st.root.join("mail");
+    let mail_root = root.join("mail");
     let total: u64 = std::fs::read_dir(&mail_root)
         .map(|rd| rd.flatten().map(|e| dir_bytes(&e.path())).sum())
         .unwrap_or(0);
-    if total + incoming > st.limits.store_bytes {
+    if total + incoming > limits.store_bytes {
         return reply(
             stream,
             "507 Insufficient Storage",
@@ -871,6 +885,7 @@ fn do_challenge(stream: TcpStream, body: &[u8]) -> std::io::Result<()> {
             break;
         }
     }
+    drop(g);
     reply(stream, "200 OK", &format!(r#"{{"nonce":"{nonce}"}}"#))
 }
 
@@ -893,6 +908,7 @@ fn do_fetch(stream: TcpStream, body: &[u8]) -> std::io::Result<()> {
     // One use per challenge. A replayable signature is a stolen credential
     // with a longer life.
     let Some(issued_for) = st.challenges.remove(&req.nonce) else {
+        drop(g);
         return reply(
             stream,
             "401 Unauthorized",
@@ -900,6 +916,7 @@ fn do_fetch(stream: TcpStream, body: &[u8]) -> std::io::Result<()> {
         );
     };
     if issued_for != req.box_key {
+        drop(g);
         return reply(
             stream,
             "401 Unauthorized",
@@ -907,9 +924,11 @@ fn do_fetch(stream: TcpStream, body: &[u8]) -> std::io::Result<()> {
         );
     }
     let Some(sign_key) = st.owners.get(&req.box_key).cloned() else {
+        drop(g);
         return reply(stream, "401 Unauthorized", r#"{"error":"not registered"}"#);
     };
     if !crate::identity::verify(&sign_key, req.nonce.as_bytes(), &req.sig) {
+        drop(g);
         return reply(
             stream,
             "401 Unauthorized",
@@ -917,9 +936,11 @@ fn do_fetch(stream: TcpStream, body: &[u8]) -> std::io::Result<()> {
         );
     }
     let Some(dir) = key_to_dirname(&req.box_key) else {
+        drop(g);
         return reply(stream, "400 Bad Request", r#"{"error":"bad key"}"#);
     };
     let box_dir = st.root.join("mail").join(&dir);
+    drop(g);
     let mut out = Vec::new();
     // Every file in the mailbox, whatever it is called. Deliberate: mailboxes
     // filled before the rename hold `.ctxb` envelopes and must still empty.
@@ -933,15 +954,42 @@ fn do_fetch(stream: TcpStream, body: &[u8]) -> std::io::Result<()> {
                     "id": p.file_name().map(|n| n.to_string_lossy().to_string()),
                     "envelope": s,
                 }));
-                if req.delete {
-                    let _ = std::fs::remove_file(&p);
-                }
+                // Deletion is committed only after the complete response is
+                // written; a dropped connection must not eat the mailbox.
             }
         }
     }
-    reply(
+    let response = reply(
         stream,
         "200 OK",
         &serde_json::json!({ "count": out.len(), "items": out }).to_string(),
-    )
+    );
+    if req.delete {
+        for item in out {
+            if let Some(name) = item.get("id").and_then(|v| v.as_str()) {
+                delete_delivered_mail(&response, &box_dir.join(name));
+            }
+        }
+    }
+    response
+}
+
+fn delete_delivered_mail(response: &std::io::Result<()>, path: &std::path::Path) {
+    if response.is_ok() {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+#[cfg(test)]
+mod delivery_tests {
+    use super::*;
+    #[test]
+    fn mailbox_files_survive_a_failed_response_write() {
+        let path = std::env::temp_dir().join(format!("gage-relay-mail-{}", std::process::id()));
+        std::fs::write(&path, b"envelope").unwrap();
+        delete_delivered_mail(&Err(std::io::Error::other("simulated disconnect")), &path);
+        assert!(path.exists());
+        delete_delivered_mail(&Ok(()), &path);
+        assert!(!path.exists());
+    }
 }

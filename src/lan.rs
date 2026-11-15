@@ -524,18 +524,53 @@ fn http_reply(mut s: TcpStream, status: &str, body: &str) -> std::io::Result<()>
 }
 
 fn handle_inbound(stream: TcpStream, id: &Identity) -> std::io::Result<()> {
-    stream.set_read_timeout(Some(Duration::from_secs(60)))?;
+    stream.set_read_timeout(Some(Duration::from_secs(20)))?;
     let mut r = BufReader::new(stream.try_clone()?);
-    let mut line = String::new();
-    r.read_line(&mut line)?;
+    let mut head_budget = 64 * 1024usize;
+    let line = match bounded_head_line(&mut r, &mut head_budget) {
+        Ok(Some(s)) => s,
+        _ => {
+            return http_reply(
+                stream,
+                "431 Request Header Fields Too Large",
+                r#"{"error":"head too large"}"#,
+            );
+        }
+    };
+    if line.is_empty() {
+        return http_reply(
+            stream,
+            "431 Request Header Fields Too Large",
+            r#"{"error":"head too large"}"#,
+        );
+    }
     let mut it = line.split_whitespace();
     let method = it.next().unwrap_or("").to_string();
     let target = it.next().unwrap_or("/").to_string();
     let mut len = 0usize;
+    let mut headers = 0usize;
     loop {
-        let mut h = String::new();
-        if r.read_line(&mut h)? == 0 || h.trim().is_empty() {
+        let h = match bounded_head_line(&mut r, &mut head_budget) {
+            Ok(Some(h)) => h,
+            Ok(None) => break,
+            Err(_) => {
+                return http_reply(
+                    stream,
+                    "431 Request Header Fields Too Large",
+                    r#"{"error":"head too large"}"#,
+                );
+            }
+        };
+        if h.trim().is_empty() {
             break;
+        }
+        headers += 1;
+        if headers > 200 {
+            return http_reply(
+                stream,
+                "431 Request Header Fields Too Large",
+                r#"{"error":"too many headers"}"#,
+            );
         }
         if let Some(v) = h.to_ascii_lowercase().strip_prefix("content-length:") {
             len = v.trim().parse().unwrap_or(0);
@@ -564,6 +599,55 @@ fn handle_inbound(stream: TcpStream, id: &Identity) -> std::io::Result<()> {
     }
 }
 
+fn bounded_head_line<R: BufRead>(
+    r: &mut R,
+    remaining: &mut usize,
+) -> std::io::Result<Option<String>> {
+    if *remaining == 0 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "request head too large",
+        ));
+    }
+    let available = *remaining;
+    let mut line = String::new();
+    let n = {
+        let mut limited = (&mut *r).take(available as u64);
+        limited.read_line(&mut line)?
+    };
+    *remaining = remaining.saturating_sub(n);
+    if n == 0 {
+        return Ok(None);
+    }
+    if n == available && !line.ends_with('\n') {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "request head line too large",
+        ));
+    }
+    Ok(Some(line))
+}
+
+#[cfg(test)]
+mod head_limit_tests {
+    use super::*;
+    #[test]
+    fn lan_request_lines_and_headers_cannot_exceed_the_head_budget() {
+        let mut remaining = 8;
+        let mut input = std::io::Cursor::new(b"123456789\r\n".to_vec());
+        assert!(bounded_head_line(&mut input, &mut remaining).is_err());
+        let mut remaining = 8;
+        let mut input = std::io::Cursor::new(b"GET /\r\n\r\n".to_vec());
+        assert_eq!(
+            bounded_head_line(&mut input, &mut remaining)
+                .unwrap()
+                .unwrap(),
+            "GET /\r\n"
+        );
+        assert!(remaining > 0);
+    }
+}
+
 /// Land one envelope in `inbox/pending`, or say why not.
 ///
 /// Same refusals as a relay pull, for the same reasons: the sender does not
@@ -581,7 +665,11 @@ fn accept_envelope(body: &[u8], id: &Identity) -> Result<String, String> {
     if env.to_box.trim() != id.box_public_b64() {
         return Err("sealed to a different key than this machine holds".into());
     }
-    let tmp = crate::identity::home().join(format!("tmp-lan-{}", std::process::id()));
+    let tmp = crate::identity::home().join(format!(
+        "tmp-lan-{}-{}",
+        std::process::id(),
+        &crate::bundle::sha256_hex(body)[..12]
+    ));
     let _ = std::fs::remove_dir_all(&tmp);
     let land = |tmp: &std::path::Path| -> Result<String, String> {
         crate::seal::unseal_to_dir(&env, id, tmp).map_err(|e| e.to_string())?;
@@ -592,7 +680,22 @@ fn accept_envelope(body: &[u8], id: &Identity) -> Result<String, String> {
         if !loaded.tampered.is_empty() {
             return Err(loaded.tampered.join(", "));
         }
+        if !crate::bundle::transport_stageable(loaded.trust) {
+            return Err(
+                "sender signature is missing or invalid; unverifiable bundles cannot be staged"
+                    .into(),
+            );
+        }
+        let bytes = std::fs::read(tmp.join("manifest.json")).map_err(|e| e.to_string())?;
+        let witness = crate::bundle::witness_of(&loaded.manifest.from.key, &bytes);
+        let seen = crate::state::LocalState::load()
+            .witnessed(&witness)
+            .is_some();
         let dest = crate::routes::pending_dir(&crate::identity::home()).join(&loaded.manifest.id);
+        if crate::bundle::is_replay(seen, dest.exists()) {
+            let _ = crate::journal::record(crate::journal::Event::Duplicate, tmp);
+            return Err("this exact message has already been seen; refusing replay".into());
+        }
         if dest.exists() {
             return Ok(format!(
                 "already have {} -- left in place",
@@ -601,6 +704,7 @@ fn accept_envelope(body: &[u8], id: &Identity) -> Result<String, String> {
         }
         std::fs::create_dir_all(dest.parent().unwrap()).map_err(|e| e.to_string())?;
         crate::routes::deliver(tmp, &dest).map_err(|e| e.to_string())?;
+        crate::routes::observe_inbox().map_err(|e| e.to_string())?;
         let verdict = crate::bundle::load(&dest)
             .map(|l| l.trust.label().to_string())
             .unwrap_or_else(|e| format!("could not be read back: {e}"));
@@ -643,6 +747,33 @@ pub fn deliver_to(addr: SocketAddr, body: &str) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_nearby_handle_cannot_override_a_confirmed_contact_key() {
+        let mut c = crate::trust::Contacts::default();
+        let key = "SIGNING";
+        c.keys.insert(key.into(), "dave".into());
+        c.confirmed.insert(
+            key.into(),
+            crate::trust::Confirmed {
+                at: "now".into(),
+                seq: 1,
+                how: "test".into(),
+                covers: c.fingerprint_for(key),
+            },
+        );
+        let attacker = NearbyEntry {
+            label: "attacker label".into(),
+            handle: "dave".into(),
+            sign: "ATTACKER".into(),
+            boxpub: "box".into(),
+            addr: "127.0.0.1:7799".into(),
+            at: 1,
+        };
+        assert!(
+            matches!(confirmed_nearby(&c, "dave", vec![attacker]), Err(e) if e.contains("different key"))
+        );
+    }
 
     fn p(t: &str) -> Packet {
         Packet {
@@ -795,6 +926,41 @@ pub fn lookup_nearby(name: &str) -> Option<NearbyEntry> {
             if hits.len() == 1 { Some(hits[0]) } else { None }
         })
         .map(|i| seen.into_iter().nth(i).unwrap())
+}
+
+fn confirmed_nearby(
+    c: &crate::trust::Contacts,
+    name: &str,
+    seen: Vec<NearbyEntry>,
+) -> Result<Option<NearbyEntry>, String> {
+    let want = name.trim().to_ascii_lowercase().replace('-', " ");
+    if let Some(key) = c.key_for_name(name).filter(|k| c.is_confirmed(k)) {
+        if seen
+            .iter()
+            .any(|e| e.handle.trim().eq_ignore_ascii_case(name) && e.sign.trim() != key.trim())
+        {
+            return Err(format!(
+                "nearby name {name} is announced by a different key than the confirmed contact"
+            ));
+        }
+        return Ok(seen.into_iter().find(|e| e.sign.trim() == key.trim()));
+    }
+    let candidates: Vec<_> = seen
+        .into_iter()
+        .filter(|e| {
+            c.name_for(e.sign.trim())
+                .is_some_and(|_| c.is_confirmed(e.sign.trim()))
+                && (e.label.to_ascii_lowercase() == want
+                    || e.label.to_ascii_lowercase().starts_with(&want))
+        })
+        .collect();
+    match candidates.len() {
+        0 => Ok(None),
+        1 => Ok(candidates.into_iter().next()),
+        _ => Err(format!(
+            "{name} matches more than one confirmed nearby label"
+        )),
+    }
 }
 
 /// `gage lan`: visible, discoverable and reachable for exactly as long as this
@@ -1011,10 +1177,7 @@ pub fn hand_over(dir: &std::path::Path, who: &str) -> Result<Vec<String>, String
     // word-pair. Without this, `--to laptop` fell through to the signed
     // query -- which the other machine correctly ignores until it has paired
     // with YOU, so the better-named path was the one that failed.
-    let on_list = lookup_nearby(who).or_else(|| {
-        let k = c.key_for_name(who)?;
-        read_nearby().into_iter().find(|e| e.sign == k)
-    });
+    let on_list = confirmed_nearby(&c, who, read_nearby())?;
 
     let (boxpub, addr, desc) = match on_list {
         Some(e) => {
@@ -1033,7 +1196,14 @@ pub fn hand_over(dir: &std::path::Path, who: &str) -> Result<Vec<String>, String
                     "{who} announced no encryption key, so nothing can be sealed to it"
                 ));
             }
-            let known = match c.name_for(&e.sign) {
+            if c.name_for(e.sign.trim())
+                .is_none_or(|_| !c.is_confirmed(e.sign.trim()))
+            {
+                return Err(format!(
+                    "nearby announcement for {who} does not match a confirmed contact key"
+                ));
+            }
+            let known = match c.name_for(e.sign.trim()) {
                 Some(n) => format!("paired, on your list as {n}"),
                 None => "NOT PAIRED -- it will arrive as SENDER NOT ON YOUR LIST".to_string(),
             };

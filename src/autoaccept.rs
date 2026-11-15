@@ -55,6 +55,8 @@ pub enum Decision {
     /// The reply names a parent this machine sent but claims to be in a
     /// different thread from it. Refused rather than reinterpreted.
     ThreadClaimDisagreesWithParent,
+    Expired,
+    ContextMismatch,
     /// No grant matched. Covers an unverified sender, a missing file, the
     /// wrong kind, and a message that answers nothing this machine sent --
     /// `authority::Denied` distinguishes those for the frame; here they are
@@ -65,7 +67,11 @@ pub enum Decision {
     /// has considered this sender and declined exactly this.
     GrantIsNotAutoAccept(String),
     /// The grant says so, the budget is gone.
-    BudgetSpent { grant: String, used: u64, max: u64 },
+    BudgetSpent {
+        grant: String,
+        used: u64,
+        max: u64,
+    },
 }
 
 impl Decision {
@@ -85,6 +91,8 @@ impl Decision {
                 "it claims a different thread from the message it answers, so it stays pending"
                     .to_string()
             }
+            Decision::Expired => "expired or unreadable expiry; stays pending".into(),
+            Decision::ContextMismatch => "context mismatch; stays pending".into(),
             Decision::GrantIsNotAutoAccept(g) => {
                 format!("a grant covers it but does not say auto-accept ({g}), so it stays pending")
             }
@@ -143,6 +151,12 @@ pub fn decide(
     // anything unattended, whatever the grant says.
     if !l.tampered.is_empty() {
         return Decision::NoGrant;
+    }
+    if l.freshness.gates_payload() {
+        return Decision::Expired;
+    }
+    if m.context.is_some() && l.context_match == crate::manifest::ContextMatch::Mismatch {
+        return Decision::ContextMismatch;
     }
     let Ok(g) = authority.lookup(contacts, l.trust, &m.from.key, m.msg_type, parent.is_some())
     else {
@@ -448,6 +462,31 @@ mod tests {
         let (c, a) = setup();
         let d = decide(&c, &a, &loaded(Some("x")), None, &|_| 0);
         assert_eq!(d, Decision::NoGrant);
+    }
+
+    #[test]
+    fn stale_expired_and_wrong_run_bundles_never_auto_accept() {
+        let (c, a) = setup();
+        let parent = crate::authority::Parent {
+            id: "1111111111111111".into(),
+            thread: "PARENT".into(),
+        };
+        let mut expired = loaded(None);
+        expired.freshness = crate::manifest::Freshness::Expired {
+            expires: "2020-01-01T00:00:00Z".into(),
+            past: 1,
+        };
+        assert_eq!(
+            decide(&c, &a, &expired, Some(parent.clone()), &|_| 0),
+            Decision::Expired
+        );
+        let mut mismatch = loaded(None);
+        mismatch.manifest.context = Some("run 12".into());
+        mismatch.context_match = crate::manifest::ContextMatch::Mismatch;
+        assert_eq!(
+            decide(&c, &a, &mismatch, Some(parent), &|_| 0),
+            Decision::ContextMismatch
+        );
     }
 
     #[test]

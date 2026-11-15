@@ -177,8 +177,8 @@ rendering without randomness**: if `/dev/urandom` cannot be read, gage refuses
 and withholds rather than falling back to a predictable marker.
 
 Every sender-controlled string printed into the frame passes through
-`manifest::one_line`, which escapes control characters, `U+2028`/`U+2029` and
-bidi overrides rather than stripping them — so a value stays comparable with
+`manifest::one_line`, which escapes control characters, `U+2028`/`U+2029`,
+bidi overrides, zero-width characters, and Unicode tag characters rather than stripping them — so a value stays comparable with
 what the sender says they sent, while being unable to occupy a line of its own.
 
 ---
@@ -413,6 +413,10 @@ collect a full budget each time. The journal entry *is* the budget; there is no
 counter file, and the count is retaken inside the journal lock because counting
 and then appending is a race two watchers can both win.
 
+Unattended acceptance and `--on-arrival` also require a current declared
+expiry and no mismatch for a declared context. Expired, unreadable-expiry, and
+context-mismatch arrivals stay pending and are reported by `gage watch`.
+
 ---
 
 ## 7. Sealing, and the relay protocol
@@ -428,6 +432,11 @@ function `gage pull` uses, so a handed-over file clears the same gates and
 earns the same arrival record as relay mail. With `--out` it writes the files
 and records nothing; see §4 on why only delivery may write a witness.
 
+Relay and LAN delivery refuse bundles whose sender signature is missing or
+invalid. Such a bundle cannot earn a replay witness, so allowing it into the
+unattended inbox would let the same unverifiable message be staged repeatedly.
+Local files may still be inspected with `unseal --out`; they are not staged.
+
 A sealed box is `crypto_box` (**X25519 + XSalsa20-Poly1305**) to the
 recipient's public key with a fresh ephemeral keypair. The envelope has three
 fields and no more:
@@ -438,6 +447,10 @@ So a relay learns **a recipient key, a size and a time** — not the subject, th
 filenames, the sender, or the payload. Authorship is proved by the signature
 *inside* the bundle instead, which is why the transport can be anonymous and
 the relay never becomes an authority on who said what.
+
+LAN sends resolve recipients from confirmed contacts. A nearby announcement
+can supply an address only when its signing key matches the selected contact;
+an announced handle alone cannot redirect sealed mail.
 
 ### Endpoints
 
@@ -520,7 +533,9 @@ The file is JSON with a readable header and one encrypted field:
     }
 
 - **KDF:** Argon2id, 64 MiB / 3 passes / 1 lane, with the parameters in the
-  file so they can be raised later without orphaning old backups.
+  file so they can be raised later without orphaning old backups. Readers
+  refuse parameters above 256 MiB / 10 passes / 4 lanes before deriving, so
+  an edited backup cannot request unbounded work.
 - **AEAD:** XChaCha20-Poly1305, with the serialised header as associated data.
   Every header field today also feeds key derivation or is refused by name, so
   the AAD is not what makes an edit fail; it authenticates the header as a
@@ -571,11 +586,11 @@ paragraph above used to say it never had. `expires` and `context` (§5) were
 added **without** a bump, on three properties that `tests/compat.sh` checks
 against the v0.3.5 binary rather than asserting: signature verification runs
 over the manifest's raw bytes re-read from disk, `Manifest` has no
-`deny_unknown_fields`, and neither field enters `expected_id`. What that run
-also established is the thing a bump would **not** have bought: a v0.3.5
-reader never checks `v` on a bundle at all, so `v: 2` would not have made an
-old hop refuse a new bundle — it would have gone on stripping the fields when
-forwarding it. A version a reader does not check is not a gate.
+`deny_unknown_fields`, and neither field enters `expected_id`. That run also
+established that v0.3.5 did not check `v`, so `v: 2` could not make that old
+hop refuse a new bundle. Current readers check that both manifest and
+envelope versions equal `1`, and refuse unsupported versions before trusting
+or staging their contents.
 
 ---
 
