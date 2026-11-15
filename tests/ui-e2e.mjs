@@ -149,6 +149,20 @@ async function buddies([base, key, wantPair, wrongPair]) {
 // decline button cannot confirm anybody, and only the match button reaches
 // SENDER VERIFIED. The card still sits in a list that re-renders on a 2.5s
 // poll, so every state assertion here has to survive one.
+//
+// 2026-11-14, for 0.3.7: the November audit's M3 inverted it back. The tap
+// endpoint accepted a page-submitted fingerprint equal to the key's own
+// computed one -- a value any client derives from the public key -- so no
+// human comparison was structurally required, and chained with C1 it let
+// an injected script self-confirm an attacker's key. The M3 fix removed
+// the shown-pairs branch: the card again shows NO pairs, the person types
+// the four pairs read off the other machine, and the server checks the
+// typed words against the live fingerprint. This scenario now asserts the
+// typed property: no pairs on the unconfirmed card, wrong typed words
+// record nothing, decline records nothing, and only the right typed words
+// reach SENDER VERIFIED. The pairs return on the card once it is
+// confirmed, which is what they are for -- re-checking after a rotation
+// or a doubt.
 async function confirmgate([base, name, wantWords, wrongWords]) {
   await page.goto(base + '/#buddies');
   if (!(await waitFor('.dev', 'the buddy list never rendered'))) return;
@@ -176,24 +190,22 @@ async function confirmgate([base, name, wantWords, wrongWords]) {
   ok(!/\bconfirmed\b/.test(before.replace(/unconfirmed/gi, '')),
      'a contact nobody has compared is tagged confirmed');
 
-  // The property the comparison design rests on. Read from the element that
-  // renders it, not from the page, because "the words are somewhere on the
-  // page" is not the claim -- the claim is that THIS card is showing THIS
-  // key's pairs, which is what the person is about to attest to.
-  const fp = card.locator('.devfp.bigfp');
-  if (!(await fp.count())) {
+  // The property the typed design rests on (M3): this card must NOT show
+  // the pairs. Anything the page displays, a script running on the page
+  // can also submit -- and a fingerprint is computable from the public
+  // key, so a "tap that they match" against displayed words never proved
+  // a human compared anything. The only route to confirmed is typing the
+  // four pairs in from a channel the machines do not control.
+  ok(await card.locator('.devfp.bigfp').count() === 0,
+     'the unconfirmed card shows word-pairs to compare -- the tap design M3 removed');
+  ok(!(await has(wantWords)),
+     'the page displays this key\'s pairs before they are typed');
+  const box = card.locator('input.lanin');
+  if (!(await box.count())) {
     failed++;
-    console.log('  FAIL: the card shows no word-pairs to compare');
+    console.log('  FAIL: the card offers no place to type the word-pairs');
     return;
   }
-  const shown = ((await fp.first().textContent()) || '').trim();
-  ok(shown === wantWords,
-     'the card does not show this key\'s own fingerprint: showed ' +
-     JSON.stringify(shown) + ', the CLI says ' + JSON.stringify(wantWords));
-  // And it is not showing some other set of four real pairs, which is the
-  // failure a bare "is a fingerprint displayed" check would pass.
-  ok(!(await has(wrongWords)),
-     'the card displayed words that are not this key\'s');
 
   // "They don't match" must not be a confirmation by another route. It is
   // the answer a person gives when the ceremony FAILED, so the one thing it
@@ -211,10 +223,23 @@ async function confirmgate([base, name, wantWords, wrongWords]) {
   ok(/unconfirmed/i.test(await tagText()),
      'declining the comparison recorded a confirmation that showed up on the next poll');
 
-  // And the one route that does. `budConfirm` clears the decline notice and
-  // posts the fingerprint it displayed, which the server checks against the
-  // key's current one before it records anything.
-  await card.getByText('The words match', { exact: true }).click();
+  // Wrong words typed in are not a confirmation either: the server checks
+  // them against the key's live fingerprint and records nothing.
+  await box.fill(wrongWords);
+  await card.getByText('These four pairs match', { exact: true }).click();
+  if (await waitFor('.lanerr', 'typing the wrong pairs said nothing at all')) {
+    ok(/unconfirmed/i.test(await tagText()),
+       'typing the wrong pairs confirmed the contact anyway');
+  }
+  await page.waitForTimeout(3000);
+  ok(/unconfirmed/i.test(await tagText()),
+     'typing the wrong pairs recorded a confirmation that showed up on the next poll');
+
+  // And the one route that does: the right words, typed in. `budConfirm`
+  // posts what was typed, which the server checks against the key's
+  // current fingerprint before it records anything.
+  await box.fill(wantWords);
+  await card.getByText('These four pairs match', { exact: true }).click();
   try {
     await page.waitForFunction(
       n => {

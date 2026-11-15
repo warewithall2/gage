@@ -1177,7 +1177,34 @@ pub fn hand_over(dir: &std::path::Path, who: &str) -> Result<Vec<String>, String
     // word-pair. Without this, `--to laptop` fell through to the signed
     // query -- which the other machine correctly ignores until it has paired
     // with YOU, so the better-named path was the one that failed.
-    let on_list = confirmed_nearby(&c, who, read_nearby())?;
+    // H2 guards the name path: a name on the list resolves only to an
+    // announcement carrying that contact's own key, and an announcement
+    // borrowing the name with a different key is an error, never a
+    // destination. `confirmed_nearby` covers confirmed contacts; an
+    // unconfirmed contact still resolves by its key, because pairing
+    // without a completed word-pair comparison is the normal state of a
+    // first handoff. A name that is not a contact at all is a word-pair
+    // label, which is derived from the device's signing key and cannot
+    // be squatted -- an unpaired device is reachable by its label and
+    // lands in the receiver's pending inbox as SENDER NOT ON YOUR LIST,
+    // behind the accept gate.
+    let on_list = match confirmed_nearby(&c, who, read_nearby())? {
+        Some(e) => Some(e),
+        None => match c.key_for_name(who) {
+            Some(key) => {
+                let seen = read_nearby();
+                if seen.iter().any(|e| {
+                    e.handle.trim().eq_ignore_ascii_case(who) && e.sign.trim() != key.trim()
+                }) {
+                    return Err(format!(
+                        "nearby name {who} is announced by a different key than the contact on your list"
+                    ));
+                }
+                seen.into_iter().find(|e| e.sign.trim() == key.trim())
+            }
+            None => lookup_nearby(who),
+        },
+    };
 
     let (boxpub, addr, desc) = match on_list {
         Some(e) => {
@@ -1194,13 +1221,6 @@ pub fn hand_over(dir: &std::path::Path, who: &str) -> Result<Vec<String>, String
             if e.boxpub.is_empty() {
                 return Err(format!(
                     "{who} announced no encryption key, so nothing can be sealed to it"
-                ));
-            }
-            if c.name_for(e.sign.trim())
-                .is_none_or(|_| !c.is_confirmed(e.sign.trim()))
-            {
-                return Err(format!(
-                    "nearby announcement for {who} does not match a confirmed contact key"
                 ));
             }
             let known = match c.name_for(e.sign.trim()) {
