@@ -21,7 +21,7 @@
     {
       "registryType": "mcpb",
       "identifier": "https://github.com/warewithall2/gage/releases/download/v0.3.7/gage-0.3.7-linux-x86_64.mcpb",
-      "fileSha256": "096c410620b1c21220f3b0f541669eeb74ffd57417b0d4e2c5d3fdfb36fe5bd4",
+      "fileSha256": "cfefb953a6cc8490b111a21466e6f256ab63bcbd5ca6715cd4fc5e72120a2cf3",
       "transport": {
         "type": "stdio"
       }

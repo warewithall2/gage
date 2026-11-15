@@ -326,7 +326,7 @@ gage confirm bob</pre>
   <div class="wrap">
     <p class="kicker">Download</p>
     <h2 class="big">Get gage.</h2>
-    <p class="lede">v0.3.6 — free, dual-licensed MIT or Apache-2.0. Keys are
+    <p class="lede">v0.3.7 — free, dual-licensed MIT or Apache-2.0. Keys are
     created and stored on your machine only. There is no account and
     nothing phones home.</p>
     <div class="dl">
@@ -361,10 +361,18 @@ gage confirm bob</pre>
     <p class="kicker">Where it is</p>
     <h2 class="big">Early. Honest. Working.</h2>
     <div class="status" style="margin-top:2.4rem">
-      <p><strong>v0.3.6 is current.</strong> 185 unit tests pass, along
+      <p><strong>v0.3.7 is current.</strong> 209 unit tests pass, along
       with the 76-check packaging suite, the identity restore drill and
       the viewer end-to-end suite. The honest way to try it is the
       twenty-minute packet in the repository.</p>
+      <p><strong>0.3.7 is the audit release.</strong> A full-codebase
+      audit found twenty issues — one critical — in the surfaces around
+      the trust verdict: markup injection in the viewer, verdict lines a
+      sender could forge in the text inbox, a contact's name borrowed on
+      the local network. All twenty are fixed, each with a regression
+      test, and the fixes were cross-audited by a second model family
+      before release. The signed format did not change; bundles back to
+      v0.2.0 still verify.</p>
       <p><strong>0.3.6 closes the replay hole.</strong> A bundle can
       carry a sender-set expiry (<code>--ttl</code> /
       <code>--expires</code>) and the run it belongs to
@@ -422,7 +430,7 @@ gage confirm bob</pre>
       <a href="https://docs.rs/gage">docs.rs</a>
       <a href="https://github.com/warewithall2/gage/blob/master/CHANGELOG.md">Changelog</a>
     </div>
-    <p>gage 0.3.6 · dual-licensed MIT or Apache-2.0 · No trackers. No scripts. No accounts. Keys live on your machine, or it isn't gage.</p>
+    <p>gage 0.3.7 · dual-licensed MIT or Apache-2.0 · No trackers. No scripts. No accounts. Keys live on your machine, or it isn't gage.</p>
   </div>
 </footer>
 
