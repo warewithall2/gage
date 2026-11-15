@@ -580,6 +580,20 @@ textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 4px var(
 
 <script>
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+// esc is for HTML text/attribute context. It is NOT safe for a value dropped
+// INTO a JS string inside an inline handler: `onclick="f('${esc(x)}')"` has two
+// layers -- the browser HTML-decodes the attribute first (turning esc's &#39;
+// back into a real apostrophe) and only then parses the JS, so esc's quote
+// escaping is undone before the JS string is compiled and the string breaks
+// out. That was the stored-XSS sink (audit C1). jesc hex-escapes every
+// non-alphanumeric character with a JS \xHH / \uHHHH escape: a backslash is
+// literal in an HTML attribute, so the escape survives the HTML-decode intact
+// and then means the original character to the JS parser -- there is no byte
+// left that can close the string or the attribute.
+const jesc=s=>String(s??'').replace(/[^A-Za-z0-9]/g,c=>{
+  const n=c.charCodeAt(0);
+  return n<256?'\\x'+n.toString(16).padStart(2,'0')
+              :'\\u'+n.toString(16).padStart(4,'0');});
 const kb=n=>n<1024?n+' B':n<1048576?(n/1024).toFixed(1)+' KB':(n/1048576).toFixed(1)+' MB';
 const ago=iso=>{const d=(Date.now()-Date.parse(iso))/1000;
   if(!isFinite(d))return'';
@@ -612,6 +626,10 @@ const V=[['SENDER VERIFIED','Verified','v-ok'],
 // Per-contact confirm errors, keyed by name. Kept out of BUD because BUD
 // is replaced wholesale on every poll and an error must survive that.
 const CONFE={};
+// Per-contact typed word-pairs, keyed by name. The confirmation is the words
+// the person reads off the OTHER machine and types here -- never a value this
+// screen shows -- so they are held in state across the 2.5s poll like ACONF.
+const CONFW={};
 const vRow=t=>V.find(r=>(t||'').startsWith(r[0]));
 const vClass=t=>{const r=vRow(t);return r?r[2]:'v-bad';};
 const vShort=t=>{const r=vRow(t);return r?r[1]:(t||'No verdict');};
@@ -769,7 +787,7 @@ function render(){
     const last=t.messages[t.messages.length-1]||{};
     const other=[...t.messages].reverse().find(m=>!m.mine)||last;
     const who=[...new Set(t.messages.map(nameOf))].join(', ');
-    return `<button class="t ${SEL===t.id?'sel':''}" onclick="sel('${esc(t.id)}')">
+    return `<button class="t ${SEL===t.id?'sel':''}" onclick="sel('${jesc(t.id)}')">
       ${avatar(other)}
       <span class="tbody">
         <span class="trow"><span class="subj">${esc(t.subject)}</span>
@@ -963,8 +981,8 @@ function lanRender(){
       </div>
       <div class="devfp">${esc(d.fingerprint)}</div>
       <div class="devrow">
-        <button class="devbtn" onclick="lanPick('${esc(d.label)}')">${sel?'Chosen':'Send to this'}</button>
-        ${d.paired_as?'':`<button class="devbtn" onclick="lanPair('${esc(d.label)}')">${
+        <button class="devbtn" onclick="lanPick('${jesc(d.label)}')">${sel?'Chosen':'Send to this'}</button>
+        ${d.paired_as?'':`<button class="devbtn" onclick="lanPair('${jesc(d.label)}')">${
           LPAIR===d.label?'Cancel':'Pair'}</button>`}
       </div>
       ${LPAIR===d.label?`
@@ -972,7 +990,7 @@ function lanRender(){
         <input class="lanin" placeholder="Call it what on your list?" value="${esc(LNAME)}"
           oninput="LNAME=this.value">
         <div class="devrow">
-          <button class="devbtn go" onclick="lanPairGo('${esc(d.label)}')" ${LBUSY?'disabled':''}>
+          <button class="devbtn go" onclick="lanPairGo('${jesc(d.label)}')" ${LBUSY?'disabled':''}>
             ${LBUSY?'Pairing...':'Those four pairs match'}</button>
         </div>`:''}
       </div>`;
@@ -1648,16 +1666,19 @@ function budRender(force){
            <div class="bwhy">This key's device label is <b>${esc(b.label)}</b> &mdash; derived from the
              signing key alone, which is all a manifest carries, so it is <i>not</i> the first of the
              four pairs when there is an encryption key as well. It tells entries apart and nothing more.
-             Compare the four pairs below with the other person — over a call, in
-             person, any channel the machines do not control. Their machine shows
-             the same four for this key: their own list, or
+             Ask the other person to read you the four pairs their machine shows for
+             this key — over a call, in person, any channel the machines do not
+             control. Their machine shows them in their own list, or from
              <code>gage fingerprint${b.sealable?'':' --signing-only'}</code>.
-             If all four match, the key is theirs.</div>
-           <div class="devfp bigfp">${esc(b.fingerprint)}</div>
+             Type them below. They are deliberately <i>not</i> shown on this screen, so that
+             typing them means you got them from somewhere else.</div>
+           <input class="lanin wide" placeholder="the four pairs, as the OTHER machine shows them"
+             value="${esc(CONFW[b.name]||'')}" oninput="CONFW['${jesc(b.name)}']=this.value"
+             onkeydown="if(event.key==='Enter')budConfirm('${jesc(b.name)}')">
            <div class="devrow">
-             <button class="devbtn go" onclick="budConfirm('${esc(b.name)}','${esc(b.fingerprint)}')" ${ABUSY?'disabled':''}>
-               ${ABUSY?'Recording...':'The words match'}</button>
-             <button class="devbtn" onclick="budMismatch('${esc(b.name)}')" ${ABUSY?'disabled':''}>They don't match</button>
+             <button class="devbtn go" onclick="budConfirm('${jesc(b.name)}')" ${ABUSY?'disabled':''}>
+               ${ABUSY?'Recording...':'These four pairs match'}</button>
+             <button class="devbtn" onclick="budMismatch('${jesc(b.name)}')" ${ABUSY?'disabled':''}>They don't match</button>
            </div>
            ${CONFE[b.name]?`<div class="lanerr">${esc(CONFE[b.name])}</div>`:''}`}
       ${reachRow(b.reach)}
@@ -1733,18 +1754,22 @@ function budDecline(k,undo){ budPost('/api/decline',{key:k,undo:!!undo}); }
 
 // Confirming is its own call rather than a flag on an add, because it happens
 // at a different moment: the add is when a key arrives, the confirmation is
-// after the comparison. The page shows the pairs and the person attests that
-// they match what the other machine shows; the server checks the page is
-// attesting to the words this key actually renders, and the record says the
-// pairs were compared rather than typed. The error is kept per contact.
-async function budConfirm(name,fp){
+// after the comparison. The person reads the four pairs off the OTHER machine
+// and types them here; the server checks the typed words against the words
+// this key actually renders and records that they were typed back. Nothing on
+// this screen shows the pairs, so a confirmation cannot be produced from what
+// this page already knows. The error is kept per contact.
+async function budConfirm(name){
+  const words=(CONFW[name]||'').trim();
+  if(!words){ CONFE[name]='Type the four pairs the other machine shows for this key first.'; budRender(true); return; }
   CONFE[name]='';ABUSY=true;budRender(true);
   try{
     const r=await fetch('/api/confirm',{method:'POST',
       headers:{'X-Gage':'1','Content-Type':'application/json'},
-      body:JSON.stringify({name:name,fingerprint:fp})});
+      body:JSON.stringify({name:name,words:words})});
     const j=await r.json().catch(()=>({}));
     if(!r.ok)throw new Error(j.error||('HTTP '+r.status));
+    CONFW[name]='';
   }catch(e){ CONFE[name]=(e&&e.message)?e.message:String(e); }
   ABUSY=false; await budLoad(); load();
 }

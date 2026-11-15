@@ -152,9 +152,10 @@ pre-authorise anything, which is the consequence that actually mattered.
 
 The only things that write a confirmation are a human's out-of-band
 comparison of the four word-pairs: `gage confirm <name>` at a terminal,
-where they are typed back, or the viewer's confirm step, which displays
-the pairs beside a words-match button and records the attestation as a
-comparison, not a transcription -- the record keeps the two distinct.
+where they are typed back, or the viewer's confirm step, which asks for
+all four pairs and shows none -- the words are read off the other machine
+and typed in, so a confirmation cannot be produced from what the page
+already knows.
 `gage add --same-machine` is the one
 exception and it is not reachable from here: it exists for `gage agent new`,
 where both keys came out of a keygen the same process just ran and there is no

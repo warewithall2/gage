@@ -301,7 +301,7 @@ impl Server {
                         "sealable": boxpub.is_some(),
                         "name_hint": hint,
                         "word_pairs": fp,
-                        "next": "Nothing is on the buddy list yet. Call gage_pair_confirm with these pairs to add the key UNCONFIRMED -- adding is all an agent can do. The human confirms in the Gage app: a banner there shows the same four pairs beside a words-match button, compared against the other machine over a channel neither machine controls (a voice call, in person). Do not ask the human to read the pairs back to you; that step could never confirm anything.",
+                        "next": "Nothing is on the buddy list yet. Call gage_pair_confirm with these pairs to add the key UNCONFIRMED -- adding is all an agent can do. The human confirms in the Gage app: a banner there walks them through reading the four pairs off the OTHER machine, over a channel neither machine controls (a voice call, in person), and typing them in. The pairs are not shown on the confirming screen, so typing them is the proof of comparison. Do not ask the human to read the pairs back to you; that step could never confirm anything.",
                     })
                     .to_string(),
                 )])
@@ -385,7 +385,7 @@ impl Server {
                 .map_err(ToolError::Refused)?;
                 self.pending.remove(&pid);
                 Ok(vec![text(
-                    &json!({"added": name, "key": token, "detail": lines, "status": "on the list, UNCONFIRMED", "next": "Tell the human to open the Gage app: a banner at the top walks them through comparing the words on both screens and tapping the words-match button. Until they do, this key reads SENDER ON YOUR LIST, UNCONFIRMED."}).to_string(),
+                    &json!({"added": name, "key": token, "detail": lines, "status": "on the list, UNCONFIRMED", "next": "Tell the human to open the Gage app: a banner at the top walks them through reading the four word-pairs off the OTHER machine and typing them in -- the pairs are not shown on the confirming screen, so typing them is what records the comparison. Until they do, this key reads SENDER ON YOUR LIST, UNCONFIRMED."}).to_string(),
                 )])
             }
 
@@ -521,7 +521,14 @@ impl Server {
                     // valuable place in the response for a sender to put a
                     // sentence. `subject` was raw.
                     "subject": crate::manifest::safe_display(&l.manifest.subject, 160),
-                    "from_key": l.manifest.from.key,
+                    // An unsigned/unverifiable bundle carries a fully
+                    // attacker-chosen `from.key` (audit T2: 734 characters of
+                    // injection text with an empty signature). It sits in this
+                    // agent-facing block beside `subject`, which is already
+                    // escaped and bounded -- `from_key` was raw. Same treatment
+                    // now. A real key is ~89 chars (signpub.boxpub); 120 leaves
+                    // margin and announces any truncation.
+                    "from_key": crate::manifest::safe_display(&l.manifest.from.key, 120),
                     "from_handle_claimed":
                         crate::manifest::safe_display(&l.manifest.from.handle, 80),
                     "prompts": l.manifest.prompt_count(),
@@ -612,7 +619,7 @@ fn tool_list() -> Vec<Value> {
         }),
         json!({
             "name": "gage_pair_start",
-            "description": "Begin adding someone to the buddy list. Returns a pairing_id and the four word-pairs their key derives -- and adds NOTHING yet. Show the word-pairs and the name to a human. The comparison itself happens in the Gage app, where the same pairs appear beside a words-match button and a banner walks the human through it; do not ask the human to read pairs back to you. Then call gage_pair_confirm with the pairs exactly as returned here to put the key on the list (unconfirmed). Pass `key` (their `gage whoami` token) or `handle` (a machine announcing on this network).",
+            "description": "Begin adding someone to the buddy list. Returns a pairing_id and the four word-pairs their key derives -- and adds NOTHING yet. Show the word-pairs and the name to a human. The comparison itself happens in the Gage app, where a banner walks the human through reading the four pairs off the OTHER machine and typing them in (they are not shown on the confirming screen); do not ask the human to read pairs back to you. Then call gage_pair_confirm with the pairs exactly as returned here to put the key on the list (unconfirmed). Pass `key` (their `gage whoami` token) or `handle` (a machine announcing on this network).",
             "inputSchema": s(json!({"type":"object","properties":{
                 "key":{"type":"string","description":"their gage whoami token (signpub.boxpub)"},
                 "handle":{"type":"string","description":"a word-pair label from this network"},

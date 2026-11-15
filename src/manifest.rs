@@ -515,10 +515,30 @@ pub fn path_is_safe(p: &str) -> bool {
 ///
 /// Also the two Unicode separators that some readers break lines on, and the
 /// bidi overrides, which reorder what a human sees without changing bytes.
+///
+/// And the invisible characters: zero-width spaces/joiners, the word joiner,
+/// the byte-order mark, and the Unicode tag block. None of these breaks a
+/// frame line to a human -- a human cannot see them at all -- but a model
+/// reads them, so they are a channel for smuggling hidden instructions
+/// through a subject, a handle, or a path into a reading agent. Escaping them
+/// here makes them visible (`\u{200b}`) wherever a sender-chosen string is
+/// rendered, and rejecting them in a path keeps them out of a filename.
 fn is_frame_breaking(c: char) -> bool {
     c.is_control()
         || matches!(c, '\u{2028}' | '\u{2029}')
         || matches!(c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+        || is_invisible(c)
+}
+
+/// Characters a human cannot see but a model reads. Separated from the
+/// line/bidi cases above only to keep each range's reason legible.
+fn is_invisible(c: char) -> bool {
+    matches!(c,
+        '\u{200b}'..='\u{200d}'   // zero-width space / non-joiner / joiner
+        | '\u{2060}'              // word joiner
+        | '\u{feff}'              // zero-width no-break space / BOM
+        | '\u{e0000}'..='\u{e007f}' // Unicode tag characters
+    )
 }
 
 /// A name, quoted so it survives being pasted into a shell.
@@ -629,6 +649,30 @@ mod tests {
         assert!(!path_is_safe(""));
         // An ordinary nested path is still fine.
         assert!(path_is_safe("items/src/net/mod.rs"));
+    }
+
+    // L2: invisible characters a human cannot see but a model reads --
+    // zero-width spaces/joiners, word joiner, BOM, and the Unicode tag block.
+    // They must not pass through a sender-chosen string unescaped, and they
+    // must not survive into a filename.
+    #[test]
+    fn invisible_characters_are_made_visible_and_refused_in_paths() {
+        // Escaped, so the reader (human or model) sees that something is there.
+        assert_eq!(one_line("a\u{200b}b"), "a\\u{200b}b");
+        assert_eq!(one_line("a\u{200c}b"), "a\\u{200c}b");
+        assert_eq!(one_line("a\u{200d}b"), "a\\u{200d}b");
+        assert_eq!(one_line("a\u{2060}b"), "a\\u{2060}b");
+        assert_eq!(one_line("a\u{feff}b"), "a\\u{feff}b");
+        // Unicode tag characters (U+E0000-E007F) are a known smuggling block.
+        assert_eq!(one_line("a\u{e0041}b"), "a\\u{e0041}b");
+        // safe_display inherits the same escaping.
+        assert_eq!(safe_display("ok\u{200b}hidden", 160), "ok\\u{200b}hidden");
+        // And an invisible character never reaches a filename.
+        assert!(!path_is_safe("items/a\u{200b}.md"));
+        assert!(!path_is_safe("items/\u{feff}readme"));
+        assert!(!path_is_safe("items/a\u{e0041}.md"));
+        // Ordinary non-ASCII (a visible em dash) is untouched.
+        assert_eq!(one_line("a—b"), "a—b");
     }
 
     #[test]
